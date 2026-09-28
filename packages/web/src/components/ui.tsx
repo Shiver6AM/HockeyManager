@@ -125,3 +125,17 @@ export function Modal({ title, onClose, children }: { title: ReactNode; onClose:
     </div>
   );
 }
+
+/** Scouts' grade for a player's ceiling, with the projected role on hover (or shown). */
+export function PotentialBadge({ potential, showLabel }: { potential?: { grade: string; projection: string } | null; showLabel?: boolean }) {
+  if (!potential) return null;
+  const g = potential.grade[0];
+  const tone =
+    g === 'A' ? 'bg-win/20 text-win' : g === 'B' ? 'bg-blueline/20 text-blue-200' : g === 'C' ? 'bg-rink-700 text-ice-200' : 'bg-rink-800 text-ice-500';
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap" title={`Potential: ${potential.projection} (${potential.grade})`}>
+      <span className={cx('inline-flex min-w-7 justify-center rounded px-1 py-0.5 text-[11px] font-bold', tone)}>{potential.grade}</span>
+      {showLabel && <span className="text-xs text-ice-400">{potential.projection}</span>}
+    </span>
+  );
+}

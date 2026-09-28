@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { describeCron, mutateLeague } from '../advance';
 import { newId } from '../auth';
 import { leagueMeta, readLeague } from '../state';
+import { deliver } from '../notify';
 import { authedProcedure, badRequest, commissionerProcedure, memberProcedure, router } from '../trpc';
 import { teamInfo, teamRating } from '../views';
 
@@ -92,8 +93,8 @@ export const leaguesRouter = router({
   overview: memberProcedure.query(async ({ ctx, input }) => {
     const meta = (await leagueMeta(ctx.db, input.leagueId))!;
     const L = await readLeague(ctx.db, input.leagueId);
-    const members = await ctx.db.query<{ user_id: string; display_name: string; team_id: string | null; ready: boolean }>(
-      `select m.user_id, u.display_name, m.team_id, m.ready from league_members m join users u on u.id = m.user_id
+    const members = await ctx.db.query<{ user_id: string; display_name: string; team_id: string | null; ready: boolean; co_commissioner: boolean }>(
+      `select m.user_id, u.display_name, m.team_id, m.ready, m.co_commissioner from league_members m join users u on u.id = m.user_id
        where m.league_id = $1 order by m.joined_at`,
       [input.leagueId],
     );
@@ -116,6 +117,8 @@ export const leaguesRouter = router({
       advance: meta.advance,
       nextAdvanceAt: meta.next_advance_at,
       isCommissioner: ctx.membership.isCommissioner,
+      isCoCommissioner: ctx.membership.isCoCommissioner,
+      canAdvance: ctx.membership.canAdvance,
       myTeamId: ctx.membership.teamId,
       myReady: ctx.membership.ready,
       commissionerId: meta.commissioner_id,
@@ -125,6 +128,8 @@ export const leaguesRouter = router({
         teamId: m.team_id,
         team: m.team_id ? teamInfo(L.teams[m.team_id]) : null,
         ready: m.ready,
+        coCommissioner: !!m.co_commissioner,
+        isCommissioner: m.user_id === meta.commissioner_id,
       })),
       lastAdvance: last[0] ?? null,
     };
@@ -190,6 +195,26 @@ export const leaguesRouter = router({
     });
     await ctx.scheduler.sync(input.leagueId);
     return { nextAdvanceAt: ctx.scheduler.nextRun(input.leagueId) };
+  }),
+
+  /** Let another member advance the league (settings and trade approvals stay with the commissioner). */
+  setCoCommissioner: commissionerProcedure.input(z.object({ userId: z.string(), value: z.boolean() })).mutation(async ({ ctx, input }) => {
+    const rows = await ctx.db.query<{ commissioner_id: string }>('select commissioner_id from leagues where id = $1', [input.leagueId]);
+    if (rows[0]?.commissioner_id === input.userId) throw badRequest('You are already the commissioner');
+    const updated = await ctx.db.query<{ user_id: string }>(
+      'update league_members set co_commissioner = $1 where league_id = $2 and user_id = $3 returning user_id',
+      [input.value, input.leagueId, input.userId],
+    );
+    if (!updated.length) throw badRequest('That person is not in this league');
+    await deliver(ctx.db, input.leagueId, [
+      {
+        userId: input.userId,
+        kind: 'commissioner',
+        text: input.value ? 'You are now a co-commissioner: you can advance the league.' : 'You are no longer a co-commissioner.',
+        link: '/',
+      },
+    ]);
+    return { ok: true };
   }),
 
   regenerateInvite: commissionerProcedure.mutation(async ({ ctx, input }) => {

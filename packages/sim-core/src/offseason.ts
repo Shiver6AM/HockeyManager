@@ -764,7 +764,7 @@ function startNewSeason(league: League) {
     const valid = [...team.lines.forwards.flat(), ...team.lines.defense.flat(), ...team.lines.goalies].every(
       (id) => league.players[id]?.teamId === team.id,
     );
-    if (team.controller.kind === 'ai' || team.autoLines || !valid) team.lines = autoLines(healthyRoster(league, team));
+    if (team.controller.kind === 'ai' || team.autoLines || !valid) team.lines = autoLines(healthyRoster(league, team), team.tactics);
   }
   league.schedule = buildSchedule(Object.values(league.teams), new Rng(deriveSeed(league.seed, `schedule:${league.season}`)));
   setOwnerGoals(league);

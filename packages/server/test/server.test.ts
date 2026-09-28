@@ -76,7 +76,7 @@ describe('multiplayer league flow', () => {
   });
 
   it('only the commissioner can advance, and box scores move to their own table', async () => {
-    await expect(bob.sim.advance({ leagueId, target: { days: 1 } })).rejects.toThrow(/Commissioner only/);
+    await expect(bob.sim.advance({ leagueId, target: { days: 1 } })).rejects.toThrow(/Only the commissioner or a co-commissioner/);
     const r = await comm.sim.advance({ leagueId, target: { days: 3 } });
     expect(r.toDay).toBe(3);
     expect(r.games).toBeGreaterThan(0);
@@ -97,10 +97,58 @@ describe('multiplayer league flow', () => {
     expect(log[0].by).toMatch(/commissioner/);
   });
 
+  it('lets the commissioner appoint co-commissioners who can advance', async () => {
+    const ov = await comm.leagues.overview({ leagueId });
+    const bobId = ov.members.find((m) => m.displayName === 'BOB')!.userId;
+    await expect(bob.leagues.setCoCommissioner({ leagueId, userId: bobId, value: true })).rejects.toThrow();
+    await comm.leagues.setCoCommissioner({
+      leagueId,
+      userId: bobId,
+      value: true,
+    });
+    const mine = await bob.leagues.overview({ leagueId });
+    expect(mine.isCoCommissioner).toBe(true);
+    expect(mine.canAdvance).toBe(true);
+    const before = mine.day;
+    const r = await bob.sim.advance({ leagueId, target: { days: 1 } });
+    expect(r.toDay).toBe(before + 1);
+    await comm.leagues.setCoCommissioner({
+      leagueId,
+      userId: bobId,
+      value: false,
+    });
+    await expect(bob.sim.advance({ leagueId, target: { days: 1 } })).rejects.toThrow(/co-commissioner/);
+  });
+
+  it('saves coaching systems and re-slots the power play', async () => {
+    const t0 = await bob.data.team({ leagueId, teamId: 'HAL' });
+    expect(Object.keys(t0.systemFits)).toEqual(expect.arrayContaining(['forecheck', 'offense', 'pp', 'pk']));
+    const pp = t0.tactics.pp === 'umbrella' ? 'overload' : 'umbrella';
+    await bob.data.setTactics({
+      leagueId,
+      tactics: { ...t0.tactics, pp, pk: 'aggressive' },
+    });
+    const t1 = await bob.data.team({ leagueId, teamId: 'HAL' });
+    expect(t1.tactics.pp).toBe(pp);
+    expect(t1.tactics.pk).toBe('aggressive');
+    for (const u of [t1.lines.fourOnFour, t1.lines.threeOnThree, t1.lines.pp4, t1.lines.pk3]) expect(u?.length).toBeGreaterThan(0);
+    expect(t1.lines.extraAttacker).toHaveLength(6);
+    expect(t1.lines.shootout).toHaveLength(5);
+    await expect(
+      cat.data.setTactics({
+        leagueId,
+        tactics: { ...t0.tactics, pp: 'nope' as never },
+      }),
+    ).rejects.toThrow();
+  });
+
   it('never sends hidden traits to the browser', async () => {
     const t = await bob.data.team({ leagueId, teamId: 'HAL' });
     expect(t.isMine).toBe(true);
-    expect(JSON.stringify(t)).not.toMatch(/potential|injuryProneness|personality/);
+    const json = JSON.stringify(t);
+    // Potential is only ever the viewer's scouted grade, never the hidden number.
+    expect(json).not.toMatch(/"potential":\s*\d|injuryProneness|personality/);
+    expect(t.players.every((p) => typeof p.potential === 'object' && typeof p.potential.grade === 'string')).toBe(true);
   });
 
   it('validates and saves a human lineup', async () => {

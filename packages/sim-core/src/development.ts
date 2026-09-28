@@ -104,15 +104,26 @@ function overallFloat(p: Player): number {
 }
 
 /** Probability this player hangs up the skates this summer. */
+/**
+ * Chance a player retires this summer. Age drives it, but so does whether he
+ * can still play: a serviceable veteran keeps going (elite ones into their
+ * 40s), a fading one hangs them up early, and every so often someone walks
+ * away young for his own reasons.
+ */
 export function retirementChance(p: Player, newAge: number, signed: boolean): number {
   const effAge = newAge - (p.pos === 'G' ? 1 : 0);
   const ovr = overall(p);
   if (!signed && newAge >= 28 && ovr < 56) return 0.6; // career ends in the minors
-  if (effAge < 33) return 0;
-  if (effAge >= 41) return 1;
-  let pr = (effAge - 32) * 0.14;
-  if (ovr >= 82) pr *= 0.5;
-  if (ovr < 64) pr += 0.2;
-  if (!signed) pr += 0.25;
+  if (effAge >= 44) return 1;
+  let base: number;
+  if (effAge < 29) base = 0.002;
+  else if (effAge < 32) base = 0.006;
+  else if (effAge === 32) base = 0.03;
+  else base = 0.05 + (effAge - 33) * 0.11 + (effAge >= 40 ? 0.15 : 0);
+  // How far above (or below) a replacement-level player he is, in tens of rating points.
+  const serviceable = (ovr - 66) / 10;
+  let pr = base * Math.exp(-0.9 * serviceable);
+  if (!signed && effAge >= 30) pr += 0.25;
+  if (effAge >= 41) pr = Math.max(pr, 0.3);
   return clamp(pr, 0, 0.97);
 }

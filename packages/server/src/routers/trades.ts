@@ -31,6 +31,7 @@ import { deliver, type Notice } from '../notify';
 import { readLeague } from '../state';
 import { badRequest, commissionerProcedure, memberProcedure, router, type Membership } from '../trpc';
 import { publicPlayer, teamInfo } from '../views';
+import { potentialView } from './data';
 
 const asset = z.union([z.object({ kind: z.literal('player'), id: z.string() }), z.object({ kind: z.literal('pick'), key: z.string() })]);
 const deal = z.object({ partner: z.string(), give: z.array(asset).max(10), get: z.array(asset).max(10) });
@@ -100,6 +101,7 @@ export const tradesRouter = router({
     const needs = input.fitsFor && L.teams[input.fitsFor] ? tradeBlock(L, L.teams[input.fitsFor]).needs : [];
     const player = (id: string, prospect: boolean) => ({
       ...publicPlayer(L, L.players[id]),
+      potential: potentialView(L, ctx.membership.teamId, L.players[id]),
       prospect,
       onBlock: onBlock.has(id),
       fits: assetFits(L, { kind: 'player', id }, needs),
@@ -159,7 +161,7 @@ export const tradesRouter = router({
             players: b.players
               .map((id) => L.players[id])
               .filter(Boolean)
-              .map((p) => ({ ...publicPlayer(L, p), prospect: !p.teamId, fits: assetFits(L, { kind: 'player', id: p.id }, myNeeds) })),
+              .map((p) => ({ ...publicPlayer(L, p), prospect: !p.teamId, potential: potentialView(L, my, p), fits: assetFits(L, { kind: 'player', id: p.id }, myNeeds) })),
             picks: b.picks.map((key) => ({ key, label: pickLabel(key) })),
           };
         }),

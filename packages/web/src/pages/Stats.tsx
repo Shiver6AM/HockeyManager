@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Card, cx, Empty, Spinner } from '../components/ui';
 import { signed } from '../format';
 import { useTRPC } from '../trpc';
@@ -39,7 +40,15 @@ export function StatsPage() {
             {awards.data.current.map((a) => (
               <div key={a.award} className="rounded-lg bg-rink-850 p-3">
                 <p className="text-xs font-semibold tracking-wider text-warn uppercase">{a.award}</p>
-                <p className="font-semibold text-white">{a.playerName ?? `${a.team.city} ${a.team.name}`}</p>
+                <p className="font-semibold text-white">
+                  {a.playerId ? (
+                    <Link to={`/league/${L.id}/player/${a.playerId}`} className="hover:underline">
+                      {a.playerName}
+                    </Link>
+                  ) : (
+                    <Link to={`/league/${L.id}/team/${a.team.id}`} className="hover:underline">{`${a.team.city} ${a.team.name}`}</Link>
+                  )}
+                </p>
                 <p className="text-xs text-ice-400">
                   {a.team.abbr} · {a.note}
                 </p>
@@ -81,6 +90,7 @@ function LeaderCard({
   rows: Array<{ id: string; name: string; pos: string; teamId: string | null; gp: number; value: number }>;
   fmt: (v: number) => string;
 }) {
+  const L = useLeague();
   return (
     <Card title={title}>
       {rows.length ? (
@@ -88,7 +98,9 @@ function LeaderCard({
           {rows.map((r, i) => (
             <li key={r.id} className={cx('flex items-center gap-2', i === 0 && 'text-white')}>
               <span className="w-5 text-ice-500">{i + 1}</span>
-              <span className={cx('flex-1 truncate', i === 0 && 'font-semibold')}>{r.name}</span>
+              <Link to={`/league/${L.id}/player/${r.id}`} className={cx('flex-1 truncate hover:underline', i === 0 && 'font-semibold')}>
+                {r.name}
+              </Link>
               <span className="w-8 text-xs text-ice-500">{r.pos}</span>
               <span className="w-9 text-xs text-ice-400">{r.teamId}</span>
               <span className="tabular w-12 text-right font-semibold">{fmt(r.value)}</span>

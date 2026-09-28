@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { advanceLeague, allHumansReady, type AdvanceSummary } from '../advance';
-import { badRequest, commissionerProcedure, memberProcedure, router } from '../trpc';
+import { advancerProcedure, badRequest, commissionerProcedure, memberProcedure, router } from '../trpc';
 
 const target = z.union([
   z.object({ days: z.number().int().min(1).max(400) }),
@@ -9,7 +9,7 @@ const target = z.union([
 
 export const simRouter = router({
   /** Commissioner-driven advance. Works in both modes (a manual override for scheduled leagues). */
-  advance: commissionerProcedure.input(z.object({ target })).mutation(async ({ ctx, input }) => {
+  advance: advancerProcedure.input(z.object({ target })).mutation(async ({ ctx, input }) => {
     const summary = await advanceLeague(ctx.db, input.leagueId, input.target, `commissioner:${ctx.user.id}`);
     await ctx.scheduler.sync(input.leagueId).catch(() => undefined);
     return summary;

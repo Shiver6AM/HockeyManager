@@ -59,7 +59,9 @@ export function FreeAgentsPage() {
           <ul className="space-y-1 text-sm">
             {d.myBids.map((b) => (
               <li key={b.playerId} className="flex items-center gap-3">
-                <span className="flex-1 text-ice-100">{b.name}</span>
+                <Link to={`/league/${L.id}/player/${b.playerId}`} className="flex-1 text-ice-100 hover:underline">
+                  {b.name}
+                </Link>
                 <span className="tabular text-white">
                   {money(b.offer.salary)} × {b.offer.years}y
                 </span>
@@ -156,7 +158,9 @@ export function FreeAgentsPage() {
               {d.results.map((r) => (
                 <li key={`${r.round}-${r.playerId}`} className={cx('flex items-center gap-2', r.mine && 'font-semibold')}>
                   <TeamChip team={r.team} size="sm" />
-                  <span className="flex-1 truncate text-ice-100">{r.name}</span>
+                  <Link to={`/league/${L.id}/player/${r.playerId}`} className="flex-1 truncate text-ice-100 hover:underline">
+                    {r.name}
+                  </Link>
                   <span className="tabular text-xs text-ice-300">
                     {money(r.offer.salary)} × {r.offer.years}y
                   </span>

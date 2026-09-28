@@ -27,12 +27,15 @@ export interface Membership {
   teamId: string | null;
   ready: boolean;
   isCommissioner: boolean;
+  /** Appointed by the commissioner: may advance the league. */
+  isCoCommissioner: boolean;
+  canAdvance: boolean;
 }
 
 /** Any procedure taking `leagueId` requires the caller to be a member. */
 export const memberProcedure = authedProcedure.input(z.object({ leagueId: z.string() })).use(async ({ ctx, input, next }) => {
-  const rows = await ctx.db.query<{ team_id: string | null; ready: boolean; commissioner_id: string }>(
-    `select m.team_id, m.ready, l.commissioner_id from league_members m join leagues l on l.id = m.league_id
+  const rows = await ctx.db.query<{ team_id: string | null; ready: boolean; commissioner_id: string; co_commissioner: boolean }>(
+    `select m.team_id, m.ready, l.commissioner_id, m.co_commissioner from league_members m join leagues l on l.id = m.league_id
      where m.league_id = $1 and m.user_id = $2`,
     [input.leagueId, ctx.user.id],
   );
@@ -42,12 +45,20 @@ export const memberProcedure = authedProcedure.input(z.object({ leagueId: z.stri
     teamId: rows[0].team_id,
     ready: rows[0].ready,
     isCommissioner: rows[0].commissioner_id === ctx.user.id,
+    isCoCommissioner: !!rows[0].co_commissioner,
+    canAdvance: rows[0].commissioner_id === ctx.user.id || !!rows[0].co_commissioner,
   };
   return next({ ctx: { ...ctx, membership } });
 });
 
 export const commissionerProcedure = memberProcedure.use(({ ctx, next }) => {
   if (!ctx.membership.isCommissioner) throw new TRPCError({ code: 'FORBIDDEN', message: 'Commissioner only' });
+  return next();
+});
+
+/** Commissioner or co-commissioner: may advance the league. */
+export const advancerProcedure = memberProcedure.use(({ ctx, next }) => {
+  if (!ctx.membership.canAdvance) throw new TRPCError({ code: 'FORBIDDEN', message: 'Only the commissioner or a co-commissioner can advance the league' });
   return next();
 });
 

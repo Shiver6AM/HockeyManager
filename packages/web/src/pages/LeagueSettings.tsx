@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Badge, Button, Card, cx, Empty, ErrorBox, TeamChip } from '../components/ui';
 import { dayLabel, timeUntil } from '../format';
 import { useTRPC, type Outputs } from '../trpc';
@@ -192,17 +193,49 @@ function Members() {
   const L = useLeague();
   const trpc = useTRPC();
   const qc = useQueryClient();
-  const release = useMutation(trpc.leagues.releaseTeam.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));
+  const release = useMutation(
+    trpc.leagues.releaseTeam.mutationOptions({
+      onSuccess: () => qc.invalidateQueries(),
+    }),
+  );
+  const co = useMutation(
+    trpc.leagues.setCoCommissioner.mutationOptions({
+      onSuccess: () => qc.invalidateQueries(),
+    }),
+  );
   return (
     <Card title={`Members (${L.members.length})`}>
+      {L.isCommissioner && (
+        <p className="mb-2 text-xs text-ice-400">Co-commissioners can advance the league. League settings and trade approvals stay with you.</p>
+      )}
       <ul className="divide-y divide-rink-700/60">
         {L.members.map((m) => (
           <li key={m.userId} className="flex items-center gap-3 py-2 text-sm">
             {m.team ? <TeamChip team={m.team} size="sm" /> : <span className="h-5 w-5" />}
             <span className="flex-1 text-ice-100">
               {m.displayName} {m.userId === L.commissionerId && <Badge tone="info">Commissioner</Badge>}
+              {m.coCommissioner && <Badge tone="good">Co-commissioner</Badge>}
             </span>
-            <span className="text-ice-400">{m.team ? `${m.team.city} ${m.team.name}` : 'No team'}</span>
+            {L.isCommissioner && m.userId !== L.commissionerId && (
+              <label className="flex items-center gap-1.5 text-xs text-ice-300" title="Can advance the league">
+                <input
+                  type="checkbox"
+                  checked={m.coCommissioner}
+                  disabled={co.isPending}
+                  onChange={(e) =>
+                    co.mutate({
+                      leagueId: L.id,
+                      userId: m.userId,
+                      value: e.target.checked,
+                    })
+                  }
+                />
+                Co-commish
+              </label>
+            )}
+            <span className="text-ice-400">
+              {m.team ? <Link to={`/league/${L.id}/team/${m.team.id}`} className="hover:underline">{`${m.team.city} ${m.team.name}`}</Link> : 'No team'}
+            </span>
             {m.team && (m.userId === L.members.find((x) => x.teamId === L.myTeamId)?.userId || L.isCommissioner) && (
               <Button
                 variant="ghost"
@@ -217,7 +250,7 @@ function Members() {
           </li>
         ))}
       </ul>
-      <ErrorBox error={release.error} />
+      <ErrorBox error={release.error ?? co.error} />
     </Card>
   );
 }
@@ -234,8 +267,17 @@ function AdvanceLog() {
             <li key={r.id} className="flex gap-2">
               <span className="w-32 shrink-0 text-xs text-ice-500">{new Date(r.at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}</span>
               <span className="text-ice-300">
-                <span className="text-ice-100">{r.by}</span>: {dayLabel(L.season, r.fromDay, { month: 'short', day: 'numeric' })} →{' '}
-                {dayLabel(L.season, r.toDay, { month: 'short', day: 'numeric' })}, {r.games} games
+                <span className="text-ice-100">{r.by}</span>:{' '}
+                {dayLabel(L.season, r.fromDay, {
+                  month: 'short',
+                  day: 'numeric',
+                })}{' '}
+                →{' '}
+                {dayLabel(L.season, r.toDay, {
+                  month: 'short',
+                  day: 'numeric',
+                })}
+                , {r.games} games
                 {r.phaseChanges.length > 0 && ` · ${r.phaseChanges.join(', ')}`}
               </span>
             </li>
@@ -258,9 +300,13 @@ function History() {
       {awards.data.history.map((h) => (
         <div key={h.season} className="text-sm">
           <p className="font-semibold text-white">
-            {h.season}-{String(h.season + 1).slice(2)}: {h.champion ? `${h.champion.city} ${h.champion.name}` : '—'}
+            {h.season}-{String(h.season + 1).slice(2)}:{' '}
+            {h.champion ? <Link to={`/league/${L.id}/team/${h.champion.id}`} className="hover:underline">{`${h.champion.city} ${h.champion.name}`}</Link> : '—'}
           </p>
-          <p className="text-ice-400">Runner-up: {h.runnerUp ? `${h.runnerUp.city} ${h.runnerUp.name}` : '—'}</p>
+          <p className="text-ice-400">
+            Runner-up:{' '}
+            {h.runnerUp ? <Link to={`/league/${L.id}/team/${h.runnerUp.id}`} className="hover:underline">{`${h.runnerUp.city} ${h.runnerUp.name}`}</Link> : '—'}
+          </p>
         </div>
       ))}
     </Card>

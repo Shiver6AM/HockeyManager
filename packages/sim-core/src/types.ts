@@ -1,3 +1,5 @@
+import type { Tactics } from './systems';
+
 /**
  * Core data model. Everything here is plain JSON-serializable data so the
  * same objects can live in a browser, a Web Worker, or a Postgres JSONB column.
@@ -103,6 +105,18 @@ export interface Lines {
   pp: PlayerId[][];
   /** Penalty-kill units: 4 skaters each (2F, 2D). */
   pk: PlayerId[][];
+  /** 4-on-4 units: [F, F, D, D]. (Optional fields: older saves are completed on first use.) */
+  fourOnFour?: PlayerId[][];
+  /** 3-on-3 (overtime) units: [F, F, D]. */
+  threeOnThree?: PlayerId[][];
+  /** 4-on-3 power play: [half wall, flank, bumper, point]. */
+  pp4?: PlayerId[];
+  /** 3-man penalty kill (5-on-3, 4-on-3): [F, D, D]. */
+  pk3?: PlayerId[];
+  /** Extra attacker when the goalie is pulled: 6 skaters. */
+  extraAttacker?: PlayerId[];
+  /** Shootout order (first five shooters). */
+  shootout?: PlayerId[];
 }
 
 export interface Team {
@@ -136,6 +150,8 @@ export interface Team {
   autoLines?: boolean;
   /** Human managers' trade block (AI blocks are computed). */
   tradeBlock?: TradeBlock;
+  /** Coaching systems (AI teams pick theirs to suit the roster). */
+  tactics?: Tactics;
 }
 
 /**

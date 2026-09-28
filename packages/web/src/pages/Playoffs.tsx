@@ -19,7 +19,10 @@ export function PlayoffsPage() {
         <h1 className="font-display text-2xl font-semibold tracking-wide text-white uppercase">Playoffs</h1>
         {po.champion && (
           <span className="inline-flex items-center gap-2 rounded-full border border-warn/40 bg-warn/10 px-3 py-1 text-sm text-warn">
-            🏆 <TeamChip team={po.champion} size="sm" /> {po.champion.city} {po.champion.name}
+            🏆 <TeamChip team={po.champion} size="sm" />{' '}
+            <Link to={`/league/${L.id}/team/${po.champion.id}`} className="hover:underline">
+              {po.champion.city} {po.champion.name}
+            </Link>
           </span>
         )}
       </div>
@@ -51,7 +54,9 @@ function SeriesCard({ s }: { s: Series }) {
   const row = (t: Series['high'], wins: number) => (
     <div className={cx('flex items-center gap-2', s.winner && s.winner !== t.id && 'opacity-50')}>
       <TeamChip team={t} size="sm" />
-      <span className={cx('flex-1 truncate text-sm', L.myTeamId === t.id && 'font-semibold text-white')}>{t.city}</span>
+      <Link to={`/league/${L.id}/team/${t.id}`} className={cx('flex-1 truncate text-sm hover:underline', L.myTeamId === t.id && 'font-semibold text-white')}>
+        {t.city}
+      </Link>
       <span className="tabular font-display text-lg text-white">{wins}</span>
     </div>
   );

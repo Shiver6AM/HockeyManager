@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EMPTY_FILTERS, matchesFilters, PlayerFilterBar, SortTh, useSort, type Filters } from '../components/PlayerFilters';
-import { Badge, Button, Card, cx, Empty, ErrorBox, Rating, Spinner, TeamChip, TeamLink } from '../components/ui';
+import { Badge, Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip, TeamLink } from '../components/ui';
 import { money } from '../format';
 import { useTRPC, type Outputs } from '../trpc';
 import { useLeague } from './LeagueLayout';
@@ -28,7 +28,56 @@ const NEED_LABEL: Record<string, string> = {
 };
 const ROUND = ['', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th'];
 /** Short forms for badges inside tables. */
-const NEED_SHORT: Record<string, string> = { C: 'C', W: 'W', D: 'D', G: 'G', young: 'Young', prospects: 'Prospect', picks: 'Pick', veteran: 'Vet', 'cap-space': 'Cap' };
+const NEED_SHORT: Record<string, string> = {
+  C: 'C',
+  W: 'W',
+  D: 'D',
+  G: 'G',
+  young: 'Young',
+  prospects: 'Prospect',
+  picks: 'Pick',
+  veteran: 'Vet',
+  'cap-space': 'Cap',
+};
+
+// Session memory for the trade builder (per-tab; survives navigating away and back).
+function loadDeal(leagueId: string, partner: string): { give: Asset[]; get: Asset[] } {
+  try {
+    const raw = partner ? sessionStorage.getItem(`hgm:trade:${leagueId}:${partner}`) : null;
+    if (raw) {
+      const v = JSON.parse(raw);
+      if (Array.isArray(v.give) && Array.isArray(v.get)) return v;
+    }
+  } catch {
+    /* storage unavailable */
+  }
+  return { give: [], get: [] };
+}
+function saveDeal(leagueId: string, partner: string, deal: { give: Asset[]; get: Asset[] }) {
+  try {
+    const key = `hgm:trade:${leagueId}:${partner}`;
+    if (deal.give.length + deal.get.length) sessionStorage.setItem(key, JSON.stringify(deal));
+    else sessionStorage.removeItem(key);
+  } catch {
+    /* storage unavailable */
+  }
+}
+function loadFilters(leagueId: string): Filters {
+  try {
+    const raw = sessionStorage.getItem(`hgm:tradeFilters:${leagueId}`);
+    if (raw) return { ...EMPTY_FILTERS, ...JSON.parse(raw) };
+  } catch {
+    /* storage unavailable */
+  }
+  return EMPTY_FILTERS;
+}
+function saveFilters(leagueId: string, f: Filters) {
+  try {
+    sessionStorage.setItem(`hgm:tradeFilters:${leagueId}`, JSON.stringify(f));
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 function useDebounced<T>(value: T, ms = 350) {
   const [v, setV] = useState(value);
@@ -46,14 +95,24 @@ export function TradesPage() {
   const [params, setParams] = useSearchParams();
   const partner = params.get('with') ?? '';
   const tab = params.get('tab') === 'block' ? 'block' : 'build';
-  const [give, setGive] = useState<Asset[]>([]);
-  const [get, setGet] = useState<Asset[]>([]);
+  // Selections are remembered per partner for this browser session, so looking
+  // at a player and coming back doesn't lose the deal you're building.
+  const [give, setGive] = useState<Asset[]>(() => loadDeal(L.id, partner).give);
+  const [get, setGet] = useState<Asset[]>(() => loadDeal(L.id, partner).get);
   const pendingGet = useRef<Asset[] | null>(null);
+  const loadedFor = useRef(partner);
   useEffect(() => {
-    setGive([]);
-    setGet(pendingGet.current ?? []);
+    if (loadedFor.current === partner && !pendingGet.current) return; // first render already loaded
+    loadedFor.current = partner;
+    const saved = loadDeal(L.id, partner);
+    const extra = (pendingGet.current ?? []).filter((a) => !saved.get.some((x) => keyOf(x) === keyOf(a)));
+    setGive(saved.give);
+    setGet([...saved.get, ...extra]);
     pendingGet.current = null;
-  }, [partner]);
+  }, [partner, L.id]);
+  useEffect(() => {
+    if (partner && loadedFor.current === partner) saveDeal(L.id, partner, { give, get });
+  }, [give, get, partner, L.id]);
 
   const status = useQuery(trpc.trades.status.queryOptions({ leagueId: L.id }));
   const teams = useQuery(trpc.leagues.teams.queryOptions({ leagueId: L.id }));
@@ -79,7 +138,11 @@ export function TradesPage() {
   const respond = useMutation(trpc.trades.respond.mutationOptions(done));
   const withdraw = useMutation(trpc.trades.withdraw.mutationOptions(done));
   const review = useMutation(trpc.trades.review.mutationOptions(done));
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [filters, setFiltersState] = useState<Filters>(() => loadFilters(L.id));
+  const setFilters = (f: Filters) => {
+    setFiltersState(f);
+    saveFilters(L.id, f);
+  };
 
   if (!L.myTeamId) return <Card><Empty>Claim a team to make trades.</Empty></Card>;
   if (!status.data || !mine.data) return <Spinner />;
@@ -155,7 +218,11 @@ export function TradesPage() {
           {!partner && (
             <Card>
               <Empty>
-                Choose a team to trade with, or browse every team's <button className="text-blue-300 hover:underline" onClick={() => setTab('block')}>trade block</button>.
+                Choose a team to trade with, or browse every team's{' '}
+                <button className="text-blue-300 hover:underline" onClick={() => setTab('block')}>
+                  trade block
+                </button>
+                .
               </Empty>
             </Card>
           )}
@@ -300,6 +367,7 @@ export function TradesPage() {
 
 /** One side of the preview: players by overall, then picks by round (then year). */
 function PreviewSide({ title, data, assets, onRemove }: { title: string; data: Assets; assets: Asset[]; onRemove: (a: Asset) => void }) {
+  const L = useLeague();
   const byId = new Map([...data.players, ...data.prospects].map((p) => [p.id, p]));
   const byKey = new Map(data.picks.map((p) => [p.key, p]));
   const players = assets.flatMap((a) => (a.kind === 'player' && byId.get(a.id) ? [byId.get(a.id)!] : [])).sort((a, b) => b.overall - a.overall);
@@ -321,8 +389,15 @@ function PreviewSide({ title, data, assets, onRemove }: { title: string; data: A
             <li key={p.id} className="flex items-center gap-2 px-2 py-1.5 text-sm">
               <Rating value={p.overall} />
               <span className="min-w-0 flex-1 truncate text-ice-50">
-                {p.name} <span className="text-xs text-ice-500">{p.pos} · {p.age}{p.prospect ? ' · prospect' : ''}</span>
+                <Link to={`/league/${L.id}/player/${p.id}`} className="hover:underline">
+                  {p.name}
+                </Link>{' '}
+                <span className="text-xs text-ice-500">
+                  {p.pos} · {p.age}
+                  {p.prospect ? ' · prospect' : ''}
+                </span>
               </span>
+              <PotentialBadge potential={p.potential} />
               <span className="tabular text-xs text-ice-300">{p.contract ? `${money(p.contract.salary)} · ${p.contract.yearsLeft}y` : 'unsigned'}</span>
               <button className="px-1 text-ice-500 hover:text-red-300" aria-label={`Remove ${p.name}`} onClick={() => onRemove({ kind: 'player', id: p.id })}>
                 ×
@@ -431,6 +506,7 @@ function AssetPicker({
             <SortTh label="Type" k="type" sort={sort} className="hidden 2xl:table-cell" />
             <SortTh label="Age" k="age" sort={sort} className="num" />
             <SortTh label="OVR" k="overall" sort={sort} className="num" />
+            <th title="Scouts' grade for his ceiling (hover for the projected role)">Pot</th>
             <SortTh label="AAV" k="aav" sort={sort} className="num" />
             <SortTh label="Yrs" k="years" sort={sort} className="num" />
             <SortTh label="Expiry" k="status" sort={sort} />
@@ -460,6 +536,9 @@ function AssetPicker({
               <td className="num">{p.age}</td>
               <td className="num">
                 <Rating value={p.overall} />
+              </td>
+              <td>
+                <PotentialBadge potential={p.potential} />
               </td>
               <td className="num tabular">{p.contract ? money(p.contract.salary) : '—'}</td>
               <td className="num tabular">{p.contract ? p.contract.yearsLeft : '—'}</td>
@@ -626,7 +705,10 @@ function BlockTab({ mine, onTradeFor }: { mine: Assets; onTradeFor: (teamId: str
                   <li key={p.id} className="flex items-center gap-2">
                     <Rating value={p.overall} />
                     <span className="flex-1 truncate">
-                      {p.name} <span className="text-xs text-ice-500">{p.pos} · {p.age}</span>
+                      {p.name}{' '}
+                      <span className="text-xs text-ice-500">
+                        {p.pos} · {p.age}
+                      </span>
                     </span>
                     <button className="text-xs text-ice-500 hover:text-red-300" onClick={() => save({ players: mine.block.players.filter((x) => x !== p.id) })}>
                       Remove
@@ -671,6 +753,7 @@ function BlockTab({ mine, onTradeFor }: { mine: Assets; onTradeFor: (teamId: str
                     <SortTh label="Type" k="type" sort={sort} />
                     <SortTh label="Age" k="age" sort={sort} className="num" />
                     <SortTh label="OVR" k="overall" sort={sort} className="num" />
+                    <th>Potential</th>
                     <SortTh label="AAV" k="aav" sort={sort} className="num" />
                     <SortTh label="Yrs" k="years" sort={sort} className="num" />
                     <SortTh label="Expiry" k="status" sort={sort} />
@@ -695,6 +778,9 @@ function BlockTab({ mine, onTradeFor }: { mine: Assets; onTradeFor: (teamId: str
                       <td className="num">{p.age}</td>
                       <td className="num">
                         <Rating value={p.overall} />
+                      </td>
+                      <td>
+                        <PotentialBadge potential={p.potential} showLabel />
                       </td>
                       <td className="num tabular">{p.contract ? money(p.contract.salary) : '—'}</td>
                       <td className="num tabular">{p.contract ? p.contract.yearsLeft : '—'}</td>

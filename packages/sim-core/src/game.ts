@@ -10,7 +10,26 @@
  * All tuning constants live in TUNING so the calibration harness can adjust them.
  */
 import { clamp, Rng } from './rng';
+import { completeLines } from './lines';
 import { defensiveDrive, goalieQuality, offensiveDrive } from './ratings';
+import {
+  combine,
+  DEFAULT_TACTICS,
+  evenStrengthEffect,
+  EXTRA_ATTACKER_SLOTS,
+  NEUTRAL,
+  penaltyKillEffect,
+  PK3_SLOTS,
+  PK_SLOTS,
+  PP4_SLOTS,
+  PP_FORMATIONS,
+  powerPlayEffect,
+  roleSkills,
+  type Role,
+  type Slot,
+  type SystemEffect,
+  type Tactics,
+} from './systems';
 import type {
   BoxScore,
   InjuryEvent,
@@ -23,6 +42,7 @@ import type {
   PlayerId,
   SkaterGameLine,
   Strength,
+  Lines,
   Team,
   TeamGameLine,
 } from './types';
@@ -45,12 +65,12 @@ export const TUNING = {
     '4v6': 12,
   } as Record<string, number>,
   /** Sensitivity of attempt rate to (offense - opposing defense), per 10 rating points. */
-  driveEffect: 0.14,
+  driveEffect: 0.13,
   blockBase: 0.25,
   missBase: 0.34,
   /** Base shooting % on shots on goal, by situation. */
   shPct: { EV: 0.089, PP: 0.118, SH: 0.09, OT: 0.1, EN: 0.92 } as Record<string, number>,
-  shooterEffect: 0.16, // per 10 shooting points
+  shooterEffect: 0.14, // per 10 shooting points
   supportEffect: 0.1, // teammates' passing/IQ vs defense
   goalieEffect: 0.19, // per 10 goalie points
   defenseShotFactor: 0.62, // D point shots are lower quality
@@ -87,7 +107,7 @@ export const TUNING = {
   },
   pullGoalie: { down1: 170, down2: 240 },
   formSd: { skater: 3, goalie: 4.5 },
-  forwardShare: [0.3, 0.28, 0.24, 0.18],
+  forwardShare: [0.285, 0.275, 0.245, 0.195],
   defenseShare: [0.37, 0.34, 0.29],
 };
 
@@ -126,11 +146,19 @@ interface GP {
   lastT: number;
   on: boolean;
   drainMult: number;
+  roles: Record<Role, number>;
 }
 
 interface Side {
   key: 'home' | 'away';
   team: Team;
+  /** The team's lines with every special unit filled in. */
+  lines: Lines;
+  tactics: Tactics;
+  /** Effect of the current on-ice unit's system fit. */
+  sys: SystemEffect;
+  /** Slot each on-ice skater is playing (special teams), for shot selection. */
+  slotOf: Map<PlayerId, Slot>;
   goalie: PlayerId;
   backup: PlayerId;
   goalieIn: boolean;
@@ -236,6 +264,7 @@ export function simulateGame(
         lastT: 0,
         on: false,
         drainMult,
+        roles: roleSkills(p),
       };
       skaters[id] = newSkaterLine();
     }
@@ -246,6 +275,7 @@ export function simulateGame(
         id, pos: 'G', off: 0, def: 0, shoot: 0, pass: 0, support: 0, check: 0, disc: 0, fo: 0, block: 0,
         gq: goalieQuality(p.goalie!) + form - (backToBack ? 1.5 : 0),
         endurance: 100, prone: p.hidden.injuryProneness, energy: 100, lastT: 0, on: false, drainMult: 1,
+        roles: {} as Record<Role, number>,
       };
     }
   };
@@ -258,8 +288,11 @@ export function simulateGame(
     const goalie = backupStarts ? g2 : g1;
     const backup = backupStarts ? g1 : g2;
     goalies[goalie] = { sa: 0, ga: 0, toi: 0, decision: null };
+    const tactics = team.tactics ?? DEFAULT_TACTICS;
+    const dressed = [...team.lines.forwards.flat(), ...team.lines.defense.flat()].map((id) => league.players[id]);
+    const lines = completeLines(team.lines, dressed, tactics);
     return {
-      key, team, goalie, backup, goalieIn: true, goaliePulled: false, box: [],
+      key, team, lines, tactics, sys: NEUTRAL, slotOf: new Map(), goalie, backup, goalieIn: true, goaliePulled: false, box: [],
       fIdx: 0, dIdx: 0, fLeft: 45, dLeft: 50, fTime: [0, 0, 0, 0], dTime: [0, 0, 0], esTime: 0, ppClock: 0,
       onIce: [], off: 0, def: 0, support: 0, block: 0, line: newTeamLine(), goalieStartGoals: 0,
       out: new Set(),
@@ -327,28 +360,36 @@ export function simulateGame(
   };
 
   const setOnIce = (s: Side) => {
-    const L = s.team.lines;
-    const n = skaterCount(s);
+    const L = s.lines;
     const sit = situation(s);
+    const base = baseCount(s);
     let ids: PlayerId[];
+    let slots: Slot[] | null = null;
     if (sit === 'PP') {
-      const unit = s.ppClock < 70 ? L.pp[0] : L.pp[1];
-      ids = [unit[0], unit[1], unit[2], unit[4], unit[3]].slice(0, Math.min(5, n));
+      if (base >= 5) {
+        ids = s.ppClock < 70 ? L.pp[0] : L.pp[1];
+        slots = PP_FORMATIONS[s.tactics.pp].slots;
+      } else {
+        ids = L.pp4!;
+        slots = PP4_SLOTS;
+      }
     } else if (sit === 'SH') {
-      const unit = s.ppClock < 60 ? L.pk[0] : L.pk[1];
-      ids = n >= 4 ? unit.slice(0, 4) : [unit[0], unit[2], unit[3]];
-    } else {
-      const f = L.forwards[s.fIdx];
-      const d = L.defense[s.dIdx];
-      const base = baseCount(s);
-      if (base >= 5) ids = [...f, ...d];
-      else if (base === 4) ids = [f[1], f[0], ...d];
-      else ids = [f[1], f[0], d[0]];
-    }
+      if (base >= 4) {
+        ids = s.ppClock < 60 ? L.pk[0] : L.pk[1];
+        slots = PK_SLOTS;
+      } else {
+        ids = L.pk3!;
+        slots = PK3_SLOTS;
+      }
+    } else if (base >= 5) {
+      ids = s.goaliePulled ? L.extraAttacker!.slice(0, 5) : [...L.forwards[s.fIdx], ...L.defense[s.dIdx]];
+      if (s.goaliePulled) slots = EXTRA_ATTACKER_SLOTS.slice(0, 5);
+    } else if (base === 4) ids = L.fourOnFour![s.fIdx % 2];
+    else ids = L.threeOnThree![s.fIdx % 3];
     // Anyone in the box or hurt is replaced by the next available skater of the same kind.
     const unavailable = new Set([...s.box.map((b) => b.id), ...s.out]);
     if (s.goaliePulled) {
-      const extra = [...L.forwards[0], ...L.forwards[1]].find((id) => !ids.includes(id) && !unavailable.has(id));
+      const extra = [...L.extraAttacker!, ...L.forwards[0], ...L.forwards[1]].find((id) => !ids.includes(id) && !unavailable.has(id));
       if (extra) ids = [...ids, extra];
     }
     const dressed = [...L.forwards.flat(), ...L.defense.flat()];
@@ -371,6 +412,25 @@ export function simulateGame(
       p.on = false;
     }
     s.onIce = chosen.map((id) => gp[id]);
+    s.slotOf = new Map();
+    if (slots) chosen.forEach((id, i) => slots![i] && s.slotOf.set(id, slots![i]));
+    // How well this unit fits the team's systems for the situation.
+    if (sit === 'PP') {
+      const fit = chosen.reduce((sum, id, i) => sum + (slots?.[i] ? gp[id].roles[slots[i].role] : 60), 0) / chosen.length;
+      s.sys = powerPlayEffect(s.tactics.pp, fit);
+    } else if (sit === 'SH') {
+      const fit = chosen.reduce((sum, id, i) => sum + (slots?.[i] ? gp[id].roles[slots[i].role] : 60), 0) / chosen.length;
+      s.sys = penaltyKillEffect(s.tactics.pk, fit, other(s).tactics.pp);
+    } else {
+      const fwd = s.onIce.filter((p) => p.pos !== 'D');
+      const dmen = s.onIce.filter((p) => p.pos === 'D');
+      const avg = (r: Role) => {
+        const pool = r === 'point' ? dmen : fwd;
+        const xs = (pool.length ? pool : s.onIce).map((p) => p.roles[r]);
+        return xs.reduce((a, b) => a + b, 0) / xs.length;
+      };
+      s.sys = combine(evenStrengthEffect(s.tactics, avg), NEUTRAL);
+    }
     let off = 0, def = 0, sup = 0, blk = 0;
     for (const p of s.onIce) {
       touch(p);
@@ -414,7 +474,7 @@ export function simulateGame(
     const o = other(s);
     const key = strengthKey(s);
     const base = T.attemptsPer60[key] ?? T.attemptsPer60['5v5'];
-    let r = (base / 3600) * Math.exp((T.driveEffect * (s.off - o.def)) / 10);
+    let r = (base / 3600) * Math.exp((T.driveEffect * (s.off - o.def)) / 10) * s.sys.att * o.sys.oppAtt;
     if (s === home) r *= T.homeIce;
     if (period >= 2 && period <= 3) {
       const diff = s.line.goals - o.line.goals;
@@ -469,9 +529,14 @@ export function simulateGame(
   const shotAttempt = (s: Side, rebound: boolean): 'goal' | 'stoppage' | 'rebound' | 'play' => {
     const o = other(s);
     const sit = situation(s);
+    // Rebounds go to whoever is at the net; special-teams slots decide who shoots.
     const shooter = rebound
-      ? weightedPick(rng, s.onIce.filter((p) => p.pos !== 'D'), (p) => Math.exp((p.shoot - 70) / 30))
-      : weightedPick(rng, s.onIce, (p) => Math.exp((0.6 * p.shoot + 0.4 * p.off - 70) / 36) * (p.pos === 'D' ? 0.62 : 1));
+      ? weightedPick(rng, s.onIce.some((p) => p.pos !== 'D') ? s.onIce.filter((p) => p.pos !== 'D') : s.onIce, (p) => Math.exp((p.shoot - 70) / 30) * Math.exp((p.roles.netFront - 70) / 45))
+      : weightedPick(
+          rng,
+          s.onIce,
+          (p) => Math.exp((0.6 * p.shoot + 0.4 * p.off - 70) / 36) * (p.pos === 'D' ? 0.62 * s.sys.dShare : 1) * (s.slotOf.get(p.id)?.shoot ?? 1),
+        );
     skaters[shooter.id].att++;
     s.line.attempts++;
     const emptyNet = !o.goalieIn;
@@ -512,12 +577,13 @@ export function simulateGame(
       Math.exp((-T.goalieEffect * (g.gq - 76)) / 10);
     if (shooter.pos === 'D') pGoal *= T.defenseShotFactor;
     if (rebound) pGoal *= T.reboundBoost;
+    pGoal *= s.sys.shq * o.sys.oppShq;
     pGoal = clamp(pGoal, 0.01, 0.6);
     if (rng.chance(pGoal)) {
       creditGoal(s, shooter, rebound);
       return 'goal';
     }
-    if (!rebound && rng.chance(T.reboundChance)) return 'rebound';
+    if (!rebound && rng.chance(T.reboundChance * s.sys.rebound)) return 'rebound';
     return rng.chance(T.freezeChance) ? 'stoppage' : 'play';
   };
 
@@ -758,7 +824,7 @@ export function simulateGame(
     period = Math.min(period, maxPeriod);
     if (home.line.goals === away.line.goals) {
       shootout = true;
-      const winner = runShootout(rng, league, home.team, away.team, gp[home.goalie].gq, gp[away.goalie].gq);
+      const winner = runShootout(rng, league, home.lines, away.lines, gp[home.goalie].gq, gp[away.goalie].gq);
       (winner === 'home' ? home : away).line.goals++;
     }
   }
@@ -808,17 +874,20 @@ export function simulateGame(
   return { homeScore: home.line.goals, awayScore: away.line.goals, overtime, shootout, box };
 }
 
-function runShootout(rng: Rng, league: League, home: Team, away: Team, homeGq: number, awayGq: number): 'home' | 'away' {
-  const shooters = (t: Team) =>
-    t.lines.forwards
-      .flat()
+function runShootout(rng: Rng, league: League, home: Lines, away: Lines, homeGq: number, awayGq: number): 'home' | 'away' {
+  // The coach's shootout order first, then everyone else by shootout skill.
+  const shooters = (l: Lines) => {
+    const rest = [...l.forwards.flat(), ...l.defense.flat()]
+      .filter((id) => !l.shootout?.includes(id))
       .map((id) => league.players[id])
-      .sort((a, b) => b.skater!.shooting + b.skater!.handling - (a.skater!.shooting + a.skater!.handling));
+      .sort((a, b) => roleSkills(b).shootout - roleSkills(a).shootout);
+    return [...(l.shootout ?? []).map((id) => league.players[id]).filter(Boolean), ...rest];
+  };
   const hs = shooters(home);
   const as = shooters(away);
   const pScore = (id: string, gq: number) => {
-    const s = league.players[id].skater!;
-    return clamp(0.32 + ((s.shooting + s.handling) / 2 - 78) * 0.008 - (gq - 76) * 0.008, 0.12, 0.6);
+    const skill = roleSkills(league.players[id]).shootout;
+    return clamp(0.32 + (skill - 78) * 0.008 - (gq - 76) * 0.008, 0.12, 0.6);
   };
   let h = 0;
   let a = 0;
