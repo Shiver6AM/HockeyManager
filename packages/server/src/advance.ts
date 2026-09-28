@@ -234,8 +234,25 @@ export class Scheduler {
   ) {}
 
   async start() {
-    const rows = await this.db.query<{ id: string }>(`select id from leagues where advance->>'mode' = 'scheduled'`);
-    for (const r of rows) await this.sync(r.id);
+    const rows = await this.db.query<{ id: string; next_advance_at: Date | null }>(
+      `select id, next_advance_at from leagues where advance->>'mode' = 'scheduled'`,
+    );
+    for (const r of rows) {
+      // The server was down or asleep when this league was due: catch up once
+      // (not once per missed tick, so a long outage doesn't sim weeks at once).
+      if (r.next_advance_at && new Date(r.next_advance_at).getTime() < Date.now()) {
+        try {
+          const adv = (await this.db.query<{ advance: AdvanceMode }>('select advance from leagues where id = $1', [r.id]))[0]?.advance;
+          if (adv?.mode === 'scheduled') {
+            const res = await advanceLeague(this.db, r.id, { days: adv.daysPerTick }, 'schedule');
+            this.log(`[schedule] ${r.id}: caught up a missed advance, day ${res.fromDay} -> ${res.toDay}`);
+          }
+        } catch (e) {
+          this.log(`[schedule] ${r.id}: catch-up failed: ${(e as Error).message}`);
+        }
+      }
+      await this.sync(r.id);
+    }
   }
 
   stop() {

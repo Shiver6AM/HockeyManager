@@ -30,20 +30,24 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 97 tests: sim determinism, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 101 tests: sim determinism, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
 npm run dynasty 10    # one league for 10 seasons: talent, scoring and ages should stay stable
 ```
 
-### Moving to Supabase (or any hosted Postgres)
+### Deploying (Supabase + a Node host)
 
-Set `DATABASE_URL` to the connection string and start the server. Migrations run
-automatically at startup; they're plain SQL in `packages/server/src/schema.ts`.
+See **[DEPLOY.md](DEPLOY.md)**. In short: the database is Supabase, the game server runs
+on any always-on Node host (a Render Blueprint is included in `render.yaml`), and one
+process serves the API, the scheduler and the web app. Set `DATABASE_URL` to Supabase's
+**Session pooler** connection string; tables are created automatically on startup, with
+row-level security so Supabase's public API can't read them.
 
 ```bash
-DATABASE_URL="postgresql://postgres:<password>@db.<project>.supabase.co:5432/postgres" npm run dev
+npm run build                                   # build the web app
+NODE_ENV=production DATABASE_URL="postgresql://…pooler.supabase.com:5432/postgres" npm start
 ```
 
 ## How it's built
