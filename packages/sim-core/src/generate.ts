@@ -25,6 +25,11 @@ const FORWARD_ARCHETYPES: Record<string, Partial<Record<SkaterKey, number>>> = {
   Speedster: { skating: 10, handling: 3, checking: -6, defIQ: -3, passing: -1 },
   Grinder: { checking: 9, defIQ: 4, endurance: 3, shooting: -6, handling: -6, passing: -5, offIQ: -5, discipline: -6 },
 };
+/** Once-a-generation talent: elite everywhere, no real weakness. Never picked at random. */
+const GENERATIONAL: Partial<Record<SkaterKey, number>> = {
+  skating: 4, shooting: 3, passing: 4, handling: 4, offIQ: 5, defIQ: -2, checking: -4, endurance: 3,
+};
+
 const DEFENSE_ARCHETYPES: Record<string, Partial<Record<SkaterKey, number>>> = {
   'Offensive D': { passing: 7, offIQ: 7, skating: 4, shooting: 5, defIQ: -5, checking: -5 },
   'Shutdown D': { defIQ: 7, checking: 8, offIQ: -7, passing: -4, shooting: -3 },
@@ -89,7 +94,8 @@ function contractFor(rng: Rng, ovr: number, age: number): Contract {
 }
 
 function generateSkaterRatings(rng: Rng, pos: Position, target: number, archetype: string): SkaterRatings {
-  const offsets = (pos === 'D' ? DEFENSE_ARCHETYPES : FORWARD_ARCHETYPES)[archetype] ?? {};
+  const offsets =
+    archetype === 'Generational' ? GENERATIONAL : (pos === 'D' ? DEFENSE_ARCHETYPES : FORWARD_ARCHETYPES)[archetype] ?? {};
   const r = {} as SkaterRatings;
   const keys: SkaterKey[] = ['skating', 'shooting', 'passing', 'handling', 'offIQ', 'defIQ', 'checking', 'faceoffs', 'discipline', 'endurance'];
   for (const k of keys) {
@@ -115,7 +121,14 @@ function fitToTarget(p: Player, target: number) {
   }
 }
 
-export function generatePlayer(rng: Rng, pos: Position, target: number, season: number, forcedAge?: number): Player {
+export function generatePlayer(
+  rng: Rng,
+  pos: Position,
+  target: number,
+  season: number,
+  forcedAge?: number,
+  forcedArchetype?: 'Generational',
+): Player {
   const age = forcedAge ?? sampleAge(rng);
   const ovr = Math.round(clamp(target + ageAdjustment(age), 40, 97));
   const { firstName, lastName, nationality } = makeName(rng);
@@ -132,6 +145,9 @@ export function generatePlayer(rng: Rng, pos: Position, target: number, season: 
       rebounds: g(archetype === 'Hybrid' ? 3 : -1),
       mental: g(0),
     };
+  } else if (forcedArchetype) {
+    archetype = forcedArchetype;
+    skater = generateSkaterRatings(rng, pos, ovr, archetype);
   } else {
     const pool = pos === 'D' ? DEFENSE_ARCHETYPES : FORWARD_ARCHETYPES;
     const names = Object.keys(pool);
@@ -160,6 +176,7 @@ export function generatePlayer(rng: Rng, pos: Position, target: number, season: 
       personality: { greed: rng.next(), loyalty: rng.next(), ambition: rng.next() },
     },
     contract: null,
+    injury: null,
   };
   fitToTarget(p, ovr);
   p.hidden.potential = potentialFor(rng, overall(p), age);
@@ -171,6 +188,8 @@ export function generatePlayer(rng: Rng, pos: Position, target: number, season: 
 const FORWARD_TIERS = [81, 74, 68, 63]; // per line
 const DEFENSE_TIERS = [80, 77, 73, 70, 66, 63, 60];
 const GOALIE_TIERS = [77, 68];
+/** How many once-a-generation players a new league starts with. */
+const GENERATIONAL_PLAYERS = 2;
 
 export function generateLeague(opts: GenerateOptions): League {
   const season = opts.season ?? 2026;
@@ -178,6 +197,10 @@ export function generateLeague(opts: GenerateOptions): League {
   idCounter = 0;
   const players: Record<string, Player> = {};
   const teams: Record<string, Team> = {};
+
+  const generationalTeams = new Set(
+    rng.shuffle(FRANCHISES.map((f) => f.abbr)).slice(0, GENERATIONAL_PLAYERS),
+  );
 
   for (const f of FRANCHISES) {
     const teamRng = rng.child(f.abbr);
@@ -191,6 +214,14 @@ export function generateLeague(opts: GenerateOptions): League {
       roster.push(p);
     };
     for (const tier of FORWARD_TIERS) for (const pos of ['LW', 'C', 'RW'] as Position[]) add(pos, tier);
+    // A couple of teams start with a generational superstar on the top line.
+    if (generationalTeams.has(f.abbr)) {
+      const slot = teamRng.int(0, 2);
+      const old = roster[slot];
+      const star = generatePlayer(teamRng, old.pos, teamRng.normal(94.5, 1.2), season, teamRng.int(21, 28), 'Generational');
+      star.teamId = f.abbr;
+      roster[slot] = star;
+    }
     add(teamRng.pick(['LW', 'C', 'RW'] as Position[]), 60);
     add(teamRng.pick(['LW', 'C', 'RW'] as Position[]), 59);
     for (const tier of DEFENSE_TIERS) add('D', tier);
@@ -255,6 +286,12 @@ export function generateLeague(opts: GenerateOptions): League {
     schedule: [],
     skaterStats: {},
     goalieStats: {},
+    playoffs: null,
+    playoffSkaterStats: {},
+    playoffGoalieStats: {},
+    awards: {},
+    history: [],
+    transactions: [],
   };
   league.schedule = buildSchedule(Object.values(teams), new Rng(deriveSeed(opts.seed, `schedule:${season}`)));
   return league;

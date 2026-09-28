@@ -6,3 +6,6 @@ export * from './generate';
 export * from './schedule';
 export * from './game';
 export * from './league';
+export * from './roster';
+export * from './playoffs';
+export * from './awards';

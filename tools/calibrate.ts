@@ -5,7 +5,7 @@
  *
  *   npm run calibrate -- [seasons=5]
  */
-import { advanceToEnd, generateLeague, overall, standings, type League } from '../packages/sim-core/src/index';
+import { advanceToEndOfSeason, generateLeague, overall, standings, type League } from '../packages/sim-core/src/index';
 
 interface Target {
   label: string;
@@ -47,6 +47,15 @@ interface Metrics {
   bestSvPct: number[];
   worstSvPct: number[];
   top100Pts: number[];
+  injuries: number;
+  manGamesLost: number;
+  teamSeasons: number;
+  seriesGames: number;
+  series: number;
+  playoffGames: number;
+  playoffOT: number;
+  backupStarts: number;
+  goalieStarts: number;
 }
 
 const f2 = (x: number) => x.toFixed(2);
@@ -82,6 +91,11 @@ const TARGETS: Target[] = [
   { label: 'Top forward TOI (min)', nhl: 22, tol: 1.5, fmt: f1, get: (m) => mean(m.topFToi) },
   { label: 'Shutouts leader', nhl: 7, tol: 3, fmt: f1, get: (m) => mean(m.topShutouts) },
   { label: 'Best faceoff % (min 500)', nhl: 0.6, tol: 0.03, fmt: pct, get: (m) => mean(m.topFoPct) },
+  { label: 'Injuries / team / season', nhl: 25, tol: 8, fmt: f1, get: (m) => m.injuries / m.teamSeasons },
+  { label: 'Man-games lost / team (approx.)', nhl: 260, tol: 90, fmt: f1, get: (m) => m.manGamesLost / m.teamSeasons },
+  { label: 'Starts by backup goalies', nhl: 0.3, tol: 0.08, fmt: pct, get: (m) => m.backupStarts / m.goalieStarts },
+  { label: 'Games per playoff series', nhl: 5.8, tol: 0.4, fmt: f2, get: (m) => m.seriesGames / m.series },
+  { label: 'Playoff games to overtime', nhl: 0.22, tol: 0.06, fmt: pct, get: (m) => m.playoffOT / m.playoffGames },
   { label: 'Best goalie save % (min 40 GP)', nhl: 0.922, tol: 0.008, fmt: f3, get: (m) => mean(m.bestSvPct) },
   { label: 'Worst goalie save % (min 40 GP)', nhl: 0.885, tol: 0.008, fmt: f3, get: (m) => mean(m.worstSvPct) },
 ];
@@ -92,6 +106,8 @@ export function collect(leagues: League[]): Metrics {
     hits: 0, blocks: 0, pim: 0, ot: 0, so: 0, homeWins: 0, assists: 0, savesNonEN: 0, shotsAgainstNonEN: 0,
     ptsMax: [], ptsMin: [], ptsSd: [], topPoints: [], topGoals: [], topAssists: [], topDToi: [], topFToi: [],
     topShutouts: [], topFoPct: [], bestSvPct: [], worstSvPct: [], top100Pts: [],
+    injuries: 0, manGamesLost: 0, teamSeasons: 0, seriesGames: 0, series: 0, playoffGames: 0, playoffOT: 0,
+    backupStarts: 0, goalieStarts: 0,
   };
   for (const L of leagues) {
     for (const g of L.schedule) {
@@ -123,6 +139,44 @@ export function collect(leagues: League[]): Metrics {
         m.shotsAgainstNonEN += gl.sa;
       }
     }
+    // Injuries and man-games lost (regular season only).
+    m.teamSeasons += Object.keys(L.teams).length;
+    const teamDays = new Map<string, number[]>();
+    for (const g of L.schedule) {
+      for (const t of [g.home, g.away]) {
+        if (!teamDays.has(t)) teamDays.set(t, []);
+        teamDays.get(t)!.push(g.day);
+      }
+    }
+    const regEnd = Math.max(...L.schedule.map((g) => g.day));
+    for (const tx of L.transactions) {
+      if (tx.type !== 'injury' || tx.day > regEnd) continue;
+      m.injuries++;
+      const back = L.transactions.find((r) => r.type === 'return' && r.playerId === tx.playerId && r.day > tx.day);
+      const until = back ? back.day : Infinity;
+      m.manGamesLost += (teamDays.get(tx.teamId) ?? []).filter((d) => d > tx.day && d < until).length;
+    }
+    // Backup starts: starts by each team's goalie with fewer starts.
+    const starts = new Map<string, number[]>();
+    for (const [id, g] of Object.entries(L.goalieStats)) {
+      const t = L.players[id].teamId!;
+      if (!starts.has(t)) starts.set(t, []);
+      starts.get(t)!.push(g.gs);
+    }
+    for (const list of starts.values()) {
+      list.sort((a, b) => b - a);
+      m.goalieStarts += list.reduce((a, b) => a + b, 0);
+      m.backupStarts += list.slice(1).reduce((a, b) => a + b, 0);
+    }
+    for (const round of L.playoffs?.rounds ?? []) {
+      for (const s of round) {
+        m.series++;
+        m.seriesGames += s.games.length;
+        m.playoffGames += s.games.length;
+        m.playoffOT += s.games.filter((g) => g.result!.overtime).length;
+      }
+    }
+
     const st = standings(L);
     const pts = st.map((s) => s.pts);
     m.ptsMax.push(Math.max(...pts));
@@ -174,7 +228,7 @@ if (isMain) {
   const t0 = Date.now();
   for (let i = 0; i < n; i++) {
     const L = generateLeague({ seed: 1000 + i });
-    advanceToEnd(L);
+    advanceToEndOfSeason(L);
     leagues.push(L);
   }
   const secs = (Date.now() - t0) / 1000;
