@@ -91,4 +91,21 @@ create table notifications (
 create index notifications_user on notifications (user_id, id desc);
 `,
   ],
+  [
+    // Supabase exposes tables in the public schema through its REST API to
+    // anyone with the project's (public) anon key. Row-level security with no
+    // policies shuts that door; the game server connects as the table owner,
+    // which RLS doesn't apply to.
+    '003_row_level_security',
+    `
+alter table users enable row level security;
+alter table sessions enable row level security;
+alter table leagues enable row level security;
+alter table league_members enable row level security;
+alter table box_scores enable row level security;
+alter table advance_log enable row level security;
+alter table notifications enable row level security;
+alter table _migrations enable row level security;
+`,
+  ],
 ];

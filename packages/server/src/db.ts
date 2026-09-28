@@ -64,8 +64,37 @@ async function createPglite(dataDir?: string): Promise<Db> {
   };
 }
 
+/**
+ * Connection options for a real Postgres server.
+ *
+ * Hosted Postgres (Supabase included) requires TLS. Supabase's pooler
+ * certificates aren't in Node's default trust store, so by default the
+ * connection is encrypted without verifying the certificate; set
+ * DATABASE_CA_CERT (the PEM from Supabase → Database settings → SSL) to verify
+ * it too. Local servers connect without TLS, and `sslmode=disable` opts out.
+ */
+export function pgConfig(url: string, env: Record<string, string | undefined> = process.env): pg.PoolConfig {
+  const u = new URL(url);
+  const sslmode = u.searchParams.get('sslmode');
+  u.searchParams.delete('sslmode'); // handled below; pg would otherwise reinterpret it
+  const local = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(u.hostname);
+  const ca = env.DATABASE_CA_CERT?.replace(/\\n/g, '\n');
+  const ssl = sslmode === 'disable' || (local && !sslmode) ? false : ca ? { ca, rejectUnauthorized: true } : { rejectUnauthorized: false };
+  return {
+    connectionString: u.toString(),
+    ssl,
+    // Supabase's pooler allows a limited number of clients; one server needs few.
+    max: Number(env.PG_POOL_MAX ?? 5),
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 15_000,
+    keepAlive: true,
+  };
+}
+
 function createPg(url: string): Db {
-  const pool = new pg.Pool({ connectionString: url, max: 10 });
+  const pool = new pg.Pool(pgConfig(url));
+  // Poolers drop idle connections; without this handler that would crash the server.
+  pool.on('error', (e) => console.error('[db] idle client error:', e.message));
   return {
     kind: 'postgres',
     async query<T>(sql: string, params: unknown[] = []) {
