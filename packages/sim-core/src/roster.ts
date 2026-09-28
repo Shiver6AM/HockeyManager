@@ -13,7 +13,8 @@
  *    call-ups back down once they have more than 23 healthy players again.
  */
 import { generatePlayer } from './generate';
-import { autoLines } from './lines';
+import { autoLines, completeLines } from './lines';
+import { suggestTactics } from './systems';
 import { deriveSeed, Rng } from './rng';
 import { overall } from './ratings';
 import type { League, Lines, Player, PlayerId, Team } from './types';
@@ -102,15 +103,26 @@ function repairLines(league: League, team: Team, lines: Lines): Lines | null {
     return sub.id;
   };
   const mapAll = (arr: PlayerId[][]) => arr.map((u) => u.map(replace));
+  const mapOpt = (u?: PlayerId[]) => (u ? u.map(replace) : undefined);
   const next = {
     forwards: mapAll(lines.forwards),
     defense: mapAll(lines.defense),
     goalies: lines.goalies.map(replace),
     pp: mapAll(lines.pp),
     pk: mapAll(lines.pk),
+    // Special units keep their shape; the replacement steps into the same spot.
+    fourOnFour: lines.fourOnFour ? mapAll(lines.fourOnFour) : undefined,
+    threeOnThree: lines.threeOnThree ? mapAll(lines.threeOnThree) : undefined,
+    pp4: mapOpt(lines.pp4),
+    pk3: mapOpt(lines.pk3),
+    extraAttacker: mapOpt(lines.extraAttacker),
+    shootout: mapOpt(lines.shootout),
   };
   const all = [...next.forwards.flat(), ...next.defense.flat(), ...next.goalies, ...next.pp.flat(), ...next.pk.flat()];
   if (all.some((x) => x === null)) return null;
+  // A special unit that couldn't be repaired is dropped and rebuilt by completeLines.
+  for (const k of ['pp4', 'pk3', 'extraAttacker', 'shootout'] as const) if (next[k]?.some((x) => x === null)) next[k] = undefined;
+  for (const k of ['fourOnFour', 'threeOnThree'] as const) if (next[k]?.some((u) => u.some((x) => x === null))) next[k] = undefined;
   return next as Lines;
 }
 
@@ -147,21 +159,24 @@ function sendDownCallUps(league: League, team: Team) {
       note: `${p.firstName} ${p.lastName} returned to the free-agent pool`,
     });
   }
-  if (released) team.lines = autoLines(healthyRoster(league, team));
+  if (released) team.lines = autoLines(healthyRoster(league, team), team.tactics);
 }
 
 /** Call before simulating a team's game. */
 export function prepareTeamForGame(league: League, team: Team) {
   ensureBodies(league, team);
   if (team.controller.kind === 'ai') {
-    team.lines = autoLines(healthyRoster(league, team));
+    // The AI coach revisits its systems every few weeks as the roster changes.
+    if (!team.tactics || league.day % 20 === 0) team.tactics = suggestTactics(healthyRoster(league, team).filter((p) => p.pos !== 'G'));
+    team.lines = autoLines(healthyRoster(league, team), team.tactics);
     sendDownCallUps(league, team);
     return;
   }
   if (team.autoLines) {
-    team.lines = autoLines(healthyRoster(league, team));
+    team.lines = autoLines(healthyRoster(league, team), team.tactics);
     return;
   }
-  if (linesValid(league, team, team.lines)) return;
-  team.lines = repairLines(league, team, team.lines) ?? autoLines(healthyRoster(league, team));
+  if (!linesValid(league, team, team.lines)) team.lines = repairLines(league, team, team.lines) ?? autoLines(healthyRoster(league, team), team.tactics);
+  // Special units that are missing (older saves) or list someone not dressed are refilled.
+  team.lines = completeLines(team.lines, healthyRoster(league, team), team.tactics);
 }

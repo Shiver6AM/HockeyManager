@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 101 tests: sim determinism, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 109 tests: sim determinism, coaching systems, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -85,9 +85,15 @@ Pick one of two modes on the **League** tab (commissioner only):
 
 - **Commissioner:** the commissioner presses *Sim 1 day / 1 week / to playoffs / to end
   of season*. Good for live sessions together.
+- **Co-commissioners:** the commissioner can let other managers advance the league too
+  (*League → Members → Co-commish*). Settings and membership stay commissioner-only.
 - **On a schedule:** a cron schedule in the league's time zone (presets include
   "every night at 11 PM"), a number of days per tick, and optionally **advance early
   when every manager is ready**. The commissioner can still force an advance at any time.
+
+Your **Ready** toggle (with the count of ready managers) and, if you can advance, the
+**Sim 1 day ▾** button sit in the top bar on every screen. The home page shows today's
+games and the most recent results.
 
 Every advance, whatever triggered it, goes through the same code path: take a lock,
 simulate, save the state and box scores, clear ready flags, and write to the audit log
@@ -100,7 +106,11 @@ time produces exactly the same league as simming a week at once. The tests check
   as separate, sortable columns) and injury status, with the same filters as the trade
   screen.
 - **Lines editor (drag and drop):** 4 forward lines, 3 D pairs, starter/backup goalie,
-  2 PP units and 2 PK units. Drag a scratch onto a slot to dress him, drag between slots
+  2 PP units and 2 PK units, plus an *Other situations* view: two 4-on-4 units, three
+  3-on-3 overtime units, a 4-on-3 power play, a 3-man penalty kill, the 6-skater extra
+  attacker and the shootout order. Every card shows position, overall, age, scouted
+  potential and goals/assists. On special-unit spots the card is shaded from white (poor
+  fit) to green (ideal) by the player's skill in that exact spot (net front, point, PK…). Drag a scratch onto a slot to dress him, drag between slots
   to swap, or drag a dressed skater onto a PP/PK spot. On a phone, tap one player and then
   tap where he goes. When you swap someone out, their power-play and penalty-kill spots go
   to the replacement, and the editor flags injured or out-of-position players.
@@ -109,7 +119,32 @@ time produces exactly the same league as simming a week at once. The tests check
   control back to you. If you're managing lines yourself, the dashboard warns you when a
   better healthy player is sitting out.
 
+- **Clickable everywhere:** any player or team name (box scores, leaders, standings,
+  trades, draft, free agency, news…) opens that player's or team's page.
+- **Trade screen memory:** selections and filters survive visiting a player's page and
+  coming back.
+
 ![Lines editor](docs/screenshots/lines.png)
+
+### Coaching systems
+
+The **Systems** tab on your team page sets how you play. Each option shows how well your
+best players *fit* it and the assistant coach's pick; a good fit amplifies a system's
+strengths, a poor one mutes them, and there's no single best answer.
+
+| Group | Options |
+|---|---|
+| Forecheck | Aggressive 2-1-2, balanced 1-2-2, neutral-zone trap 1-3-1 |
+| Offensive zone | Cycle, crash the net, shoot from the point, rush/transition |
+| Power play | Umbrella 1-2-2, 1-3-1, overload (each with its own named spots) |
+| Penalty kill | Passive box, diamond, aggressive pressure |
+
+Fits come from ten **role skills** on every skater (net front, bumper/slot, half wall,
+one-timer, point, forecheck, transition, PK forward, PK defense, shootout). They're derived
+from ratings and playing style, so power forwards are built for the net front and the
+forecheck, snipers for the one-timer, playmakers for the half wall, offensive defensemen
+for the point and shutdown defensemen for the kill. A small personal quirk keeps every
+player a little different. Player pages show each role skill.
 
 ## Seasons that never end: the career loop
 
@@ -134,10 +169,15 @@ anyone who hasn't acted gets sensible defaults.
   draft class and rarely first-rounders. Snipers, playmakers and offensive defensemen are
   more common among the elite; stay-at-home defensemen less so.
 - **Scouting:** potential is never shown. Your scouts give draft prospects and young
-  players a grade (A+ … F) and a projection ("Top-six / top-four"). Every team's scouts
+  players a grade (A+ … F) and a projection specific to his position ("First-line
+  center", "Top-pair defenseman", "Starting goalie"…). Every team's scouts
   make different, repeatable errors.
 - **Prospects:** draft picks develop outside the 23-man roster and the cap. Promoting
   one signs a 3-year entry-level deal. Unsigned prospects are released at 23.
+- **Retirement:** age sets the baseline (rare before 32, likely by the late 30s,
+  certain at 44), but ability matters: a serviceable veteran keeps playing, and stars
+  can go into their 40s, while fading players and unsigned veterans hang them up early.
+  Now and then someone surprises everyone.
 - **Careers:** every player has a career page with season-by-season stats, draft
   info, awards and ratings. Retired players keep their pages.
 - **Long-run balance:** each summer ratings are nudged back toward the league's
@@ -301,12 +341,12 @@ playoff OT rate. Some targets are approximate.
 - A full-season "sim to end" takes a few seconds and blocks the API while it runs.
   It should move to a worker thread before the game is hosted.
 - Live updates use 5-second polling. Supabase Realtime can replace it later.
-- No offer sheets for RFAs yet (qualifying offers only), and no retained salary in trades.
+- No retained salary in trades.
 - The league document grows about 0.3 MB per season of history (careers, retirees).
 
 ## Roadmap
 
 - **Phase 7, hosting:** Supabase for the database, sims moved to a worker thread,
   Supabase Realtime instead of polling, email or push for notifications, and deployment.
-- **Depth:** RFA offer sheets, retained salary in trades, arena and ticket-price decisions,
+- **Depth:** retained salary in trades, arena and ticket-price decisions,
   owners who fire GMs, and a minor-league affiliate with its own games.

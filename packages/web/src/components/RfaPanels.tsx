@@ -32,10 +32,10 @@ export function MyRfas() {
   return (
     <Card title={`Your restricted free agents (${d.mine.length})`}>
       <p className="mb-3 text-sm text-ice-400">
-        Qualified RFAs without a new deal stay with you on their qualifying offer. During free agency other teams can tender offer sheets: if he signs one,
-        you can match (he stays at those terms) or let him go for draft-pick compensation. Decide before the next advance, or your assistant GM decides.
-        Players who filed for arbitration get a hearing when free agency ends; in training camp you can walk away from an award of{' '}
-        {money(d.walkAwayThreshold)} or more. You can keep negotiating with an unsigned RFA the whole time.
+        Qualified RFAs without a new deal stay with you on their qualifying offer. During free agency other teams can tender offer sheets: if he signs one, you
+        can match (he stays at those terms) or let him go for draft-pick compensation. Decide before the next advance, or your assistant GM decides. Players who
+        filed for arbitration get a hearing when free agency ends; in training camp you can walk away from an award of {money(d.walkAwayThreshold)} or more. You
+        can keep negotiating with an unsigned RFA the whole time.
       </p>
       <ul className="divide-y divide-rink-700/60">
         {d.mine.map((p) => {
@@ -86,7 +86,11 @@ export function MyRfas() {
               {p.sheet && p.status === 'unsigned' && (
                 <div className="mt-2 rounded-lg border border-warn/40 bg-warn/10 p-3 text-sm">
                   <p className="text-ice-100">
-                    <TeamChip team={p.sheet.from} size="sm" /> He signed an offer sheet with {p.sheet.from.city}:{' '}
+                    <TeamChip team={p.sheet.from} size="sm" /> He signed an offer sheet with{' '}
+                    <Link to={`/league/${L.id}/team/${p.sheet.from.id}`} className="hover:underline">
+                      {p.sheet.from.city}
+                    </Link>
+                    :{' '}
                     <span className="font-semibold text-white">
                       {money(p.sheet.offer.salary)} × {p.sheet.offer.years}y
                     </span>

@@ -62,7 +62,7 @@ export function grade(scouted: number): string {
 /** What the viewer's scouts think of a player. Managers without a team see a league-wide consensus. */
 function scouting(L: League, viewerTeam: string | null, p: Player) {
   const s = scoutedPotential(L, viewerTeam ?? 'league', p);
-  return { grade: grade(s), projection: projectionLabel(s) };
+  return { grade: grade(s), projection: projectionLabel(s, p.pos) };
 }
 
 function requireTeam(m: Membership): string {

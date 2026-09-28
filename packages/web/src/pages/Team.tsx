@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import { GameCard } from '../components/GameCard';
 import { FrontOffice } from '../components/FrontOffice';
 import { LinesBoard } from '../components/LinesBoard';
+import { TacticsPanel } from '../components/TacticsPanel';
 import { PlayerFilterBar, SortTh, usePlayerFilters, useSort } from '../components/PlayerFilters';
 import { OfferForm } from '../components/OfferForm';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Modal, Rating, Spinner, TeamChip } from '../components/ui';
@@ -20,7 +21,7 @@ export function TeamPage() {
   const { teamId = '' } = useParams();
   const trpc = useTRPC();
   const q = useQuery(trpc.data.team.queryOptions({ leagueId: L.id, teamId }));
-  const [tab, setTab] = useState<'roster' | 'lines' | 'prospects' | 'schedule' | 'front office'>('roster');
+  const [tab, setTab] = useState<'roster' | 'lines' | 'systems' | 'prospects' | 'schedule' | 'front office'>('roster');
   if (q.error) return <ErrorBox error={q.error} />;
   if (!q.data) return <Spinner />;
   const t = q.data;
@@ -69,7 +70,7 @@ export function TeamPage() {
       </div>
 
       <div className="flex gap-1 overflow-x-auto rounded-lg bg-rink-900 p-1 text-sm sm:w-fit">
-        {(['roster', 'lines', 'prospects', 'schedule', 'front office'] as const).map((k) => (
+        {(['roster', 'lines', 'systems', 'prospects', 'schedule', 'front office'] as const).map((k) => (
           <button
             key={k}
             onClick={() => setTab(k)}
@@ -82,6 +83,7 @@ export function TeamPage() {
 
       {tab === 'roster' && <Roster t={t} />}
       {tab === 'prospects' && <Prospects t={t} />}
+      {tab === 'systems' && <TacticsPanel t={t} leagueId={L.id} />}
       {tab === 'front office' && <FrontOffice leagueId={L.id} teamId={t.team.id} />}
       {tab === 'lines' && (t.isMine ? <LinesEditor t={t} /> : <LinesView t={t} />)}
       {tab === 'schedule' && (
@@ -188,69 +190,76 @@ function Roster({ t }: { t: TeamData }) {
       )}
       {fwd.length > 0 && <SkaterTable title={`Forwards (${fwd.length})`} players={fwd} t={t} sort={sort} />}
       {def.length > 0 && <SkaterTable title={`Defense (${def.length})`} players={def} t={t} sort={sort} />}
-      {gol.length > 0 && <Card title={`Goalies (${gol.length})`}>
-        <div className="-m-4 overflow-x-auto">
-          <table className="table">
-            <thead>
-              <tr>
-                <SortTh label="Player" k="name" sort={sort} />
-                <SortTh label="Age" k="age" sort={sort} className="num" />
-                <SortTh label="OVR" k="overall" sort={sort} className="num" />
-                <th className="num">REF</th>
-                <th className="num">POS</th>
-                <th className="num">REB</th>
-                <th className="num">MEN</th>
-                <th className="num">GP</th>
-                <th className="num">W</th>
-                <th className="num">L</th>
-                <th className="num">OTL</th>
-                <th className="num">SV%</th>
-                <th className="num">GAA</th>
-                <th className="num">SO</th>
-                <ContractHeads sort={sort} />
-                <th>Injury</th>
-                {t.isMine && <th />}
-              </tr>
-            </thead>
-            <tbody>
-              {gol.map((p) => {
-                const s = p.goalieStats;
-                return (
-                  <tr key={p.id}>
-                    <td>
-                      <PlayerLink p={p} /> <span className="text-xs text-ice-500">{p.archetype}</span>
-                    </td>
-                    <td className="num">{p.age}</td>
-                    <td className="num">
-                      <Rating value={p.overall} />
-                    </td>
-                    <td className="num">{p.goalie?.reflexes}</td>
-                    <td className="num">{p.goalie?.positioning}</td>
-                    <td className="num">{p.goalie?.rebounds}</td>
-                    <td className="num">{p.goalie?.mental}</td>
-                    <td className="num">{s?.gp ?? 0}</td>
-                    <td className="num">{s?.w ?? 0}</td>
-                    <td className="num">{s?.l ?? 0}</td>
-                    <td className="num">{s?.otl ?? 0}</td>
-                    <td className="num">{s ? svPct(s.sa, s.ga) : '—'}</td>
-                    <td className="num">{s ? gaa(s.ga, s.toi) : '—'}</td>
-                    <td className="num">{s?.so ?? 0}</td>
-                    <ContractCells p={p} />
-                    <td>
-                      <Status p={p} />
-                    </td>
-                    {t.isMine && (
+      {gol.length > 0 && (
+        <Card title={`Goalies (${gol.length})`}>
+          <div className="-m-4 overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <SortTh label="Player" k="name" sort={sort} />
+                  <SortTh label="Age" k="age" sort={sort} className="num" />
+                  <SortTh label="OVR" k="overall" sort={sort} className="num" />
+                  <th className={cx('num', STAT_H)}>GP</th>
+                  <th className={cx('num', STAT_H)}>W</th>
+                  <th className={cx('num', STAT_H)}>L</th>
+                  <th className={cx('num', STAT_H)}>OTL</th>
+                  <th className={cx('num', STAT_H)}>SV%</th>
+                  <th className={cx('num', STAT_H)}>GAA</th>
+                  <th className={cx('num', STAT_H)}>SO</th>
+                  <th className="num text-ice-500">REF</th>
+                  <th className="num text-ice-500">POS</th>
+                  <th className="num text-ice-500">REB</th>
+                  <th className="num text-ice-500">MEN</th>
+                  <ContractHeads sort={sort} />
+                  <th>Injury</th>
+                  {t.isMine && <th />}
+                </tr>
+              </thead>
+              <tbody>
+                {gol.map((p) => {
+                  const s = p.goalieStats;
+                  return (
+                    <tr key={p.id}>
                       <td>
-                        <RosterActions t={t} p={p} />
+                        <span className="block text-base font-semibold">
+                          <PlayerLink p={p} />
+                        </span>
+                        <span className="text-xs text-ice-500">
+                          {p.archetype} · <span title={p.potential.projection}>pot. {p.potential.grade}</span>
+                        </span>
                       </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>}
+                      <td className="num">{p.age}</td>
+                      <td className="num">
+                        <Rating value={p.overall} />
+                      </td>
+                      <td className={cx('num', STAT)}>{s?.gp ?? 0}</td>
+                      <td className={cx('num font-semibold text-white', STAT)}>{s?.w ?? 0}</td>
+                      <td className={cx('num', STAT)}>{s?.l ?? 0}</td>
+                      <td className={cx('num', STAT)}>{s?.otl ?? 0}</td>
+                      <td className={cx('num font-semibold text-white', STAT)}>{s ? svPct(s.sa, s.ga) : '—'}</td>
+                      <td className={cx('num', STAT)}>{s ? gaa(s.ga, s.toi) : '—'}</td>
+                      <td className={cx('num', STAT)}>{s?.so ?? 0}</td>
+                      <td className="num text-xs text-ice-400">{p.goalie?.reflexes}</td>
+                      <td className="num text-xs text-ice-400">{p.goalie?.positioning}</td>
+                      <td className="num text-xs text-ice-400">{p.goalie?.rebounds}</td>
+                      <td className="num text-xs text-ice-400">{p.goalie?.mental}</td>
+                      <ContractCells p={p} />
+                      <td>
+                        <Status p={p} />
+                      </td>
+                      {t.isMine && (
+                        <td>
+                          <RosterActions t={t} p={p} />
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
@@ -383,6 +392,9 @@ function Prospects({ t }: { t: TeamData }) {
   );
 }
 
+const STAT = 'bg-blueline/10 text-base tabular';
+const STAT_H = 'bg-blueline/10 text-ice-200';
+
 function SkaterTable({ title, players, t, sort }: { title: string; players: P[]; t: TeamData; sort: ReturnType<typeof useSort> }) {
   return (
     <Card title={title}>
@@ -390,24 +402,40 @@ function SkaterTable({ title, players, t, sort }: { title: string; players: P[];
         <table className="table">
           <thead>
             <tr>
-              <SortTh label="Player" k="name" sort={sort} />
+              <SortTh label="Player" k="name" sort={sort} className="min-w-52" />
               <SortTh label="Pos" k="pos" sort={sort} />
               <SortTh label="Age" k="age" sort={sort} className="num" />
               <SortTh label="OVR" k="overall" sort={sort} className="num" />
-              <th className="num" title="Skating">SKT</th>
-              <th className="num" title="Shooting">SHT</th>
-              <th className="num" title="Passing">PAS</th>
-              <th className="num" title="Puck handling">HND</th>
-              <th className="num" title="Offensive IQ">OIQ</th>
-              <th className="num" title="Defensive IQ">DIQ</th>
-              <th className="num" title="Checking">CHK</th>
-              <th className="num" title="Faceoffs">FO</th>
-              <th className="num">GP</th>
-              <th className="num">G</th>
-              <th className="num">A</th>
-              <th className="num">P</th>
-              <th className="num">+/-</th>
-              <th className="num">TOI</th>
+              <th className={cx('num', STAT_H)}>GP</th>
+              <th className={cx('num', STAT_H)}>G</th>
+              <th className={cx('num', STAT_H)}>A</th>
+              <th className={cx('num', STAT_H)}>P</th>
+              <th className={cx('num', STAT_H)}>+/-</th>
+              <th className={cx('num', STAT_H)}>TOI</th>
+              <th className="num text-ice-500" title="Skating">
+                SKT
+              </th>
+              <th className="num text-ice-500" title="Shooting">
+                SHT
+              </th>
+              <th className="num text-ice-500" title="Passing">
+                PAS
+              </th>
+              <th className="num text-ice-500" title="Puck handling">
+                HND
+              </th>
+              <th className="num text-ice-500" title="Offensive IQ">
+                OIQ
+              </th>
+              <th className="num text-ice-500" title="Defensive IQ">
+                DIQ
+              </th>
+              <th className="num text-ice-500" title="Checking">
+                CHK
+              </th>
+              <th className="num text-ice-500" title="Faceoffs">
+                FO
+              </th>
               <ContractHeads sort={sort} />
               <th>Injury</th>
               {t.isMine && <th />}
@@ -420,24 +448,29 @@ function SkaterTable({ title, players, t, sort }: { title: string; players: P[];
               return (
                 <tr key={p.id} className={cx(p.injury && 'opacity-60')}>
                   <td>
-                    <PlayerLink p={p} /> <span className="text-xs text-ice-500">{p.archetype}</span>
+                    <span className="block text-base font-semibold">
+                      <PlayerLink p={p} />
+                    </span>
+                    <span className="text-xs text-ice-500">
+                      {p.archetype} · <span title={p.potential.projection}>pot. {p.potential.grade}</span>
+                    </span>
                   </td>
                   <td className="text-ice-400">{p.pos}</td>
                   <td className="num">{p.age}</td>
                   <td className="num">
                     <Rating value={p.overall} />
                   </td>
+                  <td className={cx('num', STAT)}>{s?.gp ?? 0}</td>
+                  <td className={cx('num font-semibold text-white', STAT)}>{s?.g ?? 0}</td>
+                  <td className={cx('num font-semibold text-white', STAT)}>{s?.a ?? 0}</td>
+                  <td className={cx('num font-bold text-white', STAT)}>{s ? s.g + s.a : 0}</td>
+                  <td className={cx('num', STAT, s && s.pm > 0 ? 'text-win' : s && s.pm < 0 ? 'text-red-300' : '')}>{s ? signed(s.pm) : 0}</td>
+                  <td className={cx('num', STAT)}>{s?.gp ? toi(s.toi, s.gp) : '—'}</td>
                   {[r.skating, r.shooting, r.passing, r.handling, r.offIQ, r.defIQ, r.checking, r.faceoffs].map((v, i) => (
-                    <td key={i} className="num text-ice-300">
+                    <td key={i} className="num text-xs text-ice-400">
                       {v}
                     </td>
                   ))}
-                  <td className="num">{s?.gp ?? 0}</td>
-                  <td className="num">{s?.g ?? 0}</td>
-                  <td className="num">{s?.a ?? 0}</td>
-                  <td className="num font-semibold text-white">{s ? s.g + s.a : 0}</td>
-                  <td className="num">{s ? signed(s.pm) : 0}</td>
-                  <td className="num">{s?.gp ? toi(s.toi, s.gp) : '—'}</td>
                   <ContractCells p={p} />
                   <td>
                     <Status p={p} />
@@ -460,7 +493,6 @@ function SkaterTable({ title, players, t, sort }: { title: string; players: P[];
 // ---------------------------------------------------------------------------
 // Lines
 // ---------------------------------------------------------------------------
-
 
 function LinesView({ t }: { t: TeamData }) {
   const byId = new Map(t.players.map((p) => [p.id, p]));
@@ -537,7 +569,14 @@ function LinesEditor({ t }: { t: TeamData }) {
             <ul className="mt-1 list-disc pl-5">
               {t.scratchWarnings.map((w) => (
                 <li key={w.scratched.id}>
-                  {w.scratched.name} ({w.scratched.overall}) is scratched while {w.dressedInstead.name} ({w.dressedInstead.overall}) dresses
+                  <Link to={`/league/${L.id}/player/${w.scratched.id}`} className="underline-offset-2 hover:underline">
+                    {w.scratched.name}
+                  </Link>{' '}
+                  ({w.scratched.overall}) is scratched while{' '}
+                  <Link to={`/league/${L.id}/player/${w.dressedInstead.id}`} className="underline-offset-2 hover:underline">
+                    {w.dressedInstead.name}
+                  </Link>{' '}
+                  ({w.dressedInstead.overall}) dresses
                 </li>
               ))}
             </ul>
@@ -575,8 +614,7 @@ function LinesEditor({ t }: { t: TeamData }) {
         </div>
       </Card>
 
-      <LinesBoard draft={draft} onChange={setDraft} players={t.players} />
+      <LinesBoard draft={draft} onChange={setDraft} players={t.players} catalog={t.systems} formation={t.tactics.pp} leagueId={L.id} />
     </div>
   );
 }
-

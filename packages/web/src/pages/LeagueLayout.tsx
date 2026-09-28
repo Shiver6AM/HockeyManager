@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { createContext, useContext } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { HeaderActions } from '../components/HeaderActions';
 import { NotificationBell } from '../components/NotificationBell';
 import { Badge, cx, ErrorBox, Spinner, TeamChip } from '../components/ui';
 import { dayLabel, PHASE_LABEL } from '../format';
@@ -50,13 +51,14 @@ export function LeagueLayout() {
     <LeagueCtx.Provider value={L}>
       <div className="min-h-screen">
         <header className="sticky top-0 z-20 border-b border-rink-700 bg-rink-950/95 backdrop-blur">
-          <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-2.5">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5">
             <Link to="/" className="font-display text-lg font-semibold tracking-wider whitespace-nowrap text-white uppercase hover:text-ice-300">
               Hockey GM
             </Link>
             <span className="text-rink-500">/</span>
-            <span className="truncate font-semibold text-ice-100">{L.name}</span>
-            <div className="ml-auto flex items-center gap-3 text-xs text-ice-400">
+            <span className="min-w-0 truncate font-semibold text-ice-100">{L.name}</span>
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-3 text-xs text-ice-400">
+              <HeaderActions />
               <span className="hidden sm:inline">
                 {dayLabel(L.season, L.day, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
               </span>

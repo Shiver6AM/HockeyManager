@@ -143,9 +143,9 @@ export function DraftPage() {
                     return (
                       <li key={id} className="flex items-center gap-2">
                         <span className="w-5 text-ice-500">{i + 1}</span>
-                        <span className="flex-1 truncate">
+                        <Link to={`/league/${L.id}/player/${id}`} className="flex-1 truncate hover:underline">
                           {p.name} <span className="text-xs text-ice-500">{p.pos}</span>
-                        </span>
+                        </Link>
                         <span className={cx('font-display', GRADE_TONE[p.grade[0]])}>{p.grade}</span>
                         <button className="px-1 text-ice-400 hover:text-white" onClick={() => move(-1)} aria-label="Move up">
                           ↑

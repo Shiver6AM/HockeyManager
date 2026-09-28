@@ -1,4 +1,5 @@
 import { autoLines } from './lines';
+import { suggestTactics } from './systems';
 import { FRANCHISES, NAME_POOLS } from './names';
 import { clamp, deriveSeed, Rng } from './rng';
 import { ARCHETYPE_CEILING, overall } from './ratings';
@@ -307,7 +308,8 @@ export function generateLeague(opts: GenerateOptions): League {
       division: f.division,
       controller,
       roster: roster.map((p) => p.id),
-      lines: autoLines(roster),
+      tactics: suggestTactics(roster.filter((p) => p.pos !== 'G')),
+      lines: autoLines(roster, suggestTactics(roster.filter((p) => p.pos !== 'G'))),
     };
   }
 

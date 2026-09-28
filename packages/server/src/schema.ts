@@ -108,4 +108,10 @@ alter table notifications enable row level security;
 alter table _migrations enable row level security;
 `,
   ],
+  [
+    '004_co_commissioners',
+    `
+alter table league_members add column co_commissioner boolean not null default false;
+`,
+  ],
 ];

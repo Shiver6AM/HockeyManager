@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { Badge, Card, Empty, ErrorBox, Spinner, TeamChip, TeamLink } from '../components/ui';
 import { dayLabel, gaa, signed, svPct, toi } from '../format';
 import { useTRPC, type Outputs } from '../trpc';
@@ -98,7 +98,10 @@ export function BoxScorePage() {
               {b.stars.map((s, i) => (
                 <li key={s.id}>
                   <span className="mr-2 text-warn">{'★'.repeat(i + 1)}</span>
-                  <span className="text-white">{s.name}</span> <span className="text-ice-400">{s.teamId}</span>
+                  <Link to={`/league/${L.id}/player/${s.id}`} className="text-white hover:underline">
+                    {s.name}
+                  </Link>{' '}
+                  <span className="text-ice-400">{s.teamId}</span>
                 </li>
               ))}
             </ol>
@@ -157,6 +160,7 @@ function ScoreSide({ team, score, label, right }: { team: Box['game']['home']; s
 }
 
 function PlayerTables({ box, side }: { box: Box; side: 'home' | 'away' }) {
+  const L = useLeague();
   const t = box[side];
   const team = box.game[side];
   if (!t) return null;
@@ -183,7 +187,11 @@ function PlayerTables({ box, side }: { box: Box; side: 'home' | 'away' }) {
           <tbody>
             {skaters.map((s) => (
               <tr key={s.id}>
-                <td className="text-ice-50">{s.name}</td>
+                <td>
+                  <Link to={`/league/${L.id}/player/${s.id}`} className="text-ice-50 hover:underline">
+                    {s.name}
+                  </Link>
+                </td>
                 <td className="text-ice-400">{s.pos}</td>
                 <td className="num">{s.g}</td>
                 <td className="num">{s.a}</td>
@@ -213,7 +221,11 @@ function PlayerTables({ box, side }: { box: Box; side: 'home' | 'away' }) {
           <tbody>
             {(t.goalies ?? []).map((g) => (
               <tr key={g.id}>
-                <td className="text-ice-50">{g.name}</td>
+                <td>
+                  <Link to={`/league/${L.id}/player/${g.id}`} className="text-ice-50 hover:underline">
+                    {g.name}
+                  </Link>
+                </td>
                 <td className="num">{g.sa}</td>
                 <td className="num">{g.ga}</td>
                 <td className="num">{svPct(g.sa, g.ga)}</td>

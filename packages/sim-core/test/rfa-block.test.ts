@@ -153,16 +153,18 @@ describe('restricted free agents', () => {
     const offer = { salary: Math.min(capRoom(L, bidder) - 100_000, Math.round((ask.salary * 1.4) / 25_000) * 25_000 + 250_000), years: ask.years };
     expect(() => tenderOfferSheet(L, hal, p, offer)).toThrow(/your own RFA/);
     tenderOfferSheet(L, bidder, p, offer);
-    const comp = compensationPicks(L, bidder.id, offer.salary)!;
-    offseasonStep(L, { force: true }); // round 1: he signs the sheet; HAL decides
+    offseasonStep(L, { force: true }); // round 1: he signs the best sheet; HAL decides
     const c = L.offseason!.rfa![p.id];
-    expect(c.sheet?.fromTeam).toBe(bidder.id);
+    expect(c.sheet).toBeTruthy(); // ours, or an AI team's that he liked better
     expect(c.status).toBe('unsigned');
+    const from = c.sheet!.fromTeam;
+    const terms = c.sheet!.offer;
+    const comp = compensationPicks(L, from, terms.salary)!;
     decideOfferSheet(L, hal, p.id, false);
     offseasonStep(L, { force: true }); // round 2 settles it
     expect(c.status).toBe('departed');
-    expect(p.teamId).toBe(bidder.id);
-    expect(p.contract).toMatchObject({ salary: offer.salary, yearsLeft: offer.years });
+    expect(p.teamId).toBe(from);
+    expect(p.contract).toMatchObject({ salary: terms.salary, yearsLeft: terms.years });
     for (const k of comp) expect(pickOwner(L, k)).toBe('HAL');
     expect(L.transactions.some((t) => t.type === 'offer-sheet' && t.playerId === p.id)).toBe(true);
   });
@@ -222,12 +224,17 @@ describe('qualifying offers', () => {
   });
 
   it('unqualified RFAs become UFAs, and qualified ones who accept sign on the spot', () => {
-    const G = generateLeague({ seed: 92, humans: { HAL: 'me' } });
-    advanceToEndOfSeason(G);
-    offseasonStep(G, { force: true });
-    while (G.offseason!.stage === 'draft') offseasonStep(G, { force: true });
-    const rfas = Object.keys(G.offseason!.expiring).filter((id) => G.players[id]?.teamId === 'HAL' && G.players[id].contract?.expiresAs === 'RFA');
-    expect(rfas.length).toBeGreaterThan(0);
+    // Find a league where Halifax has at least two expiring RFAs.
+    let G!: League;
+    let rfas: string[] = [];
+    for (let seed = 92; seed < 130 && rfas.length < 2; seed++) {
+      G = generateLeague({ seed, humans: { HAL: 'me' } });
+      advanceToEndOfSeason(G);
+      offseasonStep(G, { force: true });
+      while (G.offseason!.stage === 'draft') offseasonStep(G, { force: true });
+      rfas = Object.keys(G.offseason!.expiring).filter((id) => G.players[id]?.teamId === 'HAL' && G.players[id].contract?.expiresAs === 'RFA');
+    }
+    expect(rfas.length).toBeGreaterThan(1);
     const [drop, ...rest] = rfas;
     G.offseason!.resign[drop] = false;
     for (const id of rest) (G.offseason!.qualified ??= {})[id] = true;

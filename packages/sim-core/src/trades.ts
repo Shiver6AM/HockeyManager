@@ -240,7 +240,7 @@ function refreshLines(league: League, team: Team, removed: Set<PlayerId>) {
   if (team.controller.kind === 'ai' || team.autoLines || affected) {
     if (team.controller.kind === 'human' && affected) team.autoLines = true;
     try {
-      team.lines = autoLines(healthyRoster(league, team));
+      team.lines = autoLines(healthyRoster(league, team), team.tactics);
     } catch {
       /* short-handed; game-day call-ups will fix it */
     }

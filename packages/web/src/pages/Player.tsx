@@ -1,15 +1,28 @@
 import { useQuery } from '@tanstack/react-query';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { Badge, Card, Empty, ErrorBox, Rating, Spinner, TeamChip, TeamLink } from '../components/ui';
 import { gaa, money, signed, svPct, toi } from '../format';
 import { useTRPC } from '../trpc';
 import { useLeague } from './LeagueLayout';
 
 const SKATER_RATINGS: Array<[string, string]> = [
-  ['skating', 'Skating'], ['shooting', 'Shooting'], ['passing', 'Passing'], ['handling', 'Puck handling'], ['offIQ', 'Offensive IQ'],
-  ['defIQ', 'Defensive IQ'], ['checking', 'Checking'], ['faceoffs', 'Faceoffs'], ['discipline', 'Discipline'], ['endurance', 'Endurance'],
+  ['skating', 'Skating'],
+  ['shooting', 'Shooting'],
+  ['passing', 'Passing'],
+  ['handling', 'Puck handling'],
+  ['offIQ', 'Offensive IQ'],
+  ['defIQ', 'Defensive IQ'],
+  ['checking', 'Checking'],
+  ['faceoffs', 'Faceoffs'],
+  ['discipline', 'Discipline'],
+  ['endurance', 'Endurance'],
 ];
-const GOALIE_RATINGS: Array<[string, string]> = [['reflexes', 'Reflexes'], ['positioning', 'Positioning'], ['rebounds', 'Rebound control'], ['mental', 'Mental']];
+const GOALIE_RATINGS: Array<[string, string]> = [
+  ['reflexes', 'Reflexes'],
+  ['positioning', 'Positioning'],
+  ['rebounds', 'Rebound control'],
+  ['mental', 'Mental'],
+];
 
 export function PlayerPage() {
   const L = useLeague();
@@ -59,7 +72,15 @@ export function PlayerPage() {
               {p?.injury && <Badge tone="bad">{p.injury.type} · ~{p.injury.daysLeft}d</Badge>}
               {d.draft && (
                 <span>
-                  Drafted {d.draft.season}, round {d.draft.round} (#{d.draft.overall}) by {d.draft.team?.city}
+                  Drafted {d.draft.season}, round {d.draft.round} (#
+                  {d.draft.overall}) by{' '}
+                  {d.draft.team ? (
+                    <Link to={`/league/${L.id}/team/${d.draft.team.id}`} className="hover:underline">
+                      {d.draft.team.city}
+                    </Link>
+                  ) : (
+                    '—'
+                  )}
                 </span>
               )}
             </p>
@@ -84,8 +105,8 @@ export function PlayerPage() {
         </div>
         {p?.contract && (
           <p className="mt-3 text-sm text-ice-300">
-            Contract: <span className="text-white">{money(p.contract.salary)}</span> × {p.contract.yearsLeft} more season{p.contract.yearsLeft > 1 ? 's' : ''} ·{' '}
-            {p.contract.kind === 'ELC' ? 'entry-level' : 'standard'} · becomes {p.contract.expiresAs}
+            Contract: <span className="text-white">{money(p.contract.salary)}</span> × {p.contract.yearsLeft} more season
+            {p.contract.yearsLeft > 1 ? 's' : ''} · {p.contract.kind === 'ELC' ? 'entry-level' : 'standard'} · becomes {p.contract.expiresAs}
           </p>
         )}
       </Card>
@@ -106,6 +127,38 @@ export function PlayerPage() {
                 </li>
               ))}
             </ul>
+            {d.roles && (
+              <>
+                <p className="mt-5 mb-2 text-xs font-semibold tracking-wider text-ice-500 uppercase">Role skills</p>
+                <ul className="space-y-1.5">
+                  {[...d.roles]
+                    .sort((a, b) => b.value - a.value)
+                    .map((r) => {
+                      const t = Math.max(0, Math.min(1, (r.value - 55) / 35));
+                      return (
+                        <li key={r.id} className="text-sm" title={r.help}>
+                          <div className="flex justify-between">
+                            <span className="text-ice-300">{r.label}</span>
+                            <span className="tabular text-white">{r.value}</span>
+                          </div>
+                          <div className="mt-0.5 h-1.5 rounded-full bg-rink-700">
+                            <div
+                              className="h-1.5 rounded-full"
+                              style={{
+                                width: `${r.value}%`,
+                                background: `hsl(142 ${Math.round(12 + 58 * t)}% ${Math.round(80 - 35 * t)}%)`,
+                              }}
+                            />
+                          </div>
+                        </li>
+                      );
+                    })}
+                </ul>
+                <p className="mt-2 text-[11px] text-ice-500">
+                  How well he suits specific jobs: from his ratings and his {d.player?.archetype.toLowerCase()} style.
+                </p>
+              </>
+            )}
           </Card>
         )}
         <div className="space-y-5 lg:col-span-2">

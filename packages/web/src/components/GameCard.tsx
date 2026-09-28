@@ -14,9 +14,18 @@ export function GameCard({ leagueId, game, highlight }: { leagueId: string; game
     return (
       <div className={cx('flex items-center gap-2', game.played && !won && 'opacity-60')}>
         <TeamChip team={t} size="sm" />
-        <span className={cx('flex-1 truncate text-sm', highlight === t.id && 'font-semibold text-white')}>
-          {t.city} <span className="text-ice-400">{t.name}</span>
-        </span>
+        {game.played ? (
+          <span className={cx('flex-1 truncate text-sm', highlight === t.id && 'font-semibold text-white')}>
+            {t.city} <span className="text-ice-400">{t.name}</span>
+          </span>
+        ) : (
+          <Link
+            to={`/league/${leagueId}/team/${t.id}`}
+            className={cx('flex-1 truncate text-sm hover:underline', highlight === t.id && 'font-semibold text-white')}
+          >
+            {t.city} <span className="text-ice-400">{t.name}</span>
+          </Link>
+        )}
         <span className={cx('tabular font-display text-lg', won ? 'text-white' : 'text-ice-300')}>{game.played ? score : ''}</span>
       </div>
     );

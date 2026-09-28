@@ -61,13 +61,18 @@ export function scoutedPotential(league: League, teamId: TeamId, p: Player): num
   return Math.round(p.hidden.potential + rng.normal(0, scoutingError(league, teamId, young)));
 }
 
-export function projectionLabel(scouted: number): string {
-  if (scouted >= 86) return 'Franchise talent';
-  if (scouted >= 80) return 'Top-line / top-pair';
-  if (scouted >= 74) return 'Top-six / top-four';
-  if (scouted >= 68) return 'Middle-six / third pair';
-  if (scouted >= 62) return 'Depth player';
-  return 'Long shot';
+/** Scouts' projection, in terms of the role he'd fill at his position. */
+export function projectionLabel(scouted: number, pos?: string): string {
+  const tier = scouted >= 86 ? 0 : scouted >= 80 ? 1 : scouted >= 74 ? 2 : scouted >= 68 ? 3 : scouted >= 62 ? 4 : 5;
+  const labels: Record<string, string[]> = {
+    C: ['Franchise center', 'First-line center', 'Top-six center', 'Third-line center', 'Fourth-line center', 'Long shot'],
+    W: ['Franchise winger', 'First-line winger', 'Top-six winger', 'Middle-six winger', 'Fourth-line winger', 'Long shot'],
+    D: ['Franchise defenseman', 'Top-pair defenseman', 'Top-four defenseman', 'Third-pair defenseman', 'Depth defenseman', 'Long shot'],
+    G: ['Franchise goalie', 'Starting goalie', 'Starter / 1B', 'Backup goalie', 'Depth goalie', 'Long shot'],
+    any: ['Franchise talent', 'Top-line / top-pair', 'Top-six / top-four', 'Middle-six / third pair', 'Depth player', 'Long shot'],
+  };
+  const key = pos === 'C' || pos === 'D' || pos === 'G' ? pos : pos === 'LW' || pos === 'RW' ? 'W' : 'any';
+  return labels[key][tier];
 }
 
 /**

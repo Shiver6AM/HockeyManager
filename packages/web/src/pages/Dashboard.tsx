@@ -21,8 +21,8 @@ export function Dashboard() {
           </>
         ) : (
           <>
+            <TodayAndYesterday />
             <AdvancePanel />
-            <LatestScores />
           </>
         )}
       </div>
@@ -83,8 +83,8 @@ function AdvancePanel() {
           </p>
           {scheduled && !over && (
             <p className="mt-1 text-sm text-ice-300">
-              Next advance ({scheduled.daysPerTick} day{scheduled.daysPerTick > 1 ? 's' : ''}) in{' '}
-              <span className="font-semibold text-white">{timeUntil(L.nextAdvanceAt) ?? '—'}</span>
+              Next advance ({scheduled.daysPerTick} day
+              {scheduled.daysPerTick > 1 ? 's' : ''}) in <span className="font-semibold text-white">{timeUntil(L.nextAdvanceAt) ?? '—'}</span>
               {scheduled.advanceEarlyWhenAllReady && ' · or as soon as every manager is ready'}
             </p>
           )}
@@ -124,9 +124,11 @@ function AdvancePanel() {
         </div>
       )}
 
-      {L.isCommissioner && !over && (
+      {L.canAdvance && !over && (
         <div className="mt-5 border-t border-rink-700 pt-4">
-          <p className="mb-2 text-xs font-semibold tracking-wider text-ice-400 uppercase">Commissioner: advance the league</p>
+          <p className="mb-2 text-xs font-semibold tracking-wider text-ice-400 uppercase">
+            {L.isCommissioner ? 'Commissioner' : 'Co-commissioner'}: advance the league
+          </p>
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => advance.mutate({ leagueId: L.id, target: { days: 1 } })} disabled={advance.isPending}>
               Sim 1 day
@@ -146,8 +148,17 @@ function AdvancePanel() {
           {advance.isPending && <p className="mt-2 text-sm text-ice-400">Simulating… long advances can take a few seconds.</p>}
           {advance.data && !advance.isPending && (
             <p className="mt-2 text-sm text-ice-300">
-              Played {advance.data.games} games ({dayLabel(L.season, advance.data.fromDay, { month: 'short', day: 'numeric' })} →{' '}
-              {dayLabel(L.season, advance.data.toDay, { month: 'short', day: 'numeric' })}).
+              Played {advance.data.games} games (
+              {dayLabel(L.season, advance.data.fromDay, {
+                month: 'short',
+                day: 'numeric',
+              })}{' '}
+              →{' '}
+              {dayLabel(L.season, advance.data.toDay, {
+                month: 'short',
+                day: 'numeric',
+              })}
+              ).
               {advance.data.phaseChanges.includes('playoffs') && ' The playoffs are set!'}
               {advance.data.phaseChanges.includes('offseason') && ' The season is over!'}
             </p>
@@ -157,35 +168,54 @@ function AdvancePanel() {
           </div>
         </div>
       )}
-      {!L.isCommissioner && <ErrorBox error={ready.error} />}
+      {!L.canAdvance && <ErrorBox error={ready.error} />}
     </Card>
   );
 }
 
-function LatestScores() {
+/** Today's games (what's next) and yesterday's results, at the top of the home page. */
+function TodayAndYesterday() {
   const { leagueId = '' } = useParams();
   const L = useLeague();
   const trpc = useTRPC();
-  const day = useQuery(trpc.data.day.queryOptions({ leagueId }));
+  const today = useQuery(trpc.data.day.queryOptions({ leagueId, day: L.day }));
+  const yesterday = useQuery(trpc.data.day.queryOptions({ leagueId })); // latest day with results
+  const upcoming = (today.data?.games ?? []).filter((g) => !g.played);
+  const mine = (gs: typeof upcoming) =>
+    [...gs].sort((a, b) => Number(b.home.id === L.myTeamId || b.away.id === L.myTeamId) - Number(a.home.id === L.myTeamId || a.away.id === L.myTeamId));
+  const results = yesterday.data && yesterday.data.day < L.day ? yesterday.data : null;
   return (
-    <Card
-      title={day.data ? `Scores · ${dayLabel(L.season, day.data.day)}` : 'Scores'}
-      action={
-        <Link to={`/league/${leagueId}/scores`} className="text-xs font-semibold text-blue-300 hover:underline">
-          All scores →
-        </Link>
-      }
-    >
-      {day.data?.games.length ? (
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {day.data.games.map((g) => (
-            <GameCard key={g.id} leagueId={leagueId} game={g} highlight={L.myTeamId} />
-          ))}
-        </div>
-      ) : (
-        <Empty>No games yet.</Empty>
-      )}
-    </Card>
+    <div className="grid gap-5 xl:grid-cols-2">
+      <Card title={`Today · ${dayLabel(L.season, L.day)}`}>
+        {upcoming.length ? (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {mine(upcoming).map((g) => (
+              <GameCard key={g.id} leagueId={leagueId} game={g} highlight={L.myTeamId} />
+            ))}
+          </div>
+        ) : (
+          <Empty>No games today.</Empty>
+        )}
+      </Card>
+      <Card
+        title={results ? `Results · ${dayLabel(L.season, results.day)}` : 'Results'}
+        action={
+          <Link to={`/league/${leagueId}/scores`} className="text-xs font-semibold text-blue-300 hover:underline">
+            All scores →
+          </Link>
+        }
+      >
+        {results?.games.length ? (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {mine(results.games).map((g) => (
+              <GameCard key={g.id} leagueId={leagueId} game={g} highlight={L.myTeamId} />
+            ))}
+          </div>
+        ) : (
+          <Empty>No games played yet.</Empty>
+        )}
+      </Card>
+    </div>
   );
 }
 
@@ -223,9 +253,19 @@ function MyTeamCard() {
         <p className="mt-3 text-sm text-ice-400">
           Next:{' '}
           {t.upcoming[0].home.id === t.team.id ? (
-            <>vs {t.upcoming[0].away.city}</>
+            <>
+              vs{' '}
+              <Link to={`/league/${L.id}/team/${t.upcoming[0].away.id}`} className="hover:underline">
+                {t.upcoming[0].away.city}
+              </Link>
+            </>
           ) : (
-            <>@ {t.upcoming[0].home.city}</>
+            <>
+              @{' '}
+              <Link to={`/league/${L.id}/team/${t.upcoming[0].home.id}`} className="hover:underline">
+                {t.upcoming[0].home.city}
+              </Link>
+            </>
           )}{' '}
           · {dayLabel(L.season, t.upcoming[0].day)}
         </p>
@@ -243,7 +283,12 @@ function MyTeamCard() {
           <p className="text-xs font-semibold tracking-wider text-ice-400 uppercase">Injured</p>
           {injured.map((p) => (
             <p key={p.id} className="text-sm">
-              <span className="text-ice-100">{p.name}</span> <span className="text-ice-400">· {p.injury!.type}, ~{p.injury!.daysLeft}d</span>
+              <Link to={`/league/${L.id}/player/${p.id}`} className="text-ice-100 hover:underline">
+                {p.name}
+              </Link>{' '}
+              <span className="text-ice-400">
+                · {p.injury!.type}, ~{p.injury!.daysLeft}d
+              </span>
             </p>
           ))}
         </div>
@@ -271,7 +316,9 @@ function LeadersMini() {
           {pts.rows.slice(0, 5).map((r, i) => (
             <li key={r.id} className="flex items-center gap-2">
               <span className="w-4 text-ice-500">{i + 1}</span>
-              <span className="flex-1 truncate">{r.name}</span>
+              <Link to={`/league/${L.id}/player/${r.id}`} className="flex-1 truncate hover:underline">
+                {r.name}
+              </Link>
               <span className="text-xs text-ice-400">{r.teamId}</span>
               <span className="tabular w-8 text-right font-semibold text-white">{r.value}</span>
             </li>

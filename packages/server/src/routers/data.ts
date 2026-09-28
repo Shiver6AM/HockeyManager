@@ -1,5 +1,25 @@
 import {
   askingContract,
+  completeLines,
+  DEFAULT_TACTICS,
+  EXTRA_ATTACKER_SLOTS,
+  FORECHECKS,
+  FOUR_SLOTS,
+  OZ_STYLES,
+  PK3_SLOTS,
+  PK_SLOTS,
+  PK_STRATEGIES,
+  PP4_SLOTS,
+  PP_FORMATIONS,
+  ROLE_HELP,
+  ROLE_LABEL,
+  ROLES,
+  roleSkills,
+  suggestTactics,
+  systemFits,
+  THREE_SLOTS,
+  type Slot,
+  type Tactics,
   qualifyingOffer,
   autoLines,
   buyoutTerms,
@@ -29,6 +49,38 @@ import { playerName, publicPlayer, teamInfo } from '../views';
 import { grade } from './offseason';
 
 const overallOf = (L: League, id: string) => overall(L.players[id]);
+
+/** Scouts' read on a player's ceiling, from the viewer's team (never the hidden number). */
+export function potentialView(L: League, viewer: string | null, p: League['players'][string]) {
+  const s = scoutedPotential(L, viewer ?? 'league', p);
+  return { grade: grade(s), projection: projectionLabel(s, p.pos) };
+}
+
+const slotView = (xs: Slot[]) => xs.map((s) => ({ label: s.label, role: s.role }));
+const entries = <K extends string>(o: Record<K, { label: string; help: string }>) => (Object.keys(o) as K[]).map((id) => ({ id, label: o[id].label, help: o[id].help }));
+/** Systems, formations, slots and role names for the lines editor. */
+const SYSTEMS_CATALOG = {
+  forecheck: entries(FORECHECKS),
+  offense: entries(OZ_STYLES),
+  pk: entries(PK_STRATEGIES),
+  pp: (Object.keys(PP_FORMATIONS) as Array<keyof typeof PP_FORMATIONS>).map((id) => ({ id, label: PP_FORMATIONS[id].label, help: PP_FORMATIONS[id].help, slots: slotView(PP_FORMATIONS[id].slots) })),
+  slots: {
+    pk: slotView(PK_SLOTS),
+    pk3: slotView(PK3_SLOTS),
+    pp4: slotView(PP4_SLOTS),
+    fourOnFour: slotView(FOUR_SLOTS),
+    threeOnThree: slotView(THREE_SLOTS),
+    extraAttacker: slotView(EXTRA_ATTACKER_SLOTS),
+  },
+  roles: ROLES.map((id) => ({ id, label: ROLE_LABEL[id], help: ROLE_HELP[id] })),
+};
+
+const tacticsSchema = z.object({
+  forecheck: z.enum(['aggressive', 'balanced', 'trap']),
+  offense: z.enum(['cycle', 'crash', 'perimeter', 'rush']),
+  pp: z.enum(['umbrella', '1-3-1', 'overload']),
+  pk: z.enum(['box', 'diamond', 'aggressive']),
+}) satisfies z.ZodType<Tactics>;
 
 function allGames(L: League): ScheduledGame[] {
   const po = L.playoffs?.rounds.flatMap((r) => r.flatMap((s) => s.games)) ?? [];
@@ -71,6 +123,12 @@ const linesSchema = z.object({
   goalies: idList(2),
   pp: z.array(idList(5)).length(2),
   pk: z.array(idList(4)).length(2),
+  fourOnFour: z.array(idList(4)).length(2).optional(),
+  threeOnThree: z.array(idList(3)).length(3).optional(),
+  pp4: idList(4).optional(),
+  pk3: idList(3).optional(),
+  extraAttacker: idList(6).optional(),
+  shootout: idList(5).optional(),
 });
 
 export function validateLines(L: League, teamId: string, lines: Lines): string | null {
@@ -86,7 +144,8 @@ export function validateLines(L: League, teamId: string, lines: Lines): string |
   for (const id of lines.goalies) if (L.players[id].pos !== 'G') return `${playerName(L, id)} is not a goalie`;
   if (new Set(dressed).size !== dressed.length) return 'A player is listed in more than one lineup spot';
   const dressedSkaters = new Set(skaters);
-  for (const unit of [...lines.pp, ...lines.pk]) {
+  const extras = [...(lines.fourOnFour ?? []), ...(lines.threeOnThree ?? []), lines.pp4, lines.pk3, lines.extraAttacker, lines.shootout].filter((u): u is string[] => !!u);
+  for (const unit of [...lines.pp, ...lines.pk, ...extras]) {
     if (new Set(unit).size !== unit.length) return 'A special-teams unit lists the same player twice';
     for (const id of unit) if (!dressedSkaters.has(id)) return `${playerName(L, id)} is on a special-teams unit but isn't dressed`;
   }
@@ -166,6 +225,8 @@ export const dataRouter = router({
       deadCapThisSeason: deadCapFor(L, t),
       players: t.roster.map((id) => ({
         ...publicPlayer(L, L.players[id]),
+        roles: roleSkills(L.players[id]),
+        potential: potentialView(L, ctx.membership.teamId, L.players[id]),
         extension: L.players[id].extension ?? null,
         canExtend: ctx.membership.teamId === t.id && canExtend(L, L.players[id]) && !L.players[id].extension,
         deal:
@@ -189,12 +250,16 @@ export const dataRouter = router({
         .filter(Boolean)
         .map((p) => {
           const s = scoutedPotential(L, ctx.membership.teamId ?? 'league', p);
-          return { ...publicPlayer(L, p), grade: grade(s), projection: projectionLabel(s), draft: p.draft ?? null };
+          return { ...publicPlayer(L, p), grade: grade(s), projection: projectionLabel(s, p.pos), draft: p.draft ?? null };
         })
         .sort((a, b) => b.overall - a.overall),
       phase: L.phase,
-      lines: t.lines,
+      lines: completeLines(t.lines, t.roster.map((id) => L.players[id]), t.tactics ?? DEFAULT_TACTICS),
       autoLines: t.controller.kind === 'human' ? !!t.autoLines : true,
+      tactics: t.tactics ?? DEFAULT_TACTICS,
+      systemFits: systemFits(healthyRoster(L, t).filter((p) => p.pos !== 'G'), t.tactics ?? DEFAULT_TACTICS),
+      recommendedTactics: suggestTactics(healthyRoster(L, t).filter((p) => p.pos !== 'G')),
+      systems: SYSTEMS_CATALOG,
       scratchWarnings:
         t.controller.kind === 'human' && !t.autoLines
           ? betterScratches(L, t).map((w) => ({
@@ -235,11 +300,14 @@ export const dataRouter = router({
     const scout = p ? scoutedPotential(L, ctx.membership.teamId ?? 'league', p) : null;
     return {
       player: p ? publicPlayer(L, p) : null,
+      /** Role skills (net front, point, PK…), skaters only. */
+      roles: p?.skater ? ROLES.map((r) => ({ id: r, label: ROLE_LABEL[r], help: ROLE_HELP[r], value: roleSkills(p)[r] })) : null,
+      potential: p ? potentialView(L, ctx.membership.teamId, p) : null,
       retired: retired ? { name: retired.name, pos: retired.pos, retiredAfter: retired.retiredAfter, peakOverall: retired.peakOverall } : null,
       team: p ? teamOf(p.teamId ?? p.prospectOf ?? null) : teamOf(retired!.lastTeamId),
       isProspect: !!p?.prospectOf,
       draft: p?.draft ? { ...p.draft, team: teamOf(p.draft.teamId) } : null,
-      scouting: scout !== null && p && L.season - p.birthYear <= 25 ? { grade: grade(scout), projection: projectionLabel(scout) } : null,
+      scouting: scout !== null && p && L.season - p.birthYear <= 25 ? { grade: grade(scout), projection: projectionLabel(scout, p!.pos) } : null,
       career: career.map((c) => ({ ...c, team: teamOf(c.teamId) })),
       awards,
     };
@@ -249,7 +317,8 @@ export const dataRouter = router({
   suggestLines: memberProcedure.query(async ({ ctx, input }) => {
     if (!ctx.membership.teamId) throw badRequest('You do not manage a team');
     const L = await readLeague(ctx.db, input.leagueId);
-    return autoLines(healthyRoster(L, L.teams[ctx.membership.teamId]));
+    const team = L.teams[ctx.membership.teamId];
+    return autoLines(healthyRoster(L, team), team.tactics);
   }),
 
   setLines: memberProcedure.input(z.object({ lines: linesSchema })).mutation(async ({ ctx, input }) => {
@@ -271,7 +340,22 @@ export const dataRouter = router({
     await mutateLeague(ctx.db, input.leagueId, (L) => {
       const team = L.teams[teamId];
       team.autoLines = input.enabled;
-      if (input.enabled) team.lines = autoLines(healthyRoster(L, team));
+      if (input.enabled) team.lines = autoLines(healthyRoster(L, team), team.tactics);
+    });
+    return { ok: true };
+  }),
+
+  /** Set your coaching systems. With the assistant coach on, special units are rebuilt to fit. */
+  setTactics: memberProcedure.input(z.object({ tactics: tacticsSchema })).mutation(async ({ ctx, input }) => {
+    const teamId = ctx.membership.teamId;
+    if (!teamId) throw badRequest('You do not manage a team');
+    await mutateLeague(ctx.db, input.leagueId, (L) => {
+      const team = L.teams[teamId];
+      const formationChanged = (team.tactics ?? DEFAULT_TACTICS).pp !== input.tactics.pp;
+      team.tactics = input.tactics;
+      if (team.autoLines) team.lines = autoLines(healthyRoster(L, team), team.tactics);
+      // A new formation re-slots the power play; the rest of the manager's lines stay.
+      else if (formationChanged) team.lines = completeLines({ ...team.lines, pp: [] }, healthyRoster(L, team), team.tactics);
     });
     return { ok: true };
   }),

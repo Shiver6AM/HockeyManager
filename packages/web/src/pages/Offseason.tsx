@@ -76,7 +76,16 @@ export function OffseasonPanel() {
           <TeamChip team={o.draft.onTheClock.team} />
           <p className="text-sm">
             <span className="font-semibold text-white">
-              {o.draft.onTheClock.isMe ? "You're on the clock!" : `${o.draft.onTheClock.team.city} is on the clock`}
+              {o.draft.onTheClock.isMe ? (
+                "You're on the clock!"
+              ) : (
+                <>
+                  <Link to={`/league/${L.id}/team/${o.draft.onTheClock.team.id}`} className="hover:underline">
+                    {o.draft.onTheClock.team.city}
+                  </Link>{' '}
+                  is on the clock
+                </>
+              )}
             </span>{' '}
             <span className="text-ice-400">
               Round {o.draft.onTheClock.round}, pick #{o.draft.onTheClock.overall} of {o.draft.total}
@@ -108,9 +117,9 @@ export function OffseasonPanel() {
         )}
       </div>
 
-      {L.isCommissioner && (
+      {L.canAdvance && (
         <div className="mt-5 border-t border-rink-700 pt-4">
-          <p className="mb-2 text-xs font-semibold tracking-wider text-ice-400 uppercase">Commissioner</p>
+          <p className="mb-2 text-xs font-semibold tracking-wider text-ice-400 uppercase">{L.isCommissioner ? 'Commissioner' : 'Co-commissioner'}</p>
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => advance.mutate({ leagueId: L.id, target: { days: 1 } })} disabled={advance.isPending}>
               {stage === 'review'
@@ -188,7 +197,11 @@ export function SummerNews() {
             <p className="mt-4 mb-2 text-xs font-semibold tracking-wider text-ice-400 uppercase">Draft lottery</p>
             {o.draft.lottery.map((x) => (
               <p key={x.team.id} className="flex items-center gap-2 text-sm">
-                <TeamChip team={x.team} size="sm" /> {x.team.city} jumps from #{x.from} to <span className="font-semibold text-white">#{x.to}</span>
+                <TeamChip team={x.team} size="sm" />{' '}
+                <Link to={`/league/${L.id}/team/${x.team.id}`} className="hover:underline">
+                  {x.team.city}
+                </Link>{' '}
+                jumps from #{x.from} to <span className="font-semibold text-white">#{x.to}</span>
               </p>
             ))}
           </>
