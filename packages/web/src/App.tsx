@@ -2,6 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Spinner } from './components/ui';
 import { BoxScorePage } from './pages/BoxScore';
+import { DraftPage } from './pages/Draft';
+import { FreeAgentsPage } from './pages/FreeAgents';
+import { PlayerPage } from './pages/Player';
+import { ResignPage } from './pages/Resign';
 import { Dashboard } from './pages/Dashboard';
 import { LeagueLayout } from './pages/LeagueLayout';
 import { LeaguesPage } from './pages/Leagues';
@@ -33,6 +37,10 @@ export function App() {
         <Route path="stats" element={<StatsPage />} />
         <Route path="playoffs" element={<PlayoffsPage />} />
         <Route path="settings" element={<LeagueSettings />} />
+        <Route path="draft" element={<DraftPage />} />
+        <Route path="re-sign" element={<ResignPage />} />
+        <Route path="free-agents" element={<FreeAgentsPage />} />
+        <Route path="player/:playerId" element={<PlayerPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -179,7 +179,65 @@ describe('multiplayer league flow', () => {
     expect(awards.current.map((a) => a.award)).toContain('Conn Smythe Trophy');
     const leaders = await bob.data.leaders({ leagueId, playoffs: true });
     expect(leaders.skaters[0].rows.length).toBe(10);
-    await expect(comm.sim.advance({ leagueId, target: { days: 1 } })).rejects.toThrow(/season is over/);
+  }, 120_000);
+
+  it('runs an offseason with human decisions, then starts the next season', async () => {
+    expect(await bob.offseason.overview({ leagueId })).toBeNull(); // season review
+    await comm.sim.advance({ leagueId, target: { days: 1 } }); // open the offseason
+    const os = await bob.offseason.overview({ leagueId });
+    expect(os!.stage).toBe('draft');
+    // Bob ranks a long shot first; when auto-picked for, he gets his list.
+    const board = await bob.offseason.draftBoard({ leagueId });
+    const longShot = board!.available[board!.available.length - 1];
+    await bob.offseason.setDraftList({ leagueId, playerIds: [longShot.id] });
+    expect(board!.available[0]).toHaveProperty('grade');
+    expect(JSON.stringify(board)).not.toMatch(/potential/);
+
+    // Cat picks when on the clock (if she is), otherwise the commissioner forces the draft through.
+    const after = await bob.offseason.overview({ leagueId });
+    if (after!.draft.onTheClock?.team.id === 'KC') {
+      const b2 = await cat.offseason.draftBoard({ leagueId });
+      await cat.offseason.makePick({ leagueId, playerId: b2!.available[0].id });
+    }
+    await expect(bob.offseason.signFreeAgent({ leagueId, playerId: 'nope' })).rejects.toThrow(/Free agency|only be done/);
+    await comm.sim.advance({ leagueId, target: { days: 1 } }); // finish draft
+    const picks = (await bob.offseason.draftBoard({ leagueId }))!.picks.filter((p) => p.teamId === 'HAL');
+    if (picks[0].overall > 1) expect(picks.map((p) => p.playerId)).toContain(longShot.id);
+
+    // Re-sign: keep Bob's best expiring player.
+    const exp = await bob.offseason.expiring({ leagueId });
+    const keep = exp!.players[0];
+    if (keep) await bob.offseason.setResign({ leagueId, playerId: keep.id, resign: true });
+    await comm.sim.advance({ leagueId, target: { days: 1 } }); // -> free agency
+    if (keep) expect((await bob.data.team({ leagueId, teamId: 'HAL' })).players.map((p) => p.id)).toContain(keep.id);
+
+    // Free agency: Bob signs the best player he can afford.
+    const fa = await bob.offseason.freeAgents({ leagueId });
+    expect(fa.canSign).toBe(true);
+    const target = fa.players.find((p) => p.ask.salary <= fa.capRoom!)!;
+    await bob.offseason.signFreeAgent({ leagueId, playerId: target.id });
+    const team = await bob.data.team({ leagueId, teamId: 'HAL' });
+    expect(team.players.map((p) => p.id)).toContain(target.id);
+
+    // Promote a prospect.
+    const prospect = team.prospects[0];
+    await bob.offseason.promote({ leagueId, playerId: prospect.id });
+    const player = await bob.data.player({ leagueId, playerId: prospect.id });
+    expect(player.player!.contract!.kind).toBe('ELC');
+
+    const before = (await comm.leagues.overview({ leagueId })).season;
+    await comm.sim.advance({ leagueId, target: { to: 'next-season' } });
+    const ov = await comm.leagues.overview({ leagueId });
+    expect(ov.season).toBe(before + 1);
+    expect(ov.phase).toBe('regular-season');
+    const hal = await bob.data.team({ leagueId, teamId: 'HAL' });
+    expect(hal.players.length).toBeLessThanOrEqual(24);
+    // Career pages carry last season.
+    const vet = hal.players.find((p) => p.age >= 25)!;
+    const career = await bob.data.player({ leagueId, playerId: vet.id });
+    expect(career.career.some((c) => c.season === before)).toBe(true);
+    await comm.sim.advance({ leagueId, target: { days: 3 } });
+    expect((await comm.leagues.overview({ leagueId })).day).toBe(3);
   }, 120_000);
 });
 

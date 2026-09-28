@@ -79,6 +79,10 @@ export interface Player {
   hidden: HiddenTraits;
   contract: Contract | null;
   injury: Injury | null;
+  /** Team holding this player's rights while he develops outside the NHL roster. */
+  prospectOf?: TeamId;
+  /** How the player entered the league, if through the draft. */
+  draft?: { season: number; round: number; overall: number; teamId: TeamId };
 }
 
 /** Who makes decisions for a team. Adding human managers never changes the team count. */
@@ -109,6 +113,8 @@ export interface Team {
   division: string;
   controller: TeamController;
   roster: PlayerId[];
+  /** Draft picks and young players developing outside the active roster (junior/minors). */
+  prospects?: PlayerId[];
   lines: Lines;
   /**
    * Human teams only: let the assistant coach rebuild the lines before every
@@ -141,6 +147,14 @@ export interface LeagueSettings {
   advance: AdvanceMode;
   /** Home-ice advantage multiplier on shot-attempt rate. */
   homeIce: number;
+  /**
+   * Mean overall of the league's best (roster-sized) group of players at creation.
+   * Each summer ratings are nudged back toward it so talent can't slowly inflate or
+   * deflate over decades, which would throw off the game-sim calibration.
+   */
+  talentAnchor?: number;
+  /** Standard deviation of that same group at creation (keeps the star/depth spread stable). */
+  talentSpread?: number;
 }
 
 export type Strength = 'EV' | 'PP' | 'SH' | 'EN';
@@ -275,7 +289,18 @@ export interface SeasonRecord {
 export interface Transaction {
   day: number;
   season: number;
-  type: 'call-up' | 'send-down' | 'injury' | 'return';
+  type:
+    | 'call-up'
+    | 'send-down'
+    | 'injury'
+    | 'return'
+    | 'draft'
+    | 're-sign'
+    | 'signing'
+    | 'departure'
+    | 'release'
+    | 'promotion'
+    | 'retirement';
   teamId: TeamId;
   playerId: PlayerId;
   note: string;
@@ -327,6 +352,76 @@ export interface League {
   awards: Record<string, AwardWinner>;
   history: SeasonRecord[];
   transactions: Transaction[];
+  offseason?: OffseasonState | null;
+  /** One line per player per season they appeared in. */
+  careerStats?: Record<PlayerId, CareerLine[]>;
+  retired?: Record<PlayerId, RetiredPlayer>;
+}
+
+export type OffseasonStage = 'draft' | 're-sign' | 'free-agency' | 'training-camp';
+
+export interface DraftPick {
+  round: number;
+  overall: number;
+  /** Team that currently owns the pick (picks become tradeable in Phase 5). */
+  teamId: TeamId;
+  originalTeamId: TeamId;
+  playerId: PlayerId | null;
+}
+
+export interface DraftState {
+  season: number;
+  /** Prospect ids in the class (drafted or not). */
+  classIds: PlayerId[];
+  picks: DraftPick[];
+  /** Index into picks of the pick on the clock; picks.length when done. */
+  current: number;
+  /** Teams that moved up in the lottery: [teamId, from, to]. */
+  lottery: Array<[TeamId, number, number]>;
+}
+
+export interface ContractOffer {
+  salary: number;
+  years: number;
+}
+
+export interface OffseasonState {
+  /** The season that just ended. */
+  season: number;
+  stage: OffseasonStage;
+  draft: DraftState;
+  /** Players whose contracts end this summer, with what they're asking for. */
+  expiring: Record<PlayerId, ContractOffer>;
+  /** Human decisions on expiring players: true = re-sign at the asking price. */
+  resign: Record<PlayerId, boolean>;
+  /** Asking prices for this summer's free agents. */
+  freeAgentAsks: Record<PlayerId, ContractOffer>;
+  /** Each human team's ranked draft list, used when they're auto-picked for. */
+  draftLists?: Record<TeamId, PlayerId[]>;
+  /** Rating changes from this summer's development: [before, after]. */
+  development: Record<PlayerId, [number, number]>;
+}
+
+export interface CareerLine {
+  season: number;
+  teamId: TeamId | null;
+  age: number;
+  overall: number;
+  skater: SkaterSeasonStats | null;
+  goalie: GoalieSeasonStats | null;
+  playoffSkater: SkaterSeasonStats | null;
+  playoffGoalie: GoalieSeasonStats | null;
+}
+
+export interface RetiredPlayer {
+  id: PlayerId;
+  name: string;
+  pos: Position;
+  birthYear: number;
+  retiredAfter: number;
+  lastTeamId: TeamId | null;
+  peakOverall: number;
+  career: CareerLine[];
 }
 
 export interface StandingsRow {

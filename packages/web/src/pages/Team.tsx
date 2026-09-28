@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { GameCard } from '../components/GameCard';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Rating, Spinner, TeamChip } from '../components/ui';
 import { gaa, money, signed, svPct, toi } from '../format';
@@ -16,7 +16,7 @@ export function TeamPage() {
   const { teamId = '' } = useParams();
   const trpc = useTRPC();
   const q = useQuery(trpc.data.team.queryOptions({ leagueId: L.id, teamId }));
-  const [tab, setTab] = useState<'roster' | 'lines' | 'schedule'>('roster');
+  const [tab, setTab] = useState<'roster' | 'lines' | 'prospects' | 'schedule'>('roster');
   if (q.error) return <ErrorBox error={q.error} />;
   if (!q.data) return <Spinner />;
   const t = q.data;
@@ -60,18 +60,19 @@ export function TeamPage() {
       </div>
 
       <div className="flex gap-1 rounded-lg bg-rink-900 p-1 text-sm sm:w-fit">
-        {(['roster', 'lines', 'schedule'] as const).map((k) => (
+        {(['roster', 'lines', 'prospects', 'schedule'] as const).map((k) => (
           <button
             key={k}
             onClick={() => setTab(k)}
             className={cx('rounded-md px-4 py-1.5 font-semibold capitalize', tab === k ? 'bg-rink-600 text-white' : 'text-ice-400 hover:text-ice-100')}
           >
-            {k === 'lines' && t.isMine ? 'Lines editor' : k}
+            {k === 'lines' && t.isMine ? 'Lines editor' : k === 'prospects' ? `Prospects (${t.prospects.length})` : k}
           </button>
         ))}
       </div>
 
       {tab === 'roster' && <Roster t={t} />}
+      {tab === 'prospects' && <Prospects t={t} />}
       {tab === 'lines' && (t.isMine ? <LinesEditor t={t} /> : <LinesView t={t} />)}
       {tab === 'schedule' && (
         <div className="grid gap-5 lg:grid-cols-2">
@@ -133,8 +134,14 @@ function Roster({ t }: { t: TeamData }) {
   const gol = t.players.filter((p) => p.pos === 'G').sort(byOvr);
   return (
     <div className="space-y-5">
-      <SkaterTable title={`Forwards (${fwd.length})`} players={fwd} />
-      <SkaterTable title={`Defense (${def.length})`} players={def} />
+      {t.isMine && t.players.length > 23 && (
+        <p className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
+          {t.players.length} players on the roster. The limit is 23 once the season starts; at the end of training camp your lowest-rated extras are
+          sent down or released.
+        </p>
+      )}
+      <SkaterTable title={`Forwards (${fwd.length})`} players={fwd} t={t} />
+      <SkaterTable title={`Defense (${def.length})`} players={def} t={t} />
       <Card title={`Goalies (${gol.length})`}>
         <div className="-m-4 overflow-x-auto">
           <table className="table">
@@ -156,6 +163,7 @@ function Roster({ t }: { t: TeamData }) {
                 <th className="num">SO</th>
                 <th>Contract</th>
                 <th>Status</th>
+                {t.isMine && <th />}
               </tr>
             </thead>
             <tbody>
@@ -163,8 +171,8 @@ function Roster({ t }: { t: TeamData }) {
                 const s = p.goalieStats;
                 return (
                   <tr key={p.id}>
-                    <td className="text-ice-50">
-                      {p.name} <span className="text-xs text-ice-500">{p.archetype}</span>
+                    <td>
+                      <PlayerLink p={p} /> <span className="text-xs text-ice-500">{p.archetype}</span>
                     </td>
                     <td className="num">{p.age}</td>
                     <td className="num">
@@ -187,6 +195,11 @@ function Roster({ t }: { t: TeamData }) {
                     <td>
                       <Status p={p} />
                     </td>
+                    {t.isMine && (
+                      <td>
+                        <RosterActions t={t} p={p} />
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -198,7 +211,121 @@ function Roster({ t }: { t: TeamData }) {
   );
 }
 
-function SkaterTable({ title, players }: { title: string; players: P[] }) {
+function RosterActions({ t, p }: { t: TeamData; p: P }) {
+  const L = useLeague();
+  const trpc = useTRPC();
+  const qc = useQueryClient();
+  const done = { onSuccess: () => qc.invalidateQueries() };
+  const release = useMutation(trpc.offseason.release.mutationOptions(done));
+  const down = useMutation(trpc.offseason.sendDown.mutationOptions(done));
+  if (!t.isMine) return null;
+  const canSendDown = p.contract?.kind === 'ELC' || p.age <= 22;
+  return (
+    <span className="flex gap-1">
+      {canSendDown && (
+        <Button variant="ghost" className="px-1.5 py-0 text-[11px]" disabled={down.isPending} onClick={() => down.mutate({ leagueId: L.id, playerId: p.id })}>
+          Send down
+        </Button>
+      )}
+      <Button
+        variant="ghost"
+        className="px-1.5 py-0 text-[11px] hover:text-red-300"
+        disabled={release.isPending}
+        onClick={() => {
+          if (confirm(`Release ${p.name}? His contract comes off your cap and he becomes a free agent.`)) release.mutate({ leagueId: L.id, playerId: p.id });
+        }}
+      >
+        Release
+      </Button>
+      {(release.error || down.error) && <span className="text-[11px] text-red-300">{String((release.error ?? down.error)?.message)}</span>}
+    </span>
+  );
+}
+
+function PlayerLink({ p }: { p: { id: string; name: string } }) {
+  const L = useLeague();
+  return (
+    <Link to={`/league/${L.id}/player/${p.id}`} className="text-ice-50 hover:underline">
+      {p.name}
+    </Link>
+  );
+}
+
+function Prospects({ t }: { t: TeamData }) {
+  const L = useLeague();
+  const trpc = useTRPC();
+  const qc = useQueryClient();
+  const done = { onSuccess: () => qc.invalidateQueries() };
+  const promote = useMutation(trpc.offseason.promote.mutationOptions(done));
+  const release = useMutation(trpc.offseason.release.mutationOptions(done));
+  return (
+    <Card title="Prospects">
+      <p className="-mt-1 mb-3 text-sm text-ice-400">
+        Prospects develop in junior or the minors and don't count against the cap or the 23-man roster. Promoting one signs a 3-year entry-level deal
+        ($950K). Unsigned prospects are released at 23.
+      </p>
+      {t.prospects.length === 0 ? (
+        <Empty>No prospects in the system.</Empty>
+      ) : (
+        <div className="-mx-4 -mb-4 overflow-x-auto">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Prospect</th>
+                <th>Pos</th>
+                <th className="num">Age</th>
+                <th className="num">OVR</th>
+                <th className="num">Grade</th>
+                <th>Projection</th>
+                <th>Drafted</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {t.prospects.map((p) => (
+                <tr key={p.id}>
+                  <td>
+                    <PlayerLink p={p} />
+                  </td>
+                  <td className="text-ice-400">{p.pos}</td>
+                  <td className="num">{p.age}</td>
+                  <td className="num">
+                    <Rating value={p.overall} />
+                  </td>
+                  <td className="num font-display text-blue-300">{p.grade}</td>
+                  <td className="text-ice-300">{p.projection}</td>
+                  <td className="text-xs text-ice-400">{p.draft ? `${p.draft.season} R${p.draft.round} #${p.draft.overall}` : 'Undrafted'}</td>
+                  <td className="text-right">
+                    {t.isMine && (
+                      <span className="flex justify-end gap-1">
+                        <Button className="px-2 py-0.5 text-xs" disabled={promote.isPending} onClick={() => promote.mutate({ leagueId: L.id, playerId: p.id })}>
+                          Promote
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="px-2 py-0.5 text-xs"
+                          disabled={release.isPending}
+                          onClick={() => confirm(`Release ${p.name}?`) && release.mutate({ leagueId: L.id, playerId: p.id })}
+                        >
+                          Release
+                        </Button>
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="mt-6">
+        <ErrorBox error={promote.error ?? release.error} />
+      </div>
+    </Card>
+  );
+}
+
+function SkaterTable({ title, players, t }: { title: string; players: P[]; t: TeamData }) {
   return (
     <Card title={title}>
       <div className="-m-4 overflow-x-auto">
@@ -225,6 +352,7 @@ function SkaterTable({ title, players }: { title: string; players: P[] }) {
               <th className="num">TOI</th>
               <th>Contract</th>
               <th>Status</th>
+              {t.isMine && <th />}
             </tr>
           </thead>
           <tbody>
@@ -233,8 +361,8 @@ function SkaterTable({ title, players }: { title: string; players: P[] }) {
               const r = p.skater!;
               return (
                 <tr key={p.id} className={cx(p.injury && 'opacity-60')}>
-                  <td className="text-ice-50">
-                    {p.name} <span className="text-xs text-ice-500">{p.archetype}</span>
+                  <td>
+                    <PlayerLink p={p} /> <span className="text-xs text-ice-500">{p.archetype}</span>
                   </td>
                   <td className="text-ice-400">{p.pos}</td>
                   <td className="num">{p.age}</td>
@@ -258,6 +386,11 @@ function SkaterTable({ title, players }: { title: string; players: P[] }) {
                   <td>
                     <Status p={p} />
                   </td>
+                  {t.isMine && (
+                    <td>
+                      <RosterActions t={t} p={p} />
+                    </td>
+                  )}
                 </tr>
               );
             })}

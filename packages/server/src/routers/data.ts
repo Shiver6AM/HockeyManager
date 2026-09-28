@@ -3,6 +3,8 @@ import {
   betterScratches,
   healthyRoster,
   overall,
+  projectionLabel,
+  scoutedPotential,
   ROUND_NAMES,
   standings,
   type League,
@@ -15,6 +17,7 @@ import { mutateLeague } from '../advance';
 import { readBoxScore, readLeague } from '../state';
 import { badRequest, memberProcedure, router } from '../trpc';
 import { playerName, publicPlayer, teamInfo } from '../views';
+import { grade } from './offseason';
 
 const overallOf = (L: League, id: string) => overall(L.players[id]);
 
@@ -157,6 +160,15 @@ export const dataRouter = router({
         playoffStats: L.playoffSkaterStats[id] ?? null,
         playoffGoalieStats: L.playoffGoalieStats[id] ?? null,
       })),
+      prospects: (t.prospects ?? [])
+        .map((id) => L.players[id])
+        .filter(Boolean)
+        .map((p) => {
+          const s = scoutedPotential(L, ctx.membership.teamId ?? 'league', p);
+          return { ...publicPlayer(L, p), grade: grade(s), projection: projectionLabel(s), draft: p.draft ?? null };
+        })
+        .sort((a, b) => b.overall - a.overall),
+      phase: L.phase,
       lines: t.lines,
       autoLines: t.controller.kind === 'human' ? !!t.autoLines : true,
       scratchWarnings:
@@ -168,6 +180,44 @@ export const dataRouter = router({
           : [],
       recent: games.filter((g) => g.result).slice(-5).map((g) => gameView(L, g)),
       upcoming: games.filter((g) => !g.result).slice(0, 5).map((g) => gameView(L, g)),
+    };
+  }),
+
+  player: memberProcedure.input(z.object({ playerId: z.string() })).query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    const p = L.players[input.playerId];
+    const retired = L.retired?.[input.playerId];
+    if (!p && !retired) throw new TRPCError({ code: 'NOT_FOUND', message: 'No such player' });
+    const career = [...(p ? (L.careerStats?.[p.id] ?? []) : retired!.career)];
+    // Add the season in progress.
+    if (p && L.phase !== 'offseason' && (L.skaterStats[p.id] || L.goalieStats[p.id])) {
+      career.push({
+        season: L.season,
+        teamId: p.teamId,
+        age: L.season - p.birthYear,
+        overall: overall(p),
+        skater: L.skaterStats[p.id] ?? null,
+        goalie: L.goalieStats[p.id] ?? null,
+        playoffSkater: L.playoffSkaterStats[p.id] ?? null,
+        playoffGoalie: L.playoffGoalieStats[p.id] ?? null,
+      });
+    }
+    const teamOf = (id: string | null) => (id && L.teams[id] ? teamInfo(L.teams[id]) : null);
+    const awards = L.history.flatMap((h) =>
+      Object.entries(h.awards)
+        .filter(([, w]) => w.playerId === input.playerId)
+        .map(([award]) => ({ season: h.season, award })),
+    );
+    const scout = p ? scoutedPotential(L, ctx.membership.teamId ?? 'league', p) : null;
+    return {
+      player: p ? publicPlayer(L, p) : null,
+      retired: retired ? { name: retired.name, pos: retired.pos, retiredAfter: retired.retiredAfter, peakOverall: retired.peakOverall } : null,
+      team: p ? teamOf(p.teamId ?? p.prospectOf ?? null) : teamOf(retired!.lastTeamId),
+      isProspect: !!p?.prospectOf,
+      draft: p?.draft ? { ...p.draft, team: teamOf(p.draft.teamId) } : null,
+      scouting: scout !== null && p && L.season - p.birthYear <= 25 ? { grade: grade(scout), projection: projectionLabel(scout) } : null,
+      career: career.map((c) => ({ ...c, team: teamOf(c.teamId) })),
+      awards,
     };
   }),
 

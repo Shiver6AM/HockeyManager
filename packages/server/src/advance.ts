@@ -14,7 +14,9 @@
 import {
   advanceDays,
   advanceToEndOfSeason,
+  advanceToNextSeason,
   advanceToPlayoffs,
+  offseasonStep,
   type AdvanceMode,
   type AdvanceResult,
   type League,
@@ -23,7 +25,7 @@ import { Cron } from 'croner';
 import type { Db, Queryable } from './db';
 import { extractBoxScores, loadForUpdate, saveLeague } from './state';
 
-export type AdvanceTarget = { days: number } | { to: 'playoffs' | 'end-of-season' };
+export type AdvanceTarget = { days: number } | { to: 'playoffs' | 'end-of-season' | 'next-season' };
 
 export interface AdvanceSummary {
   fromDay: number;
@@ -51,11 +53,26 @@ export function advanceLeague(db: Db, leagueId: string, target: AdvanceTarget, t
   return withLeagueLock(leagueId, () =>
     db.tx(async (q) => {
       const { league, version } = await loadForUpdate(q, leagueId);
-      if (league.phase === 'offseason') throw new Error('The season is over. The offseason arrives in Phase 3.');
       let res: AdvanceResult;
-      if ('days' in target) res = advanceDays(league, target.days);
+      if (league.phase === 'offseason') {
+        // In the offseason one "day" is one stage. Advances never wait on
+        // humans: anyone who hasn't acted gets sensible defaults.
+        if ('to' in target && target.to !== 'next-season') {
+          throw new Error('The season is over. Advance through the offseason instead.');
+        }
+        const stages: string[] = [];
+        // Scheduled ticks and ready-ups move one stage at a time so every manager gets a turn at each stage.
+        const steps = 'days' in target ? (triggeredBy.startsWith('commissioner') ? target.days : 1) : Infinity;
+        for (let i = 0; i < steps && league.phase === 'offseason'; i++) stages.push(offseasonStep(league, { force: true }).to);
+        res = { fromDay: league.day, toDay: league.day, games: [], phaseChanges: stages as AdvanceResult['phaseChanges'] };
+      } else if ('days' in target) res = advanceDays(league, target.days);
       else if (target.to === 'playoffs') res = advanceToPlayoffs(league);
-      else res = advanceToEndOfSeason(league);
+      else if (target.to === 'end-of-season') res = advanceToEndOfSeason(league);
+      else {
+        res = advanceToEndOfSeason(league);
+        const steps = advanceToNextSeason(league);
+        res.phaseChanges.push(...steps.map((s) => s.to as never));
+      }
 
       await extractBoxScores(q, league, res.games);
       await saveLeague(q, leagueId, league, version);
