@@ -1,5 +1,12 @@
 import {
+  askingContract,
   autoLines,
+  buyoutTerms,
+  canExtend,
+  capSeason,
+  deadCapFor,
+  payroll as teamPayroll,
+  priorities,
   betterScratches,
   healthyRoster,
   overall,
@@ -146,15 +153,22 @@ export const dataRouter = router({
     const st = standings(L);
     const record = st.find((r) => r.teamId === t.id)!;
     const games = allGames(L).filter((g) => g.home === t.id || g.away === t.id).sort((a, b) => a.day - b.day);
-    const payroll = t.roster.reduce((s, id) => s + (L.players[id].contract?.salary ?? 0), 0);
+    const payroll = teamPayroll(L, t);
     return {
       team: teamInfo(t),
       isMine: ctx.membership.teamId === t.id,
       record: { ...record, rank: st.indexOf(record) + 1 },
       payroll,
       salaryCap: L.settings.salaryCap,
+      deadCap: (t.deadCap ?? []).filter((x) => x.untilSeason >= capSeason(L)),
+      deadCapThisSeason: deadCapFor(L, t),
       players: t.roster.map((id) => ({
         ...publicPlayer(L, L.players[id]),
+        extension: L.players[id].extension ?? null,
+        canExtend: ctx.membership.teamId === t.id && canExtend(L, L.players[id]) && !L.players[id].extension,
+        ask: ctx.membership.teamId === t.id && canExtend(L, L.players[id]) ? (L.offseason?.expiring[id] ?? askingContract(L, L.players[id])) : null,
+        priorities: ctx.membership.teamId === t.id ? priorities(L.players[id]) : null,
+        buyout: ctx.membership.teamId === t.id ? buyoutTerms(L, L.players[id]) : null,
         stats: L.skaterStats[id] ?? null,
         goalieStats: L.goalieStats[id] ?? null,
         playoffStats: L.playoffSkaterStats[id] ?? null,

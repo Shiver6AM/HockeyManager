@@ -3,6 +3,7 @@ import { FRANCHISES, NAME_POOLS } from './names';
 import { clamp, deriveSeed, Rng } from './rng';
 import { overall } from './ratings';
 import { buildSchedule } from './schedule';
+import { salaryScale } from './contracts';
 import type {
   AdvanceMode,
   Contract,
@@ -81,9 +82,8 @@ function contractFor(rng: Rng, ovr: number, age: number): Contract {
   if (age <= 21) {
     return { salary: 950_000, yearsLeft: rng.int(1, 3), kind: 'ELC', expiresAs: 'RFA' };
   }
-  const t = Math.max(0, (ovr - 58) / 34);
-  const base = 775_000 + 12_500_000 * Math.pow(t, 2.2);
-  const salary = Math.round(clamp(base * rng.normal(1, 0.15), 775_000, 14_000_000) / 25_000) * 25_000;
+  const base = salaryScale(ovr);
+  const salary = Math.round(clamp(base * rng.normal(1, 0.15), 775_000, 15_500_000) / 25_000) * 25_000;
   const maxYears = age >= 34 ? 1 : age >= 31 ? 3 : 6;
   return {
     salary,
@@ -244,7 +244,7 @@ export function generateLeague(opts: GenerateOptions): League {
     if (generationalTeams.has(f.abbr)) {
       const slot = teamRng.int(0, 2);
       const old = roster[slot];
-      const star = generatePlayer(teamRng, old.pos, teamRng.normal(94.5, 1.2), season, teamRng.int(21, 28), 'Generational');
+      const star = generatePlayer(teamRng, old.pos, teamRng.normal(95.5, 1.2), season, teamRng.int(21, 28), 'Generational');
       star.teamId = f.abbr;
       roster[slot] = star;
     }

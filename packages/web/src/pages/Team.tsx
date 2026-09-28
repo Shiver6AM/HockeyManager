@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { GameCard } from '../components/GameCard';
+import { OfferForm } from '../components/OfferForm';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Rating, Spinner, TeamChip } from '../components/ui';
 import { gaa, money, signed, svPct, toi } from '../format';
 import { useTRPC, type Outputs } from '../trpc';
@@ -56,6 +57,11 @@ export function TeamPage() {
             <div className={cx('h-2 rounded-full', capPct > 97 ? 'bg-goal' : 'bg-blueline')} style={{ width: `${capPct}%` }} />
           </div>
           <p className="mt-1 text-xs text-ice-400">Cap space {money(t.salaryCap - t.payroll)}</p>
+          {t.deadCapThisSeason > 0 && (
+            <p className="mt-1 text-xs text-red-300" title={t.deadCap.map((d) => `${d.playerName}: ${money(d.amount)} through ${d.untilSeason}`).join(', ')}>
+              Includes {money(t.deadCapThisSeason)} dead cap ({t.deadCap.length} buyout{t.deadCap.length === 1 ? '' : 's'})
+            </p>
+          )}
         </div>
       </div>
 
@@ -123,6 +129,12 @@ function Contract({ p }: { p: P }) {
     <span className="tabular">
       {money(p.contract.salary)} <span className="text-ice-500">× {p.contract.yearsLeft}y</span>
       {p.contract.kind === 'ELC' && <span className="ml-1 text-[10px] text-blue-300">ELC</span>}
+      {p.contract.yearsLeft === 1 && !p.extension && <span className="ml-1 text-[10px] text-warn">{p.contract.expiresAs}</span>}
+      {p.extension && (
+        <span className="ml-1 text-[10px] text-win" title="Agreed new deal">
+          → {money(p.extension.salary)}×{p.extension.years}
+        </span>
+      )}
     </span>
   );
 }
@@ -220,8 +232,17 @@ function RosterActions({ t, p }: { t: TeamData; p: P }) {
   const down = useMutation(trpc.offseason.sendDown.mutationOptions(done));
   if (!t.isMine) return null;
   const canSendDown = p.contract?.kind === 'ELC' || p.age <= 22;
+  const [extending, setExtending] = useState(false);
+  const buyoutNote = p.buyout
+    ? `He'll be bought out: ${money(p.buyout.perSeason)} of dead cap per season for ${p.buyout.seasons} seasons.`
+    : 'His contract comes off your cap and he becomes a free agent.';
   return (
-    <span className="flex gap-1">
+    <span className="flex flex-wrap gap-1">
+      {p.canExtend && p.ask && (
+        <Button variant="ghost" className="px-1.5 py-0 text-[11px] text-blue-300" onClick={() => setExtending(!extending)}>
+          Extend
+        </Button>
+      )}
       {canSendDown && (
         <Button variant="ghost" className="px-1.5 py-0 text-[11px]" disabled={down.isPending} onClick={() => down.mutate({ leagueId: L.id, playerId: p.id })}>
           Send down
@@ -232,12 +253,17 @@ function RosterActions({ t, p }: { t: TeamData; p: P }) {
         className="px-1.5 py-0 text-[11px] hover:text-red-300"
         disabled={release.isPending}
         onClick={() => {
-          if (confirm(`Release ${p.name}? His contract comes off your cap and he becomes a free agent.`)) release.mutate({ leagueId: L.id, playerId: p.id });
+          if (confirm(`Release ${p.name}? ${buyoutNote}`)) release.mutate({ leagueId: L.id, playerId: p.id });
         }}
       >
         Release
       </Button>
       {(release.error || down.error) && <span className="text-[11px] text-red-300">{String((release.error ?? down.error)?.message)}</span>}
+      {extending && p.ask && (
+        <span className="block w-full">
+          <OfferForm leagueId={L.id} playerId={p.id} ask={p.ask} mode="negotiate" onClose={() => setExtending(false)} />
+        </span>
+      )}
     </span>
   );
 }

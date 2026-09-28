@@ -54,6 +54,7 @@ body {
   @apply text-right tabular-nums;
 }
 
-select.slot {
-  @apply w-full appearance-none rounded-md border border-rink-600 bg-rink-800 px-2 py-1.5 text-sm text-ice-50 focus:border-blueline focus:outline-none;
+select.slot,
+input.slot {
+  @apply block w-full appearance-none rounded-md border border-rink-600 bg-rink-800 px-2 py-1.5 text-sm text-ice-50 focus:border-blueline focus:outline-none;
 }

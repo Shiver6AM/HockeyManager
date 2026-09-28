@@ -62,7 +62,7 @@ export const TUNING = {
   penaltiesPer60: 3.35, // minors per team
   hitsPer60: 21,
   fightsPerGame: 0.15,
-  homeIce: 1.12,
+  homeIce: 1.1,
   scoreEffect: 0.12, // attempt-rate swing per goal of deficit, 3rd period
   backupStartChance: 0.12,
   /** Chance the backup starts when the team played yesterday. */

@@ -14,7 +14,8 @@ import {
   overall,
   promoteProspect,
   ROSTER_MAX,
-  signFreeAgent,
+  placeBid,
+  offerExtension,
   standings,
   type League,
 } from '../src/index';
@@ -88,30 +89,51 @@ describe('offseason with a human manager', () => {
     expect(L.offseason!.stage).toBe('re-sign');
   });
 
-  it('honors re-sign decisions: yes = re-signed at the ask, undecided = walks', () => {
+  it('re-signs through negotiation; qualified RFAs stay on a 1-year deal; everyone else walks', () => {
     myExpiring = Object.keys(L.offseason!.expiring).filter((id) => L.players[id]?.teamId === ME);
     expect(myExpiring.length).toBeGreaterThan(1);
+    const team = L.teams[ME];
     const keep = myExpiring[0];
-    L.offseason!.resign[keep] = true;
-    const ask = L.offseason!.expiring[keep];
+    let offer = { ...L.offseason!.expiring[keep] };
+    offer.salary = Math.round((offer.salary * 1.15) / 25_000) * 25_000;
+    let r = offerExtension(L, team, L.players[keep], offer);
+    if (r.result === 'counter') {
+      offer = r.counter;
+      r = offerExtension(L, team, L.players[keep], offer);
+    }
+    expect(r.result).toBe('accept');
+    const rfa = myExpiring.slice(1).find((id) => L.players[id].contract?.expiresAs === 'RFA');
+    if (rfa) (L.offseason!.qualified ??= {})[rfa] = true;
     offseasonStep(L, { force: true });
     expect(L.players[keep].teamId).toBe(ME);
-    expect(L.players[keep].contract).toMatchObject({ salary: ask.salary, yearsLeft: ask.years });
+    expect(L.players[keep].contract).toMatchObject({ salary: offer.salary, yearsLeft: offer.years });
+    if (rfa) expect(L.players[rfa].contract?.yearsLeft).toBe(1);
     for (const id of myExpiring.slice(1)) {
-      if (L.players[id]) expect(L.players[id].teamId).toBeNull();
+      if (id !== rfa && L.players[id]) expect(L.players[id].teamId).toBeNull();
     }
     expect(L.offseason!.stage).toBe('free-agency');
   });
 
   it('lets the human sign a free agent within the cap, then AI teams fill their rosters', () => {
     const team = L.teams[ME];
-    const target = freeAgents(L)
-      .filter((p) => L.offseason!.freeAgentAsks[p.id]?.salary <= capRoom(L, team))
-      .sort((a, b) => overall(b) - overall(a))[0];
-    signFreeAgent(L, team, target);
-    expect(target.teamId).toBe(ME);
-    expect(team.roster).toContain(target.id);
-    offseasonStep(L, { force: true });
+    // Bid generously on a few mid-market players; rival bids and team fit decide the rest.
+    const targets = freeAgents(L)
+      .filter((p) => L.offseason!.freeAgentAsks[p.id]?.salary * 1.5 <= capRoom(L, team) / 3)
+      .sort((a, b) => overall(b) - overall(a))
+      .slice(0, 3);
+    for (const t of targets) {
+      const ask = L.offseason!.freeAgentAsks[t.id];
+      placeBid(L, team, t, { salary: Math.round((ask.salary * 1.5) / 25_000) * 25_000, years: ask.years });
+    }
+    offseasonStep(L, { force: true }); // round 1
+    const won = targets.filter((t) => t.teamId === ME);
+    expect(won.length).toBeGreaterThanOrEqual(1);
+    for (const t of won) expect(team.roster).toContain(t.id);
+    // Every signing went to the offer the player liked best among the ones he got.
+    expect(L.offseason!.bids).toEqual({});
+    expect(L.offseason!.faLog!.length).toBeGreaterThanOrEqual(5);
+    offseasonStep(L, { force: true }); // round 2
+    offseasonStep(L, { force: true }); // round 3 + depth fill
     expect(L.offseason!.stage).toBe('training-camp');
     for (const t of Object.values(L.teams)) {
       if (t.controller.kind === 'ai') expect(t.roster.length).toBeGreaterThanOrEqual(20);

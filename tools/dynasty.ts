@@ -10,6 +10,7 @@ import {
   advanceToNextSeason,
   age,
   generateLeague,
+  offseasonStep,
   overall,
   standings,
   type League,
@@ -80,6 +81,7 @@ const rows: Row[] = [];
 const t0 = Date.now();
 for (let i = 0; i < seasons; i++) {
   advanceToEndOfSeason(L);
+  offseasonStep(L, { force: true }); // season review -> development, retirements, draft order
   const snap = snapshot(L);
   const retired = Object.values(L.retired ?? {}).filter((r) => r.retiredAfter === L.season).length;
   advanceToNextSeason(L);
@@ -98,6 +100,7 @@ for (const r of rows) {
   console.log(cells.map((c, i) => c.padEnd(w[i])).join(''));
 }
 const talent = rows.map((r) => r.talent);
+export { snapshot };
 console.log(`\n${seasons} seasons in ${((Date.now() - t0) / 1000).toFixed(0)}s. Talent range ${Math.min(...talent).toFixed(1)}–${Math.max(...talent).toFixed(1)}; goals/game ${Math.min(...rows.map((r) => r.gpg)).toFixed(2)}–${Math.max(...rows.map((r) => r.gpg)).toFixed(2)}.`);
 const champs = new Set(rows.map((r) => r.champ));
 console.log(`${champs.size} different champions.`);

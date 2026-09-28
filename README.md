@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 45 tests: sim determinism, playoffs, injuries, offseason, and the full multiplayer API flow
+npm test              # 51 tests: sim determinism, playoffs, injuries, offseason, and the full multiplayer API flow
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate 8   # sim 8 seasons and compare league stats to real NHL figures
@@ -114,8 +114,8 @@ anyone who hasn't acted gets sensible defaults.
 |---|---|---|
 | **Season review** | Nothing changes yet, so final stats and awards can be browsed | Look around |
 | **Entry draft** | A new class of ~260 teenagers and an NHL-style lottery (two draws, max 10-spot jump); 7 rounds | Pick when you're on the clock, or rank a **draft list** that's used if you're away |
-| **Re-sign** | Players age and develop over the summer, veterans retire, contracts expire | Re-sign or let go each expiring player at his asking price |
-| **Free agency** | AI teams fill their rosters; unsigned players lower their asks each round | Sign free agents at their asking price, first come first served |
+| **Re-sign** | Players age and develop over the summer, veterans retire, contracts expire | **Negotiate** with each expiring player, qualify RFAs, or let them go |
+| **Free agency** | Three **blind-bidding rounds**: every free agent takes the best offer he receives; AI teams bid too | Place sealed bids; leftover players sign at their ask during camp |
 | **Training camp** | AI teams promote ready prospects and cut to 23 | Promote prospects, send down, release |
 | **New season** | Career stats archived, new schedule, cap grows 2.5% | — |
 
@@ -133,6 +133,26 @@ anyone who hasn't acted gets sensible defaults.
   original talent mean and spread, so there's no inflation or deflation over decades.
   Without this, the game-sim calibration would drift. In a 10-season test, talent
   stayed within 68.7–69.6, goals per game within 2.85–3.08, and 8 different teams won.
+
+## Contracts
+
+- **Negotiation:** every player weighs an offer on money (weighted by his greed),
+  term against what he asked for, whether your team can win (ambition), the role he'd
+  have, and loyalty to his current team. He accepts, counters, or, if you lowball him,
+  gets annoyed and raises his price. You get three offers per player per window.
+  Players show coarse priorities ("Wants to win now", "Loyal to his team"), but
+  never the exact numbers. The AI goes through the same function.
+- **Restricted free agents:** RFAs can be qualified. If you don't reach a deal, he stays
+  on a one-year qualifying offer at 105% of his salary.
+- **Blind-bid free agency:** managers in different time zones get the same shot,
+  because what counts is the best offer, not who clicked first. Teams under the
+  salary floor overpay to reach it.
+- **Extensions:** negotiate with players in the final year of their deal during
+  the season. The new deal kicks in when the old one ends.
+- **Buyouts:** releasing a player under contract costs two-thirds of the remaining
+  money (one-third if he's under 26), spread over twice the remaining years as dead cap.
+- **Pay scale:** salaries scale with the cap, which grows 2.5% a year. Typical
+  payrolls sit between the floor and the cap.
 
 ## The simulation
 
@@ -173,13 +193,10 @@ playoff OT rate. Some targets are approximate.
 - A full-season "sim to end" takes a few seconds and blocks the API while it runs.
   It should move to a worker thread before the game is hosted.
 - Live updates use 5-second polling. Supabase Realtime can replace it later.
-- Contracts use fixed asking prices, and free agency is first come first served.
-  Real negotiation and blind bidding are Phase 4.
+- No offer sheets for RFAs yet (qualifying offers only).
 - The league document grows about 0.3 MB per season of history (careers, retirees).
 
 ## Roadmap
 
-- **Phase 4, contracts and free agency:** cap rules, RFA/UFA, AI player negotiation
-  driven by personality, blind-bid free agency rounds.
 - **Phase 5, trades:** human-to-human proposals, AI trade valuation, approval/veto rules.
 - **Phase 6, league life:** scouting fog of war, staff, finances, news, notifications.
