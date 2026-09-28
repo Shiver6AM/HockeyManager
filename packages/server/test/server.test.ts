@@ -142,6 +142,32 @@ describe('multiplayer league flow', () => {
     ).rejects.toThrow();
   });
 
+  it('runs skills coaches: hire, plan, and see progress', async () => {
+    const c0 = await bob.life.skillsCoaching({ leagueId, teamId: 'HAL' });
+    expect(c0.isMine).toBe(true);
+    expect(c0.coaches.length).toBeGreaterThanOrEqual(1);
+    expect(c0.pool.length).toBeGreaterThan(5);
+    const coach = c0.coaches[0];
+    const skater = c0.roster.find((p) => p.pos !== 'G')!;
+    await bob.life.setCoachPlan({ leagueId, coachId: coach.id, auto: false, assignments: [{ playerId: skater.id, skill: 'netFront' }] });
+    const c1 = await bob.life.skillsCoaching({ leagueId, teamId: 'HAL' });
+    const w = c1.coaches.find((c) => c.id === coach.id)!.working;
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatchObject({ playerId: skater.id, skill: 'netFront' });
+    expect(w[0].seasonPace).toBeGreaterThan(0);
+    await expect(cat.life.setCoachPlan({ leagueId, coachId: coach.id, auto: true, assignments: [] })).rejects.toThrow(/Not one of your coaches/);
+    if (c1.coaches.length < c1.maxCoaches) {
+      await bob.life.hireSkillsCoach({ leagueId, coachId: c1.pool[0].id });
+      expect((await bob.life.skillsCoaching({ leagueId, teamId: 'HAL' })).coaches.length).toBe(c1.coaches.length + 1);
+    }
+    const player = await bob.data.player({ leagueId, playerId: skater.id });
+    expect(player.player!.coachability).toBeGreaterThan(0);
+    expect(player.training!.current!.skill).toBe('netFront');
+    const team = await bob.data.team({ leagueId, teamId: 'HAL' });
+    expect(team.chemistry.forwards).toHaveLength(4);
+    expect(team.systemImpact.offense).toBeTruthy();
+  });
+
   it('never sends hidden traits to the browser', async () => {
     const t = await bob.data.team({ leagueId, teamId: 'HAL' });
     expect(t.isMine).toBe(true);
@@ -253,16 +279,35 @@ describe('multiplayer league flow', () => {
     const picks = (await bob.offseason.draftBoard({ leagueId }))!.picks.filter((p) => p.teamId === 'HAL');
     if (picks[0].overall > 1) expect(picks.map((p) => p.playerId)).toContain(longShot.id);
 
-    // Re-sign: negotiate with Bob's best expiring player (accept his counter if he makes one).
+    // Re-signing week: offers are answered the next day. Accept his counter if he makes one.
     const exp = await bob.offseason.expiring({ leagueId });
+    expect(exp!.resignDay).toBe(1);
+    expect(exp!.deferred).toBe(true);
     const keep = exp!.players[0];
     if (keep) {
-      let r = await bob.offseason.negotiate({ leagueId, playerId: keep.id, salary: Math.min(15_500_000, Math.round((keep.ask.salary * 1.2) / 25_000) * 25_000), years: keep.ask.years });
-      if (r.result === 'counter') r = await bob.offseason.negotiate({ leagueId, playerId: keep.id, ...r.counter });
-      expect(r.result).toBe('accept');
+      const r = await bob.offseason.negotiate({ leagueId, playerId: keep.id, salary: Math.min(15_500_000, Math.round((keep.ask.salary * 1.2) / 25_000) * 25_000), years: keep.ask.years });
+      expect(r.result).toBe('pending');
+      let agreed = false;
+      for (let day = 0; day < 4 && !agreed; day++) {
+        await comm.sim.advance({ leagueId, target: { days: 1 } }); // the next morning
+        const mine = (await bob.offseason.expiring({ leagueId }))!.players.find((p) => p.id === keep.id)!;
+        const resp = mine.response;
+        expect(resp).toBeTruthy();
+        if (resp!.result === 'accept') agreed = true;
+        else if (resp!.result === 'counter') {
+          await bob.offseason.acceptCounter({ leagueId, playerId: keep.id });
+          agreed = true;
+        } else if (resp!.result === 'reject') {
+          await bob.offseason.negotiate({ leagueId, playerId: keep.id, salary: Math.min(15_500_000, Math.round((keep.ask.salary * 1.5) / 25_000) * 25_000), years: keep.ask.years });
+        }
+      }
+      expect(agreed).toBe(true);
       expect((await bob.offseason.expiring({ leagueId }))!.players.find((p) => p.id === keep.id)!.agreed).toBeTruthy();
+      const notes = await bob.life.notifications({ leagueId });
+      expect(notes.items.some((n) => n.link === '/re-sign')).toBe(true);
     }
-    await comm.sim.advance({ leagueId, target: { days: 1 } }); // -> free agency
+    await comm.sim.advance({ leagueId, target: { to: 'free-agency' } }); // rest of the week
+    expect((await bob.offseason.overview({ leagueId }))!.stage).toBe('free-agency');
     if (keep) expect((await bob.data.team({ leagueId, teamId: 'HAL' })).players.map((p) => p.id)).toContain(keep.id);
 
     // Free agency is blind bidding: place a bid, then the round resolves on advance.

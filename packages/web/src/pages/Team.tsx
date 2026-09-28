@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import { GameCard } from '../components/GameCard';
 import { FrontOffice } from '../components/FrontOffice';
 import { LinesBoard } from '../components/LinesBoard';
+import { SkillsCoaches } from '../components/SkillsCoaches';
 import { TacticsPanel } from '../components/TacticsPanel';
 import { PlayerFilterBar, SortTh, usePlayerFilters, useSort } from '../components/PlayerFilters';
 import { OfferForm } from '../components/OfferForm';
@@ -21,7 +22,7 @@ export function TeamPage() {
   const { teamId = '' } = useParams();
   const trpc = useTRPC();
   const q = useQuery(trpc.data.team.queryOptions({ leagueId: L.id, teamId }));
-  const [tab, setTab] = useState<'roster' | 'lines' | 'systems' | 'prospects' | 'schedule' | 'front office'>('roster');
+  const [tab, setTab] = useState<'roster' | 'lines' | 'systems' | 'coaching' | 'prospects' | 'schedule' | 'front office'>('roster');
   if (q.error) return <ErrorBox error={q.error} />;
   if (!q.data) return <Spinner />;
   const t = q.data;
@@ -70,7 +71,7 @@ export function TeamPage() {
       </div>
 
       <div className="flex gap-1 overflow-x-auto rounded-lg bg-rink-900 p-1 text-sm sm:w-fit">
-        {(['roster', 'lines', 'systems', 'prospects', 'schedule', 'front office'] as const).map((k) => (
+        {(['roster', 'lines', 'systems', 'coaching', 'prospects', 'schedule', 'front office'] as const).map((k) => (
           <button
             key={k}
             onClick={() => setTab(k)}
@@ -84,6 +85,7 @@ export function TeamPage() {
       {tab === 'roster' && <Roster t={t} />}
       {tab === 'prospects' && <Prospects t={t} />}
       {tab === 'systems' && <TacticsPanel t={t} leagueId={L.id} />}
+      {tab === 'coaching' && <SkillsCoaches leagueId={L.id} teamId={t.team.id} />}
       {tab === 'front office' && <FrontOffice leagueId={L.id} teamId={t.team.id} />}
       {tab === 'lines' && (t.isMine ? <LinesEditor t={t} /> : <LinesView t={t} />)}
       {tab === 'schedule' && (
@@ -328,7 +330,7 @@ function Prospects({ t }: { t: TeamData }) {
   return (
     <Card title="Prospects">
       <p className="-mt-1 mb-3 text-sm text-ice-400">
-        Prospects develop in junior or the minors and don't count against the cap or the 23-man roster. Promoting one signs a 3-year entry-level deal
+        Prospects play in junior (19 and under) or the AHL, with their stats below, and don't count against the cap or the 23-man roster. Promoting one signs a 3-year entry-level deal
         ($950K). Unsigned prospects are released at 23.
       </p>
       {t.prospects.length === 0 ? (
@@ -344,6 +346,11 @@ function Prospects({ t }: { t: TeamData }) {
                 <th className="num">OVR</th>
                 <th className="num">Grade</th>
                 <th>Projection</th>
+                <th>League</th>
+                <th className="num" title="Games played this season">GP</th>
+                <th className="num" title="Goals (skaters) · wins (goalies)">G/W</th>
+                <th className="num" title="Assists (skaters) · save % (goalies)">A/SV%</th>
+                <th className="num" title="Points (skaters) · GAA (goalies)">P/GAA</th>
                 <th>Drafted</th>
                 <th />
               </tr>
@@ -361,6 +368,21 @@ function Prospects({ t }: { t: TeamData }) {
                   </td>
                   <td className="num font-display text-blue-300">{p.grade}</td>
                   <td className="text-ice-300">{p.projection}</td>
+                  <td className="text-xs text-ice-400">{p.minor?.league ?? (p.age <= 19 ? 'Junior' : 'AHL')}</td>
+                  <td className="num">{p.minor?.gp ?? 0}</td>
+                  {p.pos === 'G' ? (
+                    <>
+                      <td className="num">{p.minor?.w ?? 0}</td>
+                      <td className="num">{p.minor?.sa ? svPct(p.minor.sa, p.minor.ga ?? 0) : '—'}</td>
+                      <td className="num">{p.minor?.gp ? ((p.minor.ga ?? 0) / p.minor.gp).toFixed(2) : '—'}</td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="num">{p.minor?.g ?? 0}</td>
+                      <td className="num">{p.minor?.a ?? 0}</td>
+                      <td className="num font-semibold text-white">{(p.minor?.g ?? 0) + (p.minor?.a ?? 0)}</td>
+                    </>
+                  )}
                   <td className="text-xs text-ice-400">{p.draft ? `${p.draft.season} R${p.draft.round} #${p.draft.overall}` : 'Undrafted'}</td>
                   <td className="text-right">
                     {t.isMine && (
@@ -614,7 +636,7 @@ function LinesEditor({ t }: { t: TeamData }) {
         </div>
       </Card>
 
-      <LinesBoard draft={draft} onChange={setDraft} players={t.players} catalog={t.systems} formation={t.tactics.pp} leagueId={L.id} />
+      <LinesBoard draft={draft} onChange={setDraft} players={t.players} catalog={t.systems} formation={t.tactics.pp} leagueId={L.id} chemistryGames={t.chemistryGames} />
     </div>
   );
 }

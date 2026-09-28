@@ -1,3 +1,4 @@
+import { arrangeUnit, SLOT_BASIS } from './chemistry';
 import { defensiveDrive, overall } from './ratings';
 import {
   DEFAULT_TACTICS,
@@ -75,6 +76,8 @@ export function completeLines(lines: Lines, roster: Player[], tactics: Tactics =
   const dressedSet = new Set(dressedIds);
   const ok = (unit: PlayerId[] | undefined, n: number) => !!unit && unit.length === n && new Set(unit).size === n && unit.every((id) => dressedSet.has(id));
   const out: Lines = { ...lines };
+  const arrange = (ids: PlayerId[], slots: Slot[], basis: keyof typeof SLOT_BASIS) =>
+    arrangeUnit(ids.map((id) => byId.get(id)!).filter(Boolean), slots, SLOT_BASIS[basis]).map((p) => p.id);
 
   const ppSlots = PP_FORMATIONS[tactics.pp].slots;
   if (rebuild || !(lines.pp?.length === 2 && ok(lines.pp[0], 5) && ok(lines.pp[1], 5))) {
@@ -88,12 +91,12 @@ export function completeLines(lines: Lines, roster: Player[], tactics: Tactics =
   if (rebuild || !(lines.pk?.length === 2 && ok(lines.pk[0], 4) && ok(lines.pk[1], 4))) {
     const pk1 = fillSlots(PK_SLOTS, dressed, spread);
     const pk2 = fillSlots(PK_SLOTS, dressed.filter((p) => !pk1.includes(p.id)), spread);
-    out.pk = [pk1, pk2];
+    out.pk = [arrange(pk1, PK_SLOTS, 'pk'), arrange(pk2, PK_SLOTS, 'pk')];
   }
   if (rebuild || !(lines.fourOnFour?.length === 2 && lines.fourOnFour.every((u) => ok(u, 4)))) {
     const u1 = fillSlots(FOUR_SLOTS, dressed, positional);
     const u2 = fillSlots(FOUR_SLOTS, dressed.filter((p) => !u1.includes(p.id)), positional);
-    out.fourOnFour = [u1, u2];
+    out.fourOnFour = [arrange(u1, FOUR_SLOTS, 'ev'), arrange(u2, FOUR_SLOTS, 'ev')];
   }
   if (rebuild || !(lines.threeOnThree?.length === 3 && lines.threeOnThree.every((u) => ok(u, 3)))) {
     // Deal the best 3-on-3 players across units so each has one threat.
@@ -107,9 +110,9 @@ export function completeLines(lines: Lines, roster: Player[], tactics: Tactics =
       [fw[2].id, fw[3].id, pickD(2)],
     ];
   }
-  if (rebuild || !ok(lines.pp4, 4)) out.pp4 = fillSlots(PP4_SLOTS, dressed);
-  if (rebuild || !ok(lines.pk3, 3)) out.pk3 = fillSlots(PK3_SLOTS, dressed, positional);
-  if (rebuild || !ok(lines.extraAttacker, 6)) out.extraAttacker = fillSlots(EXTRA_ATTACKER_SLOTS, dressed);
+  if (rebuild || !ok(lines.pp4, 4)) out.pp4 = arrange(fillSlots(PP4_SLOTS, dressed), PP4_SLOTS, 'pp');
+  if (rebuild || !ok(lines.pk3, 3)) out.pk3 = arrange(fillSlots(PK3_SLOTS, dressed, positional), PK3_SLOTS, 'pk');
+  if (rebuild || !ok(lines.extraAttacker, 6)) out.extraAttacker = arrange(fillSlots(EXTRA_ATTACKER_SLOTS, dressed), EXTRA_ATTACKER_SLOTS, 'ev');
   if (rebuild || !ok(lines.shootout, 5)) {
     out.shootout = [...dressed].sort((a, b) => roleSkill(b, 'shootout') - roleSkill(a, 'shootout')).slice(0, 5).map((p) => p.id);
   }
@@ -138,23 +141,5 @@ export function powerPlayUnit(slots: Slot[], pool: Player[]): PlayerId[] {
     if (!extra) break;
     group.push(extra);
   }
-  let best: Player[] = group;
-  let bestScore = -Infinity;
-  const permute = (arr: Player[], k: number) => {
-    if (k === arr.length) {
-      const score = arr.reduce((sum, p, i) => sum + (slots[i] ? roleSkill(p, slots[i].role) : 0), 0);
-      if (score > bestScore) {
-        bestScore = score;
-        best = [...arr];
-      }
-      return;
-    }
-    for (let i = k; i < arr.length; i++) {
-      [arr[k], arr[i]] = [arr[i], arr[k]];
-      permute(arr, k + 1);
-      [arr[k], arr[i]] = [arr[i], arr[k]];
-    }
-  };
-  permute([...group], 0);
-  return best.map((p) => p.id);
+  return arrangeUnit(group, slots, SLOT_BASIS.pp).map((p) => p.id);
 }

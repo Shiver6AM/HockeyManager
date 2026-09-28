@@ -105,7 +105,7 @@ describe('offseason with a human manager', () => {
     const rfa = myExpiring.slice(1).find((id) => L.players[id].contract?.expiresAs === 'RFA');
     if (rfa) (L.offseason!.qualified ??= {})[rfa] = true;
     for (const id of myExpiring.slice(1)) if (id !== rfa) L.offseason!.resign[id] = false; // explicitly let go
-    offseasonStep(L, { force: true });
+    while (L.offseason!.stage === 're-sign') offseasonStep(L, { force: true }); // the re-signing week
     expect(L.players[keep].teamId).toBe(ME);
     expect(L.players[keep].contract).toMatchObject({ salary: offer.salary, yearsLeft: offer.years });
     if (rfa) expect(L.players[rfa].contract?.yearsLeft).toBe(1);

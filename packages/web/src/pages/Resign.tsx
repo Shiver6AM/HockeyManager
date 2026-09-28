@@ -17,6 +17,8 @@ export function ResignPage() {
   const letGo = useMutation(trpc.offseason.setResign.mutationOptions(done));
   const qualify = useMutation(trpc.offseason.setQualify.mutationOptions(done));
   const qualifyAll = useMutation(trpc.offseason.setQualifyAll.mutationOptions(done));
+  const withdraw = useMutation(trpc.offseason.withdrawOffer.mutationOptions(done));
+  const acceptCounter = useMutation(trpc.offseason.acceptCounter.mutationOptions(done));
   const [open, setOpen] = useState<string | null>(null);
   if (q.isLoading) return <Spinner />;
   const d = q.data;
@@ -31,7 +33,8 @@ export function ResignPage() {
         <p className="text-sm text-ice-400">
           Each player has his own level of interest in your team (contender status, role, loyalty, market, your coach), which sets what he asks
           you for. He then weighs money against term in his own way: veterans want security, young players avoid being locked in. Lowballs annoy
-          him, and you get three offers per player. Restricted free agents (RFA) can also be qualified: a qualified RFA without a deal stays yours on his qualifying offer, but other teams can tender offer sheets during free agency, and he may file for arbitration. Players you never decide on are handled by
+          him, and you get three offers per player. The week before free agency is your exclusive window: offers are answered by his agent the next
+          day (close calls can take an extra day), so start early. Restricted free agents (RFA) can also be qualified: a qualified RFA without a deal stays yours on his qualifying offer, but other teams can tender offer sheets during free agency, and he may file for arbitration. Players you never decide on are handled by
           your assistant GM when this stage ends; press Let go to release someone.
         </p>
       </div>
@@ -42,6 +45,24 @@ export function ResignPage() {
           <Stat label="Cap space left" value={money(room)} tone={room < 0 ? 'bad' : 'good'} />
         </div>
         {!d.open && <p className="mt-3 text-sm text-warn">The re-signing window has closed.</p>}
+        {d.resignDay !== null && (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <span className="text-sm font-semibold text-white">
+              Re-signing week · day {d.resignDay} of {d.resignDays}
+            </span>
+            <span className="flex gap-1" aria-hidden>
+              {Array.from({ length: d.resignDays }, (_, i) => (
+                <span key={i} className={cx('h-2 w-6 rounded-full', i < d.resignDay! ? 'bg-blueline' : 'bg-rink-700')} />
+              ))}
+            </span>
+            <span className="text-xs text-ice-400">
+              {d.resignDay < d.resignDays ? 'Offers made today are answered tomorrow.' : 'Last day: every open offer is answered before free agency opens.'}
+            </span>
+          </div>
+        )}
+        {d.resignDay === null && d.deferred && (
+          <p className="mt-3 text-xs text-ice-400">During the draft, offers are answered once the draft wraps up.</p>
+        )}
         {d.open && unqualified.length > 0 && (
           <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-ice-300">
             <span>
@@ -55,22 +76,25 @@ export function ResignPage() {
         )}
       </Card>
       <MyRfas />
-      <ErrorBox error={letGo.error ?? qualify.error ?? qualifyAll.error} />
+      <ErrorBox error={letGo.error ?? qualify.error ?? qualifyAll.error ?? withdraw.error ?? acceptCounter.error} />
       <Card title={`Your expiring players (${d.players.length})`}>
         {d.players.length === 0 ? (
           <Empty>No contracts expire this summer.</Empty>
         ) : (
           <ul className="-my-2 divide-y divide-rink-700/60">
             {d.players.map((p) => {
+              const resp = p.response;
               const status = p.signedNow
                 ? { tone: 'good' as const, text: `Re-signed: ${money(p.signedNow.salary)} × ${p.signedNow.yearsLeft}y` }
                 : p.agreed
                 ? { tone: 'good' as const, text: `Agreed: ${money(p.agreed.salary)} × ${p.agreed.years}y` }
                 : p.qualified
                   ? { tone: 'info' as const, text: `Qualified at ${money(p.qualifyingOffer!.salary)} × 1y` }
-                  : p.letGo
-                    ? { tone: 'bad' as const, text: 'Letting him go' }
-                    : { tone: 'warn' as const, text: 'Undecided (assistant GM decides)' };
+                  : p.pending
+                    ? { tone: 'info' as const, text: `Offer out: ${money(p.pending.offer.salary)} × ${p.pending.offer.years}y` }
+                    : p.letGo
+                      ? { tone: 'bad' as const, text: 'Letting him go' }
+                      : { tone: 'warn' as const, text: 'Undecided (assistant GM decides)' };
               return (
                 <li key={p.id} className="py-3">
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -96,8 +120,13 @@ export function ResignPage() {
                     {d.open && !p.agreed && (
                       <div className="flex gap-1">
                         <Button className="px-2 py-0.5 text-xs" onClick={() => setOpen(open === p.id ? null : p.id)} disabled={p.attemptsLeft === 0}>
-                          {p.attemptsLeft === 0 ? 'No longer negotiating' : 'Negotiate'}
+                          {p.attemptsLeft === 0 ? 'No longer negotiating' : p.pending ? 'Revise offer' : 'Negotiate'}
                         </Button>
+                        {p.pending && (
+                          <Button variant="ghost" className="px-2 py-0.5 text-xs" disabled={withdraw.isPending} onClick={() => withdraw.mutate({ leagueId: L.id, playerId: p.id })}>
+                            Withdraw
+                          </Button>
+                        )}
                         {p.status === 'RFA' && (
                           <Button
                             variant={p.qualified ? 'primary' : 'secondary'}
@@ -129,6 +158,28 @@ export function ResignPage() {
                       </span>
                       {!p.qoOutlook.arbitrationEligible && ' · not yet arbitration-eligible'}. If not qualified, he becomes an unrestricted free agent.
                     </p>
+                  )}
+                  {resp && !p.signedNow && (
+                    <div
+                      className={cx(
+                        'mt-2 flex flex-wrap items-center gap-2 rounded-md px-3 py-2 text-sm',
+                        resp.result === 'accept'
+                          ? 'bg-win/15 text-win'
+                          : resp.result === 'counter'
+                            ? 'bg-blueline/15 text-blue-200'
+                            : resp.result === 'considering'
+                              ? 'bg-rink-800 text-ice-200'
+                              : 'bg-goal/10 text-red-200',
+                      )}
+                    >
+                      <span className="text-xs text-ice-400">Day {resp.day}:</span>
+                      <span>{resp.message}</span>
+                      {resp.result === 'counter' && resp.counter && !p.agreed && (
+                        <Button className="px-2 py-0.5 text-xs" disabled={acceptCounter.isPending} onClick={() => acceptCounter.mutate({ leagueId: L.id, playerId: p.id })}>
+                          Accept {money(resp.counter.salary)} × {resp.counter.years}y
+                        </Button>
+                      )}
+                    </div>
                   )}
                   {open === p.id && !p.agreed && (
                     <OfferForm leagueId={L.id} playerId={p.id} deal={p} mode="negotiate" attemptsLeft={p.attemptsLeft} capRoom={room} onClose={() => setOpen(null)} />

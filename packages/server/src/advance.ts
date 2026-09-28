@@ -15,6 +15,7 @@ import {
   advanceDays,
   advanceToEndOfSeason,
   advanceToNextSeason,
+  advanceToDeadline,
   advanceToPlayoffs,
   ensureLeagueLife,
   newsFromTransactions,
@@ -29,7 +30,7 @@ import type { Db, Queryable } from './db';
 import { deliver, deliverAll, humanTeams, type Notice } from './notify';
 import { extractBoxScores, loadForUpdate, saveLeague } from './state';
 
-export type AdvanceTarget = { days: number } | { to: 'playoffs' | 'end-of-season' | 'next-season' };
+export type AdvanceTarget = { days: number } | { to: 'playoffs' | 'end-of-season' | 'next-season' | 'trade-deadline' | 'free-agency' };
 
 export interface AdvanceSummary {
   fromDay: number;
@@ -63,16 +64,26 @@ export function advanceLeague(db: Db, leagueId: string, target: AdvanceTarget, t
       if (league.phase === 'offseason') {
         // In the offseason one "day" is one stage. Advances never wait on
         // humans: anyone who hasn't acted gets sensible defaults.
-        if ('to' in target && target.to !== 'next-season') {
+        if ('to' in target && target.to !== 'next-season' && target.to !== 'free-agency') {
           throw new Error('The season is over. Advance through the offseason instead.');
         }
         const stages: string[] = [];
-        // Scheduled ticks and ready-ups move one stage at a time so every manager gets a turn at each stage.
-        const steps = 'days' in target ? (triggeredBy.startsWith('commissioner') ? target.days : 1) : Infinity;
-        for (let i = 0; i < steps && league.phase === 'offseason'; i++) stages.push(offseasonStep(league, { force: true }).to);
+        if ('to' in target && target.to === 'free-agency') {
+          // Through the draft and the rest of the re-signing week.
+          if (league.offseason && league.offseason.stage !== 'draft' && league.offseason.stage !== 're-sign') throw new Error('Free agency is already open');
+          while (league.phase === 'offseason' && (!league.offseason || league.offseason.stage === 'draft' || league.offseason.stage === 're-sign')) {
+            stages.push(offseasonStep(league, { force: true }).to);
+          }
+        } else {
+          // Scheduled ticks and ready-ups move one step at a time so every manager gets a turn at each stage.
+          const steps = 'days' in target ? (triggeredBy.startsWith('commissioner') ? target.days : 1) : Infinity;
+          for (let i = 0; i < steps && league.phase === 'offseason'; i++) stages.push(offseasonStep(league, { force: true }).to);
+        }
         res = { fromDay: league.day, toDay: league.day, games: [], phaseChanges: stages as AdvanceResult['phaseChanges'] };
       } else if ('days' in target) res = advanceDays(league, target.days);
       else if (target.to === 'playoffs') res = advanceToPlayoffs(league);
+      else if (target.to === 'trade-deadline') res = advanceToDeadline(league);
+      else if (target.to === 'free-agency') throw new Error('Free agency opens in the offseason');
       else if (target.to === 'end-of-season') res = advanceToEndOfSeason(league);
       else {
         res = advanceToEndOfSeason(league);
@@ -109,6 +120,8 @@ interface Before {
   bids: Record<string, string[]>;
   tx: number;
   pendingSheets: Set<string>;
+  /** Answer count per player, to spot new answers to offers. */
+  answers: Record<string, string>;
 }
 
 function snapshotForNotices(L: League): Before {
@@ -118,7 +131,8 @@ function snapshotForNotices(L: League): Before {
     if (L.teams[teamId]?.controller.kind === 'human') bids[teamId] = Object.keys(b);
   }
   const pendingSheets = new Set(Object.entries(L.offseason?.rfa ?? {}).filter(([, c]) => c.status === 'unsigned' && c.sheet).map(([id]) => id));
-  return { clock: pick ? `${pick.overall}:${pick.teamId}` : null, faLog: L.offseason?.faLog?.length ?? 0, bids, tx: L.transactions.length, pendingSheets };
+  const answers = Object.fromEntries(Object.entries(L.offseason?.responses ?? {}).map(([id, r]) => [id, `${r.day}:${r.result}`]));
+  return { clock: pick ? `${pick.overall}:${pick.teamId}` : null, faLog: L.offseason?.faLog?.length ?? 0, bids, tx: L.transactions.length, pendingSheets, answers };
 }
 
 const STAGE_TEXT: Record<string, string> = {
@@ -162,6 +176,11 @@ export function advanceNotices(L: League, before: Before, res: AdvanceResult): {
   const pick = onTheClock(L);
   if (pick && L.teams[pick.teamId].controller.kind === 'human' && `${pick.overall}:${pick.teamId}` !== before.clock) {
     team.push({ teamId: pick.teamId, kind: 'draft', text: `You're on the clock: round ${pick.round}, pick #${pick.overall}.`, link: '/draft' });
+  }
+  // Answers to contract offers made during the re-signing week.
+  for (const [id, r] of Object.entries(L.offseason?.responses ?? {})) {
+    if (before.answers[id] === `${r.day}:${r.result}` || L.teams[r.teamId]?.controller.kind !== 'human') continue;
+    team.push({ teamId: r.teamId, kind: 'offseason', text: r.message, link: '/re-sign' });
   }
   // Free-agency results for managers who bid.
   const log = L.offseason?.faLog ?? [];

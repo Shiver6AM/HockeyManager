@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 109 tests: sim determinism, coaching systems, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 123 tests: sim determinism, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -83,8 +83,9 @@ leave the server. Scouting will reveal estimates of them in a later phase.
 
 Pick one of two modes on the **League** tab (commissioner only):
 
-- **Commissioner:** the commissioner presses *Sim 1 day / 1 week / to playoffs / to end
-  of season*. Good for live sessions together.
+- **Commissioner:** the commissioner presses *Sim 1 day / 1 week / to the trade deadline /
+  to playoffs / to end of season* (in the offseason: *next day / sim to free agency / next
+  season*). Good for live sessions together.
 - **Co-commissioners:** the commissioner can let other managers advance the league too
   (*League → Members → Co-commish*). Settings and membership stay commissioner-only.
 - **On a schedule:** a cron schedule in the league's time zone (presets include
@@ -129,8 +130,10 @@ time produces exactly the same league as simming a week at once. The tests check
 ### Coaching systems
 
 The **Systems** tab on your team page sets how you play. Each option shows how well your
-best players *fit* it and the assistant coach's pick; a good fit amplifies a system's
-strengths, a poor one mutes them, and there's no single best answer.
+best players *fit* it, the assistant coach's pick, and roughly what it's worth in **rating
+points** for your players on the ice. What counts is how much better your roster suits one
+option than the others, so there's no single best answer: build a roster of net-front
+power forwards and *crash the net* pays; send snipers to crash and it costs you.
 
 | Group | Options |
 |---|---|
@@ -146,6 +149,45 @@ forecheck, snipers for the one-timer, playmakers for the half wall, offensive de
 for the point and shutdown defensemen for the kill. A small personal quirk keeps every
 player a little different. Player pages show each role skill.
 
+### Line chemistry and spots
+
+- **Spots on special units:** on the power play, penalty kill, 4-on-4, 3-on-3 and 6-on-5,
+  each player gains or loses a few rating points depending on how well the spot suits him
+  compared with his other skills. Specialists shine in their spot and struggle out of it;
+  all-rounders are fine anywhere. The lines editor shades each card and shows the bonus.
+- **Line chemistry:** forward lines want a playmaker, a finisher and a net-front or
+  forechecking presence; pairs want a puck mover with a stay-at-home partner. Lines also
+  **gel** over about 15 games together and lose it when they're broken up. Each line and
+  pair shows a live chemistry chip as you move players around.
+
+How much it all matters, measured over ~1,500 games per scenario for three teams (points
+over 82 games; the coach's choices are the baseline):
+
+| Change | Points (baseline 92) |
+|---|---|
+| Worst-fit system in every area | 80 |
+| One poor choice (e.g. point shots for a roster built to cycle) | 87–89 |
+| Lines upside down (4th line gets top minutes) | 82 |
+| Same special-teams players, each in his worst spot | 89 |
+| Forward lines regrouped for the best / worst style mix (same talent per line) | 94 / 91 |
+| Every line brand new (no games together) | 86 |
+| Every rating +3 (for scale) | 112 |
+
+### Skills coaches
+
+Each team can hire up to **three skills coaches** (*Coaching* tab). A coach is rated in
+offense, defense and skating, with one to three **specialties** (more specialties cost
+more). Each works with up to **five players**, on one skill apiece: a rating (shooting,
+skating, defensive IQ…, or goaltending for goalies) or a situational skill (net front, point,
+PK…). On **auto** he picks the players who'd gain most and works on their weakest important
+skill in his specialties; on manual you choose players and skills, with the projected pace
+shown for each.
+
+Players improve a little every day of the season: never more than a point a week, but a
+focused season can add several points to one skill (a typical assignment gains 2–5, a
+coachable 20-year-old with an elite coach up to about 10). The rate depends on the coach's
+rating in that skill's group, the player's **coachability** (a visible trait on his page),
+his age and how much room the skill has left.
 ## Seasons that never end: the career loop
 
 When the final ends, the league enters the offseason. Each stage waits for managers
@@ -155,8 +197,8 @@ anyone who hasn't acted gets sensible defaults.
 | Stage | What happens | What you do |
 |---|---|---|
 | **Season review** | Nothing changes yet, so final stats and awards can be browsed | Look around |
-| **Entry draft** | A new class of ~260 teenagers and an NHL-style lottery (two draws, max 10-spot jump); 7 rounds | Pick when you're on the clock, or rank a **draft list** that's used if you're away |
-| **Re-sign** | Players age and develop over the summer, veterans retire, contracts expire | **Negotiate** with each expiring player, qualify RFAs, or let them go |
+| **Entry draft** | A new class of ~260 teenagers and an NHL-style lottery (two draws, max 10-spot jump); 7 rounds | Pick when you're on the clock, or rank a **draft list** that's used if you're away. Trades stay open, including this year's unused picks |
+| **Re-signing week** | Seven days of exclusive talks with your own pending UFAs and RFAs. Offers are answered by the player's agent the next day (close calls can take an extra day); AI teams re-sign theirs through the week | Make offers, accept counters, qualify RFAs, or let players go |
 | **Free agency** | Three **blind-bidding rounds**: every free agent takes the best offer he receives; AI teams bid too | Place sealed bids; leftover players sign at their ask during camp |
 | **Training camp** | AI teams promote ready prospects and cut to 23 | Promote prospects, send down, release |
 | **New season** | Career stats archived, new schedule, cap grows 2.5% | — |
@@ -172,14 +214,18 @@ anyone who hasn't acted gets sensible defaults.
   players a grade (A+ … F) and a projection specific to his position ("First-line
   center", "Top-pair defenseman", "Starting goalie"…). Every team's scouts
   make different, repeatable errors.
-- **Prospects:** draft picks develop outside the 23-man roster and the cap. Promoting
+- **Prospects:** draft picks develop outside the 23-man roster and the cap, playing in
+  junior (19 and under) or the AHL, with stats that go into their career lines. Promoting
   one signs a 3-year entry-level deal. Unsigned prospects are released at 23.
 - **Retirement:** age sets the baseline (rare before 32, likely by the late 30s,
   certain at 44), but ability matters: a serviceable veteran keeps playing, and stars
   can go into their 40s, while fading players and unsigned veterans hang them up early.
   Now and then someone surprises everyone.
-- **Careers:** every player has a career page with season-by-season stats, draft
-  info, awards and ratings. Retired players keep their pages.
+- **Careers:** every player has a career page with season-by-season stats (the full line:
+  goals, assists, +/-, PIM, power-play and shorthanded points, game-winners, shots,
+  shooting %, hits, blocks, faceoff % and TOI; goalies' starts, saves, GAA and shutouts),
+  playoffs, junior/AHL seasons, NHL totals, draft info, awards and ratings. Retired players
+  keep their pages.
 - **Long-run balance:** each summer ratings are nudged back toward the league's
   original talent mean and spread, so there's no inflation or deflation over decades.
   Without this, the game-sim calibration would drift. In a 10-season test, talent
@@ -245,6 +291,10 @@ anyone who hasn't acted gets sensible defaults.
   (position, player type, age range, years left, UFA/RFA/ELC, minimum overall, health,
   on-the-block, fits-their-needs). Picks in **five drafts** (this one plus four more) are
   tradeable, and the draft uses whoever owns each pick.
+- **Trade deadline:** about three-quarters of the way through the season. The top bar
+  counts down the last three weeks, the news marks the week before and deadline day, and
+  *Sim to trade deadline* stops on deadline day so everyone can make last calls. Trades
+  close after it until the season ends and reopen at the draft.
 - **Trade block:** every team lists players and picks it's shopping and what it's looking
   for (a position, young players, prospects, picks, proven veterans, cap relief). Managers
   set their own; AI blocks follow strategy and roster (rebuilders shop veterans and want
@@ -342,7 +392,7 @@ playoff OT rate. Some targets are approximate.
   It should move to a worker thread before the game is hosted.
 - Live updates use 5-second polling. Supabase Realtime can replace it later.
 - No retained salary in trades.
-- The league document grows about 0.3 MB per season of history (careers, retirees).
+- The league document grows about 0.5 MB per season of history (careers including junior/AHL seasons, retirees).
 
 ## Roadmap
 

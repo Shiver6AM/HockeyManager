@@ -4,7 +4,7 @@ import { useLeague } from '../pages/LeagueLayout';
 import { useTRPC } from '../trpc';
 import { cx } from './ui';
 
-type Target = { days: number } | { to: 'playoffs' | 'end-of-season' | 'next-season' };
+type Target = { days: number } | { to: 'playoffs' | 'end-of-season' | 'next-season' | 'trade-deadline' | 'free-agency' };
 
 /**
  * Always-visible controls in the top bar: your Ready toggle, and for the
@@ -33,18 +33,37 @@ export function HeaderActions() {
     setMenu(false);
     advance.mutate({ leagueId: L.id, target });
   };
-  const primary: { label: string; target: Target } = offseason ? { label: 'Next stage', target: { days: 1 } } : { label: 'Sim 1 day', target: { days: 1 } };
+  const resignWeek = offseason && L.offseasonStage === 're-sign' && L.resignDay !== null;
+  const beforeFa = offseason && (!L.offseasonStage || L.offseasonStage === 'draft' || L.offseasonStage === 're-sign');
+  const primary: { label: string; target: Target } = offseason
+    ? { label: resignWeek ? (L.resignDay! < L.resignDays ? `Next day (${L.resignDay}/${L.resignDays})` : 'Open free agency') : 'Next stage', target: { days: 1 } }
+    : { label: 'Sim 1 day', target: { days: 1 } };
+  const deadlineAhead = L.daysToDeadline !== null && L.daysToDeadline > 0;
   const more: Array<{ label: string; target: Target }> = offseason
-    ? [{ label: 'Advance to next season', target: { to: 'next-season' } }]
+    ? [
+        ...(beforeFa ? [{ label: 'Sim to free agency', target: { to: 'free-agency' } as Target }] : []),
+        { label: 'Advance to next season', target: { to: 'next-season' } },
+      ]
     : [
         { label: 'Sim 1 week', target: { days: 7 } },
+        ...(deadlineAhead ? [{ label: `Sim to trade deadline (${L.daysToDeadline}d)`, target: { to: 'trade-deadline' } as Target }] : []),
         ...(L.phase === 'regular-season' ? [{ label: 'Sim to playoffs', target: { to: 'playoffs' } as Target }] : []),
         { label: 'Sim to end of season', target: { to: 'end-of-season' } },
       ];
   const err = (advance.error ?? ready.error)?.message;
 
+  const deadlineChip =
+    L.daysToDeadline !== null && L.daysToDeadline >= 0 && L.daysToDeadline <= 21 ? (
+      <span
+        className={cx('rounded px-2 py-1 text-[11px] font-semibold whitespace-nowrap', L.daysToDeadline <= 3 ? 'bg-goal/20 text-red-200' : 'bg-rink-800 text-ice-300')}
+        title="Trades close after the deadline day until the season ends"
+      >
+        {L.daysToDeadline === 0 ? 'Trade deadline today' : `Deadline in ${L.daysToDeadline}d`}
+      </span>
+    ) : null;
   return (
     <div className="flex items-center gap-2">
+      {deadlineChip}
       {L.myTeamId && (
         <button
           onClick={() => ready.mutate({ leagueId: L.id, ready: !L.myReady })}

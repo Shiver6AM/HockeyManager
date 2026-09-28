@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Badge, Card, Empty, ErrorBox, Rating, Spinner, TeamChip, TeamLink } from '../components/ui';
 import { gaa, money, signed, svPct, toi } from '../format';
@@ -37,6 +38,8 @@ export function PlayerPage() {
   const pos = p?.pos ?? d.retired!.pos;
   const isG = pos === 'G';
   const ratings = p ? ((isG ? p.goalie : p.skater) as unknown as Record<string, number>) : null;
+  const gained = Object.fromEntries((d.training?.gains ?? []).map((g) => [g.skill, g.points])) as Record<string, number>;
+  const trainedRole = (d.training?.roleTraining ?? {}) as Record<string, number>;
   const totals = d.career.reduce(
     (t, c) => {
       if (c.skater) {
@@ -93,6 +96,11 @@ export function PlayerPage() {
                   <Rating value={p.overall} />
                 </p>
               </div>
+              <div className="rounded-lg bg-rink-850 px-4 py-2" title="How much he gets out of skills coaching">
+                <p className="text-[11px] font-semibold tracking-wider text-ice-500 uppercase">Coachability</p>
+                <p className="font-display text-3xl text-ice-50">{p.coachability}</p>
+                <p className="text-[11px] text-ice-400">{p.coachabilityLabel}</p>
+              </div>
               {d.scouting && (
                 <div className="rounded-lg bg-rink-850 px-4 py-2">
                   <p className="text-[11px] font-semibold tracking-wider text-ice-500 uppercase">Scouts</p>
@@ -119,7 +127,10 @@ export function PlayerPage() {
                 <li key={k} className="text-sm">
                   <div className="flex justify-between">
                     <span className="text-ice-300">{label}</span>
-                    <span className="tabular text-white">{ratings[k]}</span>
+                    <span className="tabular text-white">
+                      {gained[k] ? <span className="mr-1.5 text-[11px] text-win" title="From skills coaching this season">+{gained[k]}</span> : null}
+                      {ratings[k]}
+                    </span>
                   </div>
                   <div className="mt-0.5 h-1.5 rounded-full bg-rink-700">
                     <div className="h-1.5 rounded-full bg-blueline" style={{ width: `${ratings[k]}%` }} />
@@ -139,7 +150,14 @@ export function PlayerPage() {
                         <li key={r.id} className="text-sm" title={r.help}>
                           <div className="flex justify-between">
                             <span className="text-ice-300">{r.label}</span>
-                            <span className="tabular text-white">{r.value}</span>
+                            <span className="tabular text-white">
+                              {trainedRole[r.id] ? (
+                                <span className="mr-1.5 text-[11px] text-win" title="Added by skills coaching">
+                                  +{trainedRole[r.id]}
+                                </span>
+                              ) : null}
+                              {r.value}
+                            </span>
                           </div>
                           <div className="mt-0.5 h-1.5 rounded-full bg-rink-700">
                             <div
@@ -173,66 +191,222 @@ export function PlayerPage() {
               </div>
             </Card>
           )}
+          {d.training && (d.training.current || d.training.gains.length > 0) && (
+            <Card title="Skills coaching">
+              {d.training.current ? (
+                <div className="text-sm">
+                  <p className="text-ice-300">
+                    Working with <span className="font-semibold text-white">{d.training.current.coach}</span> on{' '}
+                    <span className="font-semibold text-white">{d.training.current.label}</span>
+                    <span className="text-ice-400"> · about +{d.training.current.seasonPace} per full season at this pace</span>
+                  </p>
+                  <div className="mt-2 h-1.5 rounded-full bg-rink-700" title="Progress toward his next point">
+                    <div className="h-1.5 rounded-full bg-win" style={{ width: `${Math.round(d.training.current.progress * 100)}%` }} />
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-ice-400">Not working with a skills coach right now.</p>
+              )}
+              {d.training.gains.length > 0 && (
+                <p className="mt-3 flex flex-wrap gap-1.5 text-sm">
+                  <span className="text-ice-400">This season:</span>
+                  {d.training.gains.map((g) => (
+                    <Badge key={g.skill} tone="good">
+                      +{g.points} {g.label}
+                    </Badge>
+                  ))}
+                </p>
+              )}
+            </Card>
+          )}
           <Card title={`Career · ${totals.gp} GP${isG ? ` · ${totals.w} W · ${totals.so} SO` : ` · ${totals.g} G · ${totals.a} A · ${totals.g + totals.a} P`}`}>
-            {d.career.length === 0 ? (
-              <Empty>No NHL games yet.</Empty>
-            ) : (
-              <div className="-m-4 overflow-x-auto">
-                <table className="table">
-                  <thead>
-                    {isG ? (
-                      <tr>
-                        <th>Season</th><th>Team</th><th className="num">Age</th><th className="num">OVR</th><th className="num">GP</th><th className="num">W</th>
-                        <th className="num">L</th><th className="num">OTL</th><th className="num">SV%</th><th className="num">GAA</th><th className="num">SO</th><th className="num">Playoffs</th>
-                      </tr>
-                    ) : (
-                      <tr>
-                        <th>Season</th><th>Team</th><th className="num">Age</th><th className="num">OVR</th><th className="num">GP</th><th className="num">G</th>
-                        <th className="num">A</th><th className="num">P</th><th className="num">+/-</th><th className="num">PIM</th><th className="num">TOI</th><th className="num">Playoffs</th>
-                      </tr>
-                    )}
-                  </thead>
-                  <tbody>
-                    {d.career.map((c) => (
-                      <tr key={c.season}>
-                        <td className="tabular">
-                          {c.season}-{String(c.season + 1).slice(2)}
-                        </td>
-                        <td>{c.team ? <TeamChip team={c.team} size="sm" /> : <span className="text-ice-500">—</span>}</td>
-                        <td className="num">{c.age}</td>
-                        <td className="num">{c.overall}</td>
-                        {isG ? (
-                          <>
-                            <td className="num">{c.goalie?.gp ?? 0}</td>
-                            <td className="num">{c.goalie?.w ?? 0}</td>
-                            <td className="num">{c.goalie?.l ?? 0}</td>
-                            <td className="num">{c.goalie?.otl ?? 0}</td>
-                            <td className="num">{c.goalie ? svPct(c.goalie.sa, c.goalie.ga) : '—'}</td>
-                            <td className="num">{c.goalie ? gaa(c.goalie.ga, c.goalie.toi) : '—'}</td>
-                            <td className="num">{c.goalie?.so ?? 0}</td>
-                            <td className="num text-ice-400">{c.playoffGoalie ? `${c.playoffGoalie.w}-${c.playoffGoalie.l}` : ''}</td>
-                          </>
-                        ) : (
-                          <>
-                            <td className="num">{c.skater?.gp ?? 0}</td>
-                            <td className="num">{c.skater?.g ?? 0}</td>
-                            <td className="num">{c.skater?.a ?? 0}</td>
-                            <td className="num font-semibold text-white">{c.skater ? c.skater.g + c.skater.a : 0}</td>
-                            <td className="num">{c.skater ? signed(c.skater.pm) : 0}</td>
-                            <td className="num">{c.skater?.pim ?? 0}</td>
-                            <td className="num">{c.skater?.gp ? toi(c.skater.toi, c.skater.gp) : '—'}</td>
-                            <td className="num text-ice-400">{c.playoffSkater ? `${c.playoffSkater.gp} GP, ${c.playoffSkater.g + c.playoffSkater.a} P` : ''}</td>
-                          </>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            {d.career.length === 0 ? <Empty>No games yet.</Empty> : <CareerTables career={d.career} isG={isG} />}
           </Card>
         </div>
       </div>
     </div>
+  );
+}
+
+type CareerRow = import('../trpc').Outputs['data']['player']['career'][number];
+
+const pct = (n: number, d: number) => (d ? `${((100 * n) / d).toFixed(1)}` : '—');
+
+/** Every season: NHL rows with the full stat line, junior/AHL rows for his prospect years, and career totals. */
+function CareerTables({ career, isG }: { career: CareerRow[]; isG: boolean }) {
+  const L = useLeague();
+  const [which, setWhich] = useState<'regular' | 'playoffs'>('regular');
+  const rows = which === 'regular' ? career : career.filter((c) => c.playoffSkater || c.playoffGoalie);
+  const sk = (c: CareerRow) => (which === 'regular' ? c.skater : c.playoffSkater);
+  const gl = (c: CareerRow) => (which === 'regular' ? c.goalie : c.playoffGoalie);
+  const teamCell = (c: CareerRow) =>
+    c.team ? (
+      <Link to={`/league/${L.id}/team/${c.team.id}`} className="inline-flex items-center gap-1.5 hover:underline">
+        <TeamChip team={c.team} size="sm" />
+        {c.team.abbr}
+      </Link>
+    ) : c.minor ? (
+      <span className="text-ice-400" title={c.org ? `${c.org.city} prospect` : undefined}>
+        {c.minor.league}
+        {c.org ? ` · ${c.org.abbr}` : ''}
+      </span>
+    ) : (
+      <span className="text-ice-500">—</span>
+    );
+  // Career totals (NHL only).
+  const nhl = career.map((c) => (isG ? gl(c) : sk(c))).filter(Boolean);
+  const sum = (k: string) => nhl.reduce((s, x) => s + ((x as unknown as Record<string, number>)[k] ?? 0), 0);
+  const dash = <td className="num text-ice-600">—</td>;
+  return (
+    <>
+      <div className="-mt-1 mb-3 flex gap-1 text-xs">
+        {(['regular', 'playoffs'] as const).map((w) => (
+          <button
+            key={w}
+            onClick={() => setWhich(w)}
+            className={`rounded-md px-2.5 py-1 font-semibold ${which === w ? 'bg-rink-600 text-white' : 'text-ice-400 hover:text-ice-100'}`}
+          >
+            {w === 'regular' ? 'Regular season' : 'Playoffs'}
+          </button>
+        ))}
+      </div>
+      {rows.length === 0 ? (
+        <Empty>No playoff games yet.</Empty>
+      ) : (
+        <div className="-mx-4 -mb-4 overflow-x-auto">
+          <table className="table text-xs">
+            <thead>
+              {isG ? (
+                <tr>
+                  <th>Season</th><th>Team</th><th className="num">Age</th><th className="num">OVR</th><th className="num">GP</th><th className="num">GS</th>
+                  <th className="num">W</th><th className="num">L</th><th className="num">OTL</th><th className="num">SA</th><th className="num">GA</th>
+                  <th className="num">SV%</th><th className="num">GAA</th><th className="num">SO</th>
+                </tr>
+              ) : (
+                <tr>
+                  <th>Season</th><th>Team</th><th className="num">Age</th><th className="num">OVR</th><th className="num">GP</th><th className="num">G</th>
+                  <th className="num">A</th><th className="num">P</th><th className="num">+/-</th><th className="num">PIM</th><th className="num">PPG</th>
+                  <th className="num">PPA</th><th className="num">SHG</th><th className="num">GWG</th><th className="num">SOG</th><th className="num">S%</th>
+                  <th className="num">HIT</th><th className="num">BLK</th><th className="num">FO%</th><th className="num">TOI</th>
+                </tr>
+              )}
+            </thead>
+            <tbody>
+              {rows.map((c) => {
+                const minor = which === 'regular' && !sk(c) && !gl(c) ? c.minor : null;
+                const s = sk(c);
+                const g = gl(c);
+                return (
+                  <tr key={`${c.season}-${minor ? 'm' : 'n'}`} className={minor ? 'text-ice-400' : undefined}>
+                    <td className="tabular">
+                      {c.season}-{String(c.season + 1).slice(2)}
+                    </td>
+                    <td className="whitespace-nowrap">{teamCell(c)}</td>
+                    <td className="num">{c.age}</td>
+                    <td className="num">{c.overall}</td>
+                    {isG ? (
+                      minor ? (
+                        <>
+                          <td className="num">{minor.gp}</td>
+                          {dash}
+                          <td className="num">{minor.w ?? 0}</td>
+                          <td className="num">{minor.l ?? 0}</td>
+                          {dash}
+                          <td className="num">{minor.sa ?? 0}</td>
+                          <td className="num">{minor.ga ?? 0}</td>
+                          <td className="num">{minor.sa ? svPct(minor.sa, minor.ga ?? 0) : '—'}</td>
+                          <td className="num">{minor.gp ? ((minor.ga ?? 0) / minor.gp).toFixed(2) : '—'}</td>
+                          <td className="num">{minor.so ?? 0}</td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="num">{g?.gp ?? 0}</td>
+                          <td className="num">{g?.gs ?? 0}</td>
+                          <td className="num">{g?.w ?? 0}</td>
+                          <td className="num">{g?.l ?? 0}</td>
+                          <td className="num">{g?.otl ?? 0}</td>
+                          <td className="num">{g?.sa ?? 0}</td>
+                          <td className="num">{g?.ga ?? 0}</td>
+                          <td className="num">{g ? svPct(g.sa, g.ga) : '—'}</td>
+                          <td className="num">{g ? gaa(g.ga, g.toi) : '—'}</td>
+                          <td className="num">{g?.so ?? 0}</td>
+                        </>
+                      )
+                    ) : minor ? (
+                      <>
+                        <td className="num">{minor.gp}</td>
+                        <td className="num">{minor.g}</td>
+                        <td className="num">{minor.a}</td>
+                        <td className="num font-semibold">{minor.g + minor.a}</td>
+                        <td className="num">{signed(minor.pm)}</td>
+                        <td className="num">{minor.pim}</td>
+                        {dash}{dash}{dash}{dash}{dash}{dash}{dash}{dash}{dash}{dash}
+                      </>
+                    ) : (
+                      <>
+                        <td className="num">{s?.gp ?? 0}</td>
+                        <td className="num">{s?.g ?? 0}</td>
+                        <td className="num">{s?.a ?? 0}</td>
+                        <td className="num font-semibold text-white">{s ? s.g + s.a : 0}</td>
+                        <td className="num">{s ? signed(s.pm) : 0}</td>
+                        <td className="num">{s?.pim ?? 0}</td>
+                        <td className="num">{s?.ppg ?? 0}</td>
+                        <td className="num">{s?.ppa ?? 0}</td>
+                        <td className="num">{s?.shg ?? 0}</td>
+                        <td className="num">{s?.gwg ?? 0}</td>
+                        <td className="num">{s?.sog ?? 0}</td>
+                        <td className="num">{s ? pct(s.g, s.sog) : '—'}</td>
+                        <td className="num">{s?.hits ?? 0}</td>
+                        <td className="num">{s?.blk ?? 0}</td>
+                        <td className="num">{s ? pct(s.fow, s.fow + s.fol) : '—'}</td>
+                        <td className="num">{s?.gp ? toi(s.toi, s.gp) : '—'}</td>
+                      </>
+                    )}
+                  </tr>
+                );
+              })}
+              {nhl.length > 0 && (
+                <tr className="border-t-2 border-rink-600 font-semibold text-white">
+                  <td colSpan={4}>NHL totals</td>
+                  {isG ? (
+                    <>
+                      <td className="num">{sum('gp')}</td>
+                      <td className="num">{sum('gs')}</td>
+                      <td className="num">{sum('w')}</td>
+                      <td className="num">{sum('l')}</td>
+                      <td className="num">{sum('otl')}</td>
+                      <td className="num">{sum('sa')}</td>
+                      <td className="num">{sum('ga')}</td>
+                      <td className="num">{svPct(sum('sa'), sum('ga'))}</td>
+                      <td className="num">{gaa(sum('ga'), sum('toi'))}</td>
+                      <td className="num">{sum('so')}</td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="num">{sum('gp')}</td>
+                      <td className="num">{sum('g')}</td>
+                      <td className="num">{sum('a')}</td>
+                      <td className="num">{sum('g') + sum('a')}</td>
+                      <td className="num">{signed(sum('pm'))}</td>
+                      <td className="num">{sum('pim')}</td>
+                      <td className="num">{sum('ppg')}</td>
+                      <td className="num">{sum('ppa')}</td>
+                      <td className="num">{sum('shg')}</td>
+                      <td className="num">{sum('gwg')}</td>
+                      <td className="num">{sum('sog')}</td>
+                      <td className="num">{pct(sum('g'), sum('sog'))}</td>
+                      <td className="num">{sum('hits')}</td>
+                      <td className="num">{sum('blk')}</td>
+                      <td className="num">{pct(sum('fow'), sum('fow') + sum('fol'))}</td>
+                      <td className="num">{sum('gp') ? toi(sum('toi'), sum('gp')) : '—'}</td>
+                    </>
+                  )}
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
   );
 }

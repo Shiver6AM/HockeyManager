@@ -38,6 +38,19 @@ import {
   type League,
   type Lines,
   type ScheduledGame,
+  unitChemistry,
+  SYSTEM_K,
+  SYSTEM_CENTER,
+  CHEMISTRY,
+  SLOT_BASIS,
+  F_JOBS,
+  D_JOBS,
+  F_STYLE,
+  D_STYLE,
+  resolvePlan,
+  skillLabel,
+  projectedSeasonGain,
+  type TrainableSkill,
 } from '@hockey-gm/sim-core';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
@@ -51,6 +64,47 @@ import { grade } from './offseason';
 const overallOf = (L: League, id: string) => overall(L.players[id]);
 
 /** Scouts' read on a player's ceiling, from the viewer's team (never the hidden number). */
+function systemImpact(fits: ReturnType<typeof systemFits>) {
+  const out: Record<string, Record<string, number>> = {};
+  for (const g of ['forecheck', 'offense', 'pp', 'pk'] as const) {
+    const f = fits[g] as Record<string, number>;
+    const vals = Object.values(f);
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    // The forecheck splits its effect between offense and defense (about three-quarters each on average).
+    const w = g === 'forecheck' ? 0.75 : 1;
+    out[g] = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, Math.round(SYSTEM_K[g] * w * (v - mean - SYSTEM_CENTER[g]) * 10) / 10]));
+  }
+  return out;
+}
+
+const chemView = (c: ReturnType<typeof unitChemistry>) => ({
+  total: Math.round(c.total * 10) / 10,
+  style: Math.round(c.style * 10) / 10,
+  familiarity: Math.round(c.familiarity * 10) / 10,
+  /** 0–1: how settled the line is. */
+  settled: Math.round(c.fam * 100) / 100,
+});
+
+function trainingView(L: League, p: League['players'][string]) {
+  const gains = p.trainingLog?.season === L.season ? p.trainingLog.gains : {};
+  const team = p.teamId ? L.teams[p.teamId] : null;
+  const now = team ? resolvePlan(L, team).find((x) => x.player.id === p.id) : undefined;
+  return {
+    gains: Object.entries(gains).map(([skill, points]) => ({ skill, label: skillLabel(skill as TrainableSkill), points })),
+    roleTraining: p.roleTraining ?? {},
+    current: now
+      ? {
+          coach: now.coach.name,
+          coachId: now.coach.id,
+          skill: now.skill,
+          label: skillLabel(now.skill),
+          progress: Math.round(((p.trainingProgress?.[now.skill] ?? 0) % 1) * 100) / 100,
+          seasonPace: projectedSeasonGain(L, now.coach, p, now.skill),
+        }
+      : null,
+  };
+}
+
 export function potentialView(L: League, viewer: string | null, p: League['players'][string]) {
   const s = scoutedPotential(L, viewer ?? 'league', p);
   return { grade: grade(s), projection: projectionLabel(s, p.pos) };
@@ -73,6 +127,8 @@ const SYSTEMS_CATALOG = {
     extraAttacker: slotView(EXTRA_ATTACKER_SLOTS),
   },
   roles: ROLES.map((id) => ({ id, label: ROLE_LABEL[id], help: ROLE_HELP[id] })),
+  /** Everything the lines editor needs to show chemistry and spot fit live, exactly as the sim computes them. */
+  chemistry: { ...CHEMISTRY, basis: SLOT_BASIS, jobsF: F_JOBS, jobsD: D_JOBS, styleF: F_STYLE, styleD: D_STYLE },
 };
 
 const tacticsSchema = z.object({
@@ -250,15 +306,24 @@ export const dataRouter = router({
         .filter(Boolean)
         .map((p) => {
           const s = scoutedPotential(L, ctx.membership.teamId ?? 'league', p);
-          return { ...publicPlayer(L, p), grade: grade(s), projection: projectionLabel(s, p.pos), draft: p.draft ?? null };
+          return { ...publicPlayer(L, p), grade: grade(s), projection: projectionLabel(s, p.pos), draft: p.draft ?? null, minor: L.prospectStats?.[p.id] ?? null };
         })
         .sort((a, b) => b.overall - a.overall),
       phase: L.phase,
       lines: completeLines(t.lines, t.roster.map((id) => L.players[id]), t.tactics ?? DEFAULT_TACTICS),
+      /** Games each line/pair has played together recently (for live chemistry in the editor). */
+      chemistryGames: t.chemistry ?? {},
+      /** Chemistry of each forward line and defense pair: style fit + familiarity, in rating points. */
+      chemistry: {
+        forwards: t.lines.forwards.map((ids) => chemView(unitChemistry(t, ids.map((id) => L.players[id]).filter(Boolean), false))),
+        defense: t.lines.defense.map((ids) => chemView(unitChemistry(t, ids.map((id) => L.players[id]).filter(Boolean), true))),
+      },
       autoLines: t.controller.kind === 'human' ? !!t.autoLines : true,
       tactics: t.tactics ?? DEFAULT_TACTICS,
       systemFits: systemFits(healthyRoster(L, t).filter((p) => p.pos !== 'G'), t.tactics ?? DEFAULT_TACTICS),
       recommendedTactics: suggestTactics(healthyRoster(L, t).filter((p) => p.pos !== 'G')),
+      /** Roughly what each option is worth to this roster, in rating points across the players on the ice (0 = a typical pick). */
+      systemImpact: systemImpact(systemFits(healthyRoster(L, t).filter((p) => p.pos !== 'G'), t.tactics ?? DEFAULT_TACTICS)),
       systems: SYSTEMS_CATALOG,
       scratchWarnings:
         t.controller.kind === 'human' && !t.autoLines
@@ -279,7 +344,8 @@ export const dataRouter = router({
     if (!p && !retired) throw new TRPCError({ code: 'NOT_FOUND', message: 'No such player' });
     const career = [...(p ? (L.careerStats?.[p.id] ?? []) : retired!.career)];
     // Add the season in progress.
-    if (p && L.phase !== 'offseason' && (L.skaterStats[p.id] || L.goalieStats[p.id])) {
+    const minorNow = p ? (L.prospectStats?.[p.id] ?? null) : null;
+    if (p && L.phase !== 'offseason' && (L.skaterStats[p.id] || L.goalieStats[p.id] || minorNow)) {
       career.push({
         season: L.season,
         teamId: p.teamId,
@@ -289,6 +355,8 @@ export const dataRouter = router({
         goalie: L.goalieStats[p.id] ?? null,
         playoffSkater: L.playoffSkaterStats[p.id] ?? null,
         playoffGoalie: L.playoffGoalieStats[p.id] ?? null,
+        minor: minorNow,
+        orgId: minorNow ? (p.prospectOf ?? p.teamId ?? null) : null,
       });
     }
     const teamOf = (id: string | null) => (id && L.teams[id] ? teamInfo(L.teams[id]) : null);
@@ -308,7 +376,9 @@ export const dataRouter = router({
       isProspect: !!p?.prospectOf,
       draft: p?.draft ? { ...p.draft, team: teamOf(p.draft.teamId) } : null,
       scouting: scout !== null && p && L.season - p.birthYear <= 25 ? { grade: grade(scout), projection: projectionLabel(scout, p!.pos) } : null,
-      career: career.map((c) => ({ ...c, team: teamOf(c.teamId) })),
+      career: career.map((c) => ({ ...c, team: teamOf(c.teamId), org: teamOf(c.orgId ?? null) })),
+      /** Skills coaching: points gained this season by skill, and who's working with him now. */
+      training: p ? trainingView(L, p) : null,
       awards,
     };
   }),

@@ -33,6 +33,11 @@ const GOALIE_W: Record<keyof GoalieRatings, number> = {
   mental: 0.15,
 };
 
+/** The weights behind a position's overall rating. */
+export function overallWeights(pos: Position): Partial<Record<keyof SkaterRatings | keyof GoalieRatings, number>> {
+  return pos === 'G' ? GOALIE_W : pos === 'D' ? DEFENSE_W : pos === 'C' ? CENTER_W : FORWARD_W;
+}
+
 function weighted<T extends object>(r: T, w: Partial<Record<keyof T, number>>): number {
   let sum = 0;
   let tot = 0;

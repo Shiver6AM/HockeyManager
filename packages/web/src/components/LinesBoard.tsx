@@ -7,8 +7,11 @@
  *    4-on-4, 3-on-3, extra attacker, shootout) to put him there.
  *  - No mouse? Tap one player, then tap where he should go.
  *
- * Special-unit spots are shaded from white (poor fit) to green (ideal) by the
- * player's skill at that spot's role (e.g. PK defense, net front, one-timer).
+ * Special-unit spots are shaded from white to green by how much the player
+ * gains in that spot: his skill at the spot's role (net front, one-timer, PK
+ * defense…) compared with his other skills. Forward lines and defense pairs
+ * show their chemistry (complementary styles + games together). Both are
+ * computed exactly as the game engine does, live as you move players.
  */
 import {
   DndContext,
@@ -27,6 +30,7 @@ import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, cx } from './ui';
 import type { Outputs } from '../trpc';
+import { bonusColor, lineChemistry, signed1, spotBonus, type Basis, type LiveChem } from '../chemistry';
 
 type TeamData = Outputs['data']['team'];
 export type P = TeamData['players'][number];
@@ -141,7 +145,7 @@ export function useLinesMoves(byId: Map<string, P>) {
 
 // ---------------------------------------------------------------------------
 
-/** White (poor fit) → green (ideal), from a role skill on the ratings scale. */
+/** White (poor fit) → green (ideal), from a role skill on the ratings scale (shootout order). */
 function fitColor(v: number): { bg: string; fg: string } {
   const t = Math.max(0, Math.min(1, (v - 55) / 35));
   return {
@@ -170,11 +174,11 @@ function Card({
   invalid?: boolean;
   selected?: boolean;
   dragging?: boolean;
-  /** Special-unit spot: the player's skill for it (colors the card). */
-  fit?: { value: number; label: string };
+  /** Special-unit spot: the player's skill for it, and (when the spot has one) the rating bonus it gives him. */
+  fit?: { value: number; label: string; bonus?: number };
 }) {
   if (!p) return <div className="rounded-md border border-dashed border-rink-600 px-2 py-1.5 text-xs text-ice-500">Empty</div>;
-  const color = fit ? fitColor(fit.value) : null;
+  const color = fit ? (fit.bonus !== undefined ? bonusColor(fit.bonus) : fitColor(fit.value)) : null;
   return (
     <div
       className={cx(
@@ -186,11 +190,15 @@ function Card({
         dragging && 'shadow-lg shadow-black/60',
       )}
       style={color ? { background: color.bg, color: color.fg } : undefined}
-      title={`${p.name} · ${p.pos} ${p.overall} · age ${p.age} · potential ${p.potential.grade} (${p.potential.projection})${fit ? ` · ${fit.label} ${fit.value}` : ''}${p.injury ? ` · injured (${p.injury.type})` : ''}${warn ? ` · ${warn}` : ''}`}
+      title={`${p.name} · ${p.pos} ${p.overall} · age ${p.age} · potential ${p.potential.grade} (${p.potential.projection})${fit ? ` · ${fit.label} ${fit.value}${fit.bonus !== undefined ? ` · ${signed1(fit.bonus)} rating points in this spot` : ''}` : ''}${p.injury ? ` · injured (${p.injury.type})` : ''}${warn ? ` · ${warn}` : ''}`}
     >
       <span className={cx('flex items-center justify-between gap-1 font-semibold', !color && 'text-ice-50')}>
         <span className="truncate">{compact ? p.lastName : `${p.firstName[0]}. ${p.lastName}`}</span>
-        {fit && <span className="tabular shrink-0 rounded bg-black/15 px-1 text-[10px]">{fit.value}</span>}
+        {fit && (
+          <span className="tabular shrink-0 rounded bg-black/15 px-1 text-[10px]">
+            {fit.bonus !== undefined ? signed1(fit.bonus) : fit.value}
+          </span>
+        )}
       </span>
       <span className={cx('flex flex-wrap items-center gap-x-1.5 text-[11px]', !color && 'text-ice-400')}>
         <span className={cx(warn && !color && 'text-warn')}>{p.pos}</span>
@@ -229,7 +237,7 @@ function SlotCell({
   droppable: boolean;
   selected: boolean;
   onTap: () => void;
-  fit?: { value: number; label: string };
+  fit?: { value: number; label: string; bonus?: number };
 }) {
   const key = refKey(refv);
   const drag = useDraggable({ id: `slot:${key}`, data: { src: { type: 'slot', ref: refv } satisfies Source }, disabled: !p });
@@ -305,6 +313,7 @@ export function LinesBoard({
   catalog,
   formation,
   leagueId,
+  chemistryGames,
 }: {
   draft: Lines;
   onChange: (d: Lines) => void;
@@ -312,6 +321,8 @@ export function LinesBoard({
   catalog: Catalog;
   formation: string;
   leagueId: string;
+  /** Games each line/pair has played together (from the server). */
+  chemistryGames: Record<string, number>;
 }) {
   const byId = new Map(players.map((p) => [p.id, p]));
   const { canDrop, move } = useLinesMoves(byId);
@@ -372,17 +383,38 @@ export function LinesBoard({
     }
   };
 
+  const C = catalog.chemistry;
+  const basisOf = (k: Kind): Basis | null => (k === 'pp' || k === 'pp4' ? 'pp' : k === 'pk' || k === 'pk3' ? 'pk' : k === 'ev4' || k === 'ev3' || k === 'ea' ? 'ev' : null);
+  const chemOf = (ids: string[], defense: boolean): LiveChem | null => {
+    const ps = ids.map((id) => byId.get(id));
+    if (ps.some((p) => !p || p.pos === 'G')) return null;
+    return lineChemistry(ids, ps.map((p) => p!.roles as unknown as Record<string, number>), defense, chemistryGames, C);
+  };
+  const chemChip = (c: LiveChem | null) =>
+    c ? (
+      <span
+        className="tabular rounded px-1.5 py-1 text-[11px] font-semibold whitespace-nowrap"
+        style={{ background: bonusColor(c.total, 3).bg, color: bonusColor(c.total, 3).fg }}
+        title={`Chemistry ${signed1(c.total)} rating points for this unit: styles ${signed1(c.style)} (a playmaker, a finisher and a net-front/forechecker mesh; a puck mover with a stay-at-home partner), familiarity ${signed1(c.familiarity)} (${Math.round(c.settled * 100)}% settled; lines gel over ~15 games together).`}
+      >
+        Chem {signed1(c.total)}
+      </span>
+    ) : (
+      <span />
+    );
   const cell = (r: Ref, opts: { tag?: string; compact?: boolean } = {}) => {
     const id = get(draft, r);
     const p = byId.get(id);
     const special = !isLineup(r.k);
     const slot = special ? slotsFor(r.k)?.[r.j] : undefined;
     const invalid = special ? !dressedSkaters.has(id) || unitOf(draft, r).indexOf(id) !== r.j : (counts.get(id) ?? 0) > 1;
+    const basis = basisOf(r.k);
     const fit =
       slot && p && p.pos !== 'G'
         ? {
             value: p.roles[slot.role as RoleId],
             label: roleLabel[slot.role] ?? slot.role,
+            bonus: basis ? spotBonus(p.roles as unknown as Record<string, number>, slot.role, basis, C) : undefined,
           }
         : undefined;
     return (
@@ -412,15 +444,37 @@ export function LinesBoard({
     const xs = unit.map((id, j) => (byId.get(id) && slots[j] ? byId.get(id)!.roles[slots[j].role as RoleId] : 0)).filter(Boolean);
     return xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : 0;
   };
-  const fitBadge = (v: number) => (
-    <span
-      className="rounded px-1.5 py-0.5 text-[11px] font-semibold"
-      style={{ background: fitColor(v).bg, color: fitColor(v).fg }}
-      title="Average fit of this unit"
-    >
-      Fit {v}
-    </span>
-  );
+  /** Average spot bonus of a unit (rating points), or its average skill for the shootout. */
+  const unitBonus = (k: Kind, unit: string[]) => {
+    const slots = slotsFor(k) ?? [];
+    const basis = basisOf(k);
+    if (!basis) return null;
+    const xs = unit
+      .map((id, j) => {
+        const p = byId.get(id);
+        return p && slots[j] && p.pos !== 'G' ? spotBonus(p.roles as unknown as Record<string, number>, slots[j].role, basis, C) : null;
+      })
+      .filter((x): x is number => x !== null);
+    return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+  };
+  const fitBadge = (k: Kind, unit: string[]) => {
+    const b = unitBonus(k, unit);
+    const v = unitAvg(k, unit);
+    const color = b === null ? fitColor(v) : bonusColor(b);
+    return (
+      <span
+        className="rounded px-1.5 py-0.5 text-[11px] font-semibold"
+        style={{ background: color.bg, color: color.fg }}
+        title={
+          b === null
+            ? 'Average shootout skill of your first five shooters'
+            : `Average skill in these spots ${v}. Players here gain ${signed1(b)} rating points on average from playing to their strengths (0 = typical, well-placed unit).`
+        }
+      >
+        {b === null ? `Fit ${v}` : `Spots ${signed1(b)}`}
+      </span>
+    );
+  };
 
   const overlayId = active ? playerOf(draft, active) : null;
 
@@ -440,7 +494,8 @@ export function LinesBoard({
         </div>
         <p className="min-w-0 flex-1 text-sm text-ice-400">
           Drag to swap, drag a scratch onto a slot to dress him, or drag a dressed skater onto a special-unit spot. On a phone, tap one player then where he
-          goes. Special-unit cards run from white (poor fit) to green (ideal).
+          goes. Special-unit cards run from white (costs him) to green (plays to his strengths); the number is his rating bonus in that spot. Line
+          chemistry chips update as you move players.
           {picked && (
             <button className="ml-2 text-blue-300 hover:underline" onClick={() => setPicked(null)}>
               Cancel selection
@@ -481,12 +536,13 @@ export function LinesBoard({
         <>
           <div className="grid gap-5 xl:grid-cols-3">
             <div className="xl:col-span-2">
-              <Section title="Forward lines">
+              <Section title="Forward lines" note="Chemistry: a playmaker, a finisher and a net-front or forechecking presence mesh best, and lines gel over games together.">
                 <div className="space-y-2">
                   {draft.forwards.map((line, i) => (
-                    <div key={i} className="grid grid-cols-[2rem_1fr_1fr_1fr] items-end gap-2">
+                    <div key={i} className="grid grid-cols-[2rem_1fr_1fr_1fr] items-end gap-2 sm:grid-cols-[2rem_1fr_1fr_1fr_auto]">
                       <span className="pb-2 font-display text-ice-400">L{i + 1}</span>
                       {line.map((_, j) => cell({ k: 'f', i, j }, { tag: i === 0 ? FWD_LABELS[j] : undefined }))}
+                      <span className="col-span-4 pb-1.5 sm:col-span-1">{chemChip(chemOf(line, false))}</span>
                     </div>
                   ))}
                 </div>
@@ -495,12 +551,13 @@ export function LinesBoard({
             <Section title="Defense & goalies" note="The backup starts about 1 in 8 games, and most second nights of back-to-backs.">
               <div className="space-y-2">
                 {draft.defense.map((pair, i) => (
-                  <div key={i} className="grid grid-cols-[2rem_1fr_1fr] items-end gap-2">
+                  <div key={i} className="grid grid-cols-[2rem_1fr_1fr_auto] items-end gap-2">
                     <span className="pb-2 font-display text-ice-400">D{i + 1}</span>
                     {pair.map((_, j) => cell({ k: 'd', i, j }, { tag: i === 0 ? (j ? 'RD' : 'LD') : undefined }))}
+                    <span className="pb-1.5">{chemChip(chemOf(pair, true))}</span>
                   </div>
                 ))}
-                <div className="grid grid-cols-[2rem_1fr_1fr] items-end gap-2 border-t border-rink-700 pt-3">
+                <div className="grid grid-cols-[2rem_1fr_1fr_auto] items-end gap-2 border-t border-rink-700 pt-3">
                   <span className="pb-2 font-display text-ice-400">G</span>
                   {draft.goalies.map((_, j) => cell({ k: 'g', i: 0, j }, { tag: j ? 'Backup' : 'Starter' }))}
                 </div>
@@ -511,14 +568,14 @@ export function LinesBoard({
             <Section
               title={`Power play · ${catalog.pp.find((f) => f.id === formation)?.label ?? ''}`}
               note="PP1 takes the first ~70 seconds of each power play. Spots follow your formation (set it under Systems)."
-              action={fitBadge(unitAvg('pp', draft.pp[0]))}
+              action={fitBadge('pp', draft.pp[0])}
             >
               {draft.pp.map((unit, i) => unitRow('pp', unit, i, `PP${i + 1}`, 'grid-cols-[2.5rem_repeat(5,minmax(0,1fr))]'))}
             </Section>
             <Section
               title="Penalty kill"
               note="Two forwards then two defensemen. PK1 takes the first ~60 seconds."
-              action={fitBadge(unitAvg('pk', draft.pk[0]))}
+              action={fitBadge('pk', draft.pk[0])}
             >
               {draft.pk.map((unit, i) => unitRow('pk', unit, i, `PK${i + 1}`, 'grid-cols-[2.5rem_repeat(4,minmax(0,1fr))]'))}
             </Section>
@@ -526,30 +583,30 @@ export function LinesBoard({
         </>
       ) : (
         <div className="grid gap-5 lg:grid-cols-2">
-          <Section title="4-on-4" note="Coincidental minors. Units alternate." action={draft.fourOnFour && fitBadge(unitAvg('ev4', draft.fourOnFour[0]))}>
+          <Section title="4-on-4" note="Coincidental minors. Units alternate." action={draft.fourOnFour && fitBadge('ev4', draft.fourOnFour[0])}>
             {draft.fourOnFour?.map((unit, i) => unitRow('ev4', unit, i, `U${i + 1}`, 'grid-cols-[2.5rem_repeat(4,minmax(0,1fr))]'))}
           </Section>
           <Section
             title="3-on-3 overtime"
             note="Regular-season overtime. Units rotate: speed and hands win here."
-            action={draft.threeOnThree && fitBadge(unitAvg('ev3', draft.threeOnThree[0]))}
+            action={draft.threeOnThree && fitBadge('ev3', draft.threeOnThree[0])}
           >
             {draft.threeOnThree?.map((unit, i) => unitRow('ev3', unit, i, `U${i + 1}`, 'grid-cols-[2.5rem_repeat(3,minmax(0,1fr))]'))}
           </Section>
           <Section
             title="4-on-3 power play"
             note="When you have four skaters against three (5-on-3 late, or a penalty in overtime)."
-            action={draft.pp4 && fitBadge(unitAvg('pp4', draft.pp4))}
+            action={draft.pp4 && fitBadge('pp4', draft.pp4)}
           >
             {draft.pp4 && unitRow('pp4', draft.pp4, 0, 'PP', 'grid-cols-[2.5rem_repeat(4,minmax(0,1fr))]')}
           </Section>
-          <Section title="3-man penalty kill" note="Two men down (5-on-3 or 4-on-3)." action={draft.pk3 && fitBadge(unitAvg('pk3', draft.pk3))}>
+          <Section title="3-man penalty kill" note="Two men down (5-on-3 or 4-on-3)." action={draft.pk3 && fitBadge('pk3', draft.pk3)}>
             {draft.pk3 && unitRow('pk3', draft.pk3, 0, 'PK', 'grid-cols-[2.5rem_repeat(3,minmax(0,1fr))]')}
           </Section>
           <Section
             title="Extra attacker (goalie pulled)"
             note="Six skaters when you pull the goalie late, in priority order."
-            action={draft.extraAttacker && fitBadge(unitAvg('ea', draft.extraAttacker))}
+            action={draft.extraAttacker && fitBadge('ea', draft.extraAttacker)}
           >
             {draft.extraAttacker &&
               unitRow('ea', draft.extraAttacker, 0, '6v5', 'grid-cols-[2.5rem_repeat(3,minmax(0,1fr))] sm:grid-cols-[2.5rem_repeat(6,minmax(0,1fr))]')}
@@ -557,7 +614,7 @@ export function LinesBoard({
           <Section
             title="Shootout order"
             note="Shooters in order; after five, everyone else by shootout skill."
-            action={draft.shootout && fitBadge(unitAvg('so', draft.shootout))}
+            action={draft.shootout && fitBadge('so', draft.shootout)}
           >
             {draft.shootout &&
               unitRow('so', draft.shootout, 0, 'SO', 'grid-cols-[2.5rem_repeat(3,minmax(0,1fr))] sm:grid-cols-[2.5rem_repeat(5,minmax(0,1fr))]')}

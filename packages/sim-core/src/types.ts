@@ -1,4 +1,5 @@
-import type { Tactics } from './systems';
+import type { Role, Tactics } from './systems';
+import type { SkillsCoach } from './skills';
 
 /**
  * Core data model. Everything here is plain JSON-serializable data so the
@@ -87,6 +88,14 @@ export interface Player {
   extension?: ContractOffer;
   /** How the player entered the league, if through the draft. */
   draft?: { season: number; round: number; overall: number; teamId: TeamId };
+  /** How much he gets out of coaching, 1–99 (derived from his id when missing; see skills.ts). */
+  coachability?: number;
+  /** Points added to situational skills by skills coaches. */
+  roleTraining?: Partial<Record<Role, number>>;
+  /** Fractional progress toward the next point, by skill. */
+  trainingProgress?: Record<string, number>;
+  /** Points gained from coaching this season, by skill. */
+  trainingLog?: { season: number; gains: Record<string, number> };
 }
 
 /** Who makes decisions for a team. Adding human managers never changes the team count. */
@@ -152,6 +161,10 @@ export interface Team {
   tradeBlock?: TradeBlock;
   /** Coaching systems (AI teams pick theirs to suit the roster). */
   tactics?: Tactics;
+  /** Skills coaches (up to three). */
+  skillsCoaches?: SkillsCoach[];
+  /** Games each forward line / defense pair (sorted ids joined by "|") has played together recently. */
+  chemistry?: Record<string, number>;
 }
 
 /**
@@ -396,6 +409,9 @@ export interface League {
   offseason?: OffseasonState | null;
   /** Coaches, scouts and trainers looking for work. */
   staffPool?: StaffMember[];
+  skillsCoachPool?: SkillsCoach[];
+  /** This season's junior/AHL stats for prospects. */
+  prospectStats?: Record<PlayerId, MinorLine>;
   news?: NewsItem[];
   /** Bookkeeping for news generation (streaks, processed transactions). */
   newsState?: { txCursor: number; streaks: Record<TeamId, number>; nextId: number };
@@ -462,6 +478,33 @@ export interface OffseasonState {
   rfa?: Record<PlayerId, RfaCase>;
   /** Offer sheets tendered this bidding round, by offering team. */
   sheets?: Record<TeamId, Record<PlayerId, ContractOffer>>;
+  /** Day of the re-signing week (1–7); free agency opens after day 7. */
+  resignDay?: number;
+  /** Offers to expiring players, answered on the next day. */
+  pendingOffers?: Record<PlayerId, PendingOffer>;
+  /** The latest answer from each player a team made an offer to. */
+  responses?: Record<PlayerId, OfferResponse>;
+  /** Expiring players AI teams have already decided on this week. */
+  aiDecided?: Record<PlayerId, boolean>;
+}
+
+export interface PendingOffer {
+  teamId: TeamId;
+  offer: ContractOffer;
+  /** Offseason step (re-sign day) when it was made. */
+  madeOn: number;
+  /** He asked for an extra day to think it over. */
+  delayed?: boolean;
+}
+
+export interface OfferResponse {
+  teamId: TeamId;
+  offer: ContractOffer;
+  /** Re-sign day the answer arrived. */
+  day: number;
+  result: 'accept' | 'counter' | 'reject' | 'refuse' | 'considering';
+  counter?: ContractOffer;
+  message: string;
 }
 
 export interface OfferSheet {
@@ -586,6 +629,25 @@ export interface CareerLine {
   goalie: GoalieSeasonStats | null;
   playoffSkater: SkaterSeasonStats | null;
   playoffGoalie: GoalieSeasonStats | null;
+  /** A season in junior or the AHL (prospects). */
+  minor?: MinorLine | null;
+  /** Organization holding his rights that season, for minor-league seasons. */
+  orgId?: TeamId | null;
+}
+
+/** A prospect's season in junior or the AHL. Goalie fields only for goalies. */
+export interface MinorLine {
+  league: string;
+  gp: number;
+  g: number;
+  a: number;
+  pim: number;
+  pm: number;
+  w?: number;
+  l?: number;
+  sa?: number;
+  ga?: number;
+  so?: number;
 }
 
 export interface RetiredPlayer {

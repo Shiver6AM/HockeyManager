@@ -126,7 +126,7 @@ describe('restricted free agents', () => {
       }
     }
     for (const p of rfas) (L.offseason!.qualified ??= {})[p.id] = true;
-    offseasonStep(L, { force: true }); // -> free agency
+    while (L.offseason!.stage === 're-sign') offseasonStep(L, { force: true }); // -> free agency
   });
 
   it('qualified RFAs without a deal stay on their qualifying offer as open cases', () => {
@@ -238,7 +238,7 @@ describe('qualifying offers', () => {
     const [drop, ...rest] = rfas;
     G.offseason!.resign[drop] = false;
     for (const id of rest) (G.offseason!.qualified ??= {})[id] = true;
-    offseasonStep(G, { force: true }); // -> free agency
+    while (G.offseason!.stage === 're-sign') offseasonStep(G, { force: true }); // -> free agency
     expect(G.players[drop].teamId).toBeNull();
     expect(G.transactions.some((t) => t.playerId === drop && /not qualified and becomes an unrestricted free agent/.test(t.note))).toBe(true);
     for (const id of rest) {
