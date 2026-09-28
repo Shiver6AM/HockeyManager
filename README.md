@@ -1,98 +1,153 @@
-# Hockey GM: sim-core
+# Hockey GM
 
-A multiplayer hockey management game. This package is the **simulation core**, a pure
-TypeScript engine with no UI and no server. The web app and multiplayer server (Phase 2)
-will both import it.
+A multiplayer hockey management game. Each friend manages a team in a 32-team league,
+and the other teams are run by AI. The simulation is deep: a second-by-second game
+engine, fatigue, injuries, NHL-format playoffs and awards.
+
+![Dashboard](docs/screenshots/dashboard.png)
 
 ## Quick start
 
 ```bash
 npm install
-npm run demo          # sim a full season + playoffs: box score, standings, leaders, injuries, bracket, awards
-npm run calibrate 8   # sim 8 seasons and compare league stats to real NHL averages
-npm test              # determinism + consistency tests
+npm run dev
 ```
 
-Requires Node 20+.
+Then open **http://localhost:5173**, create an account, and create a league. To invite
+friends, share the invite code from the **League** tab. Each of them creates an account,
+joins with the code and picks a team.
 
-## What's here
+- The API runs on port 3001, and Vite proxies `/trpc` to it.
+- Data is stored in an embedded Postgres (PGlite) under `./.data/pglite`, so there's
+  nothing to install. Delete that folder to start fresh.
+- Requires Node 20+.
+
+To play with friends before anything is deployed, run it on your machine and share it
+through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
+
+### Other commands
+
+```bash
+npm test              # 34 tests: sim determinism, playoffs, injuries, and the full multiplayer API flow
+npm run typecheck     # all three packages
+npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
+npm run calibrate 8   # sim 8 seasons and compare league stats to real NHL figures
+```
+
+### Moving to Supabase (or any hosted Postgres)
+
+Set `DATABASE_URL` to the connection string and start the server. Migrations run
+automatically at startup; they're plain SQL in `packages/server/src/schema.ts`.
+
+```bash
+DATABASE_URL="postgresql://postgres:<password>@db.<project>.supabase.co:5432/postgres" npm run dev
+```
+
+## How it's built
 
 ```
-packages/sim-core/src
-  types.ts      data model (players, teams, contracts, lines, league, box scores)
-  rng.ts        seeded RNG + hierarchical seed derivation
-  generate.ts   league / player generator (archetypes, hidden potential, contracts)
-  names.ts      name pools + 32 fictional franchises in 4 divisions
-  lines.ts      auto depth chart: 4 F lines, 3 D pairs, 2 PP units, 2 PK units
-  roster.ts     game-day lineups around injuries, emergency call-ups / send-downs
-  schedule.ts   82-game NHL-format schedule (41 home / 41 away for every team)
-  game.ts       second-by-second game sim: fatigue, injuries, playoff OT (tuning in TUNING)
-  playoffs.ts   16-team NHL bracket, best-of-7, 2-2-1-1-1 home ice
-  awards.ts     Hart, Art Ross, Richard, Vezina, Norris, Selke, Calder, Presidents', Conn Smythe
-  league.ts     advanceDays() day loop, stats, standings, playoffs, season history
-tools/
-  calibrate.ts  multi-season calibration report vs. NHL norms
-  demo.ts       one-season showcase
+packages/
+  sim-core/   pure TypeScript simulation, no I/O (runs in Node or a browser)
+  server/     Fastify + tRPC API, auth, league storage, advance engine and scheduler
+  web/        React + Vite + TanStack Query + Tailwind
+tools/        calibration + terminal demo
 ```
 
-## Multiplayer design decisions already built in
+| Layer | Choice | Notes |
+|---|---|---|
+| Simulation | `@hockey-gm/sim-core` | Deterministic: every game's seed comes from the league seed + season + game id |
+| API | Fastify + tRPC 11 | End-to-end types: the web app imports the server's router type |
+| Database | PGlite locally, Postgres/Supabase later | A thin SQL layer (`db.ts`) runs the same queries on both |
+| Auth | Username + password (scrypt), server sessions in an httpOnly cookie | Can be swapped for Supabase Auth later; only `userFromToken` needs to change |
+| Scheduling | `croner`, one cron job per scheduled league | Recreated from the DB at startup |
 
-| Decision | How it's handled |
-|---|---|
-| Up to 5 humans now, more later | `team.controller` is `{kind:'ai'}` or `{kind:'human', userId}`. Any team can switch at any time. |
-| Commissioner **or** scheduled advance | `settings.advance` holds either mode. The sim only exposes `advanceDays(league, n)`; the server decides *when* to call it. |
-| Fairness between the two modes | Each game's seed comes from `league seed + season + game id`, so advancing 1 day ×7 gives exactly the same result as 7 days at once. This is covered by tests. |
-| Auditable results | Any game can be replayed from its seed to settle disputes. |
+**Storage model.** The live league (players, teams, schedule, stats) is one JSONB
+document with a version number; every write is an optimistic-concurrency update inside
+a transaction that holds a row lock. Box scores make up about 85% of a season's data, so
+they're moved to their own table after each advance and loaded only when someone opens a
+game. Membership, ready flags and the advance audit log are ordinary tables.
 
-## The game simulation
+**Hidden information.** Potential, personality, injury-proneness and consistency never
+leave the server. Scouting will reveal estimates of them in a later phase.
 
-Each second, each team can generate a shot attempt, penalty, hit, fight or stoppage.
-The rates depend on the skaters on the ice:
+## Multiplayer
 
-- **Attempt rate** comes from the on-ice offense against the opposing defense, the
+### Advancing the league
+
+Pick one of two modes on the **League** tab (commissioner only):
+
+- **Commissioner:** the commissioner presses *Sim 1 day / 1 week / to playoffs / to end
+  of season*. Good for live sessions together.
+- **On a schedule:** a cron schedule in the league's time zone (presets include
+  "every night at 11 PM"), a number of days per tick, and optionally **advance early
+  when every manager is ready**. The commissioner can still force an advance at any time.
+
+Every advance, whatever triggered it, goes through the same code path: take a lock,
+simulate, save the state and box scores, clear ready flags, and write to the audit log
+(*League → Advance history*). Because each game has its own seed, simming 7 days one at a
+time produces exactly the same league as simming a week at once. The tests check this.
+
+### Managing your team
+
+- **Roster:** ratings, season stats, contracts and injury status.
+- **Lines editor:** 4 forward lines, 3 D pairs, starter/backup goalie, 2 PP units and
+  2 PK units. It warns you when a player is listed twice or an injured player is dressed,
+  and when you swap someone out, their power-play and penalty-kill spots go to the
+  replacement.
+- **Assistant coach** (on by default): rebuilds your lines before every game, taking
+  injured players out and putting returning players back in. Saving your own lines hands
+  control back to you. If you're managing lines yourself, the dashboard warns you when a
+  better healthy player is sitting out.
+
+![Lines editor](docs/screenshots/lines.png)
+
+## The simulation
+
+Each second, each team can generate a shot attempt, penalty, hit, fight, injury or
+stoppage, with rates driven by the skaters on the ice:
+
+- **Shot attempts** depend on on-ice offense against the opposing defense, the
   strength state (5v5, 5v4, 4v4, 3v3 OT, 6v5 with the goalie pulled…), home ice and
-  score effects.
-- **Each attempt** is either blocked, missed or on goal. A shot's goal probability
-  combines the shooter's shooting, his teammates' playmaking against the defense, and
-  the goalie. Saves can produce rebounds.
-- **Line deployment:** shifts rotate toward target ice-time shares. PP and PK units
-  take over when penalties change the strength. Trailing teams pull the goalie late.
-  A struggling starter gets pulled.
-- **Nightly form:** each player's form varies game to game according to their hidden
-  `consistency` trait.
-- **Overtime and shootout:** 5-minute 3v3 sudden death, then a shootout. Playoff
-  overtime is full-strength 20-minute sudden-death periods, with no shootout.
-- **Fatigue:** skaters lose energy on the ice and recover on the bench, faster or
-  slower depending on endurance, and tired players play worse. Long shifts and
-  short benches hurt. Teams on the second night of a back-to-back start tired and
-  usually start their backup goalie.
-- **Injuries:** players get hurt mid-game (more often if they're injury-prone) and
-  leave the game. Injuries range from day-to-day to season-ending, and players heal
-  day by day.
-- **Game-day rosters:** AI teams rebuild their lines every game day. Human teams
-  keep their own lines, with only injured players swapped for the best healthy
-  scratch. A team that can't dress 12 F, 6 D and 2 G makes an emergency call-up;
-  AI teams send call-ups back down when their regulars return.
+  score effects. Each attempt is blocked, missed or on goal. The chance of a goal
+  combines the shooter, his teammates' playmaking and the goalie. Saves can produce
+  rebounds.
+- **Deployment:** shifts rotate toward target ice-time shares, PP and PK units take
+  over on penalties, trailing teams pull the goalie late, and a struggling starter gets
+  pulled.
+- **Fatigue:** players lose energy on the ice and recover on the bench at rates set by
+  their endurance. Teams on the second night of a back-to-back start tired and usually
+  start the backup goalie.
+- **Injuries:** players get hurt mid-game (more often if injury-prone). There are five
+  severity tiers, from day-to-day to season-ending, and players heal one day at a time.
+  A team that can't dress a full lineup makes an emergency call-up.
+- **Overtime:** in the regular season, 5 minutes of 3v3 sudden death and then a
+  shootout. In the playoffs, full-strength 20-minute sudden-death periods.
+- **Season flow:** an 82-game regular season, then awards (Hart, Art Ross, Richard,
+  Vezina, Norris, Selke, Calder, Presidents') → a 16-team best-of-seven playoff with
+  2-2-1-1-1 home ice → the Conn Smythe → a history record.
 
-### Season flow
+**Calibration:** all 33 league-wide checks land within tolerance of recent NHL figures.
+They cover scoring, shots, save %, special teams, OT and shootouts, home ice, parity,
+scoring leaders, ice time, goalie ranges, injuries, backup usage, series length and
+playoff OT rate. Some targets are approximate.
 
-Regular season → one rest day → playoffs (games every other day, a rest day
-between rounds) → offseason. When the regular season ends, the league hands out
-its awards and writes a record to `league.history`. `advanceDays` never skips
-ahead: both advance modes walk through the same days in the same order, so they
-end up with the same champion.
+<img src="docs/screenshots/boxscore.png" width="49%"> <img src="docs/screenshots/playoffs.png" width="49%">
 
-### Calibration (6 seasons with playoffs)
+## Known limitations
 
-All 33 checks land within tolerance of recent NHL figures. They cover scoring, shots,
-save %, special teams, OT and shootouts, home ice, team point spread, scoring leaders
-(helped by two generational superstars per league), ice time, goalie ranges, injuries
-and man-games lost, backup-goalie usage, series length and playoff OT rate. Some
-targets (man-games lost, series length) are approximate.
+- One server process: the scheduler and the per-league lock live in memory. Running
+  several API instances would need a Postgres advisory lock and a single scheduler.
+- A full-season "sim to end" takes a few seconds and blocks the API while it runs.
+  It should move to a worker thread before the game is hosted.
+- Live updates use 5-second polling. Supabase Realtime can replace it later.
+- After the playoffs the league stops at the **offseason**. Aging, development,
+  retirement, the draft and rolling into a new season are Phase 3.
 
-## Next up
+## Roadmap
 
-- **Phase 2:** Postgres schema, Fastify + tRPC API, Supabase auth, league-advance
-  worker (commissioner button plus cron with ready-up), React UI for standings,
-  rosters, box scores and the lines editor.
-- **Phase 3 (career loop):** aging and development, retirement, draft, offseason rollover.
+- **Phase 3, career loop:** aging and development curves, retirement, the draft,
+  and offseason rollover into a new season.
+- **Phase 4, contracts and free agency:** cap rules, RFA/UFA, AI player negotiation
+  driven by personality, blind-bid free agency rounds.
+- **Phase 5, trades:** human-to-human proposals, AI trade valuation, approval/veto rules.
+- **Phase 6, league life:** scouting fog of war, staff, finances, news, notifications.

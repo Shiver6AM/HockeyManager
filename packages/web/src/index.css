@@ -1,0 +1,59 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Oswald', 'Inter', ui-sans-serif, sans-serif;
+
+  /* Arena palette: deep navy boards, ice whites, goal-light red, blue-line blue. */
+  --color-rink-950: #070b14;
+  --color-rink-900: #0b1220;
+  --color-rink-850: #0f1829;
+  --color-rink-800: #131e33;
+  --color-rink-700: #1c2a44;
+  --color-rink-600: #2a3b5c;
+  --color-rink-500: #3d5078;
+  --color-ice-50: #f5f8fc;
+  --color-ice-100: #e6edf6;
+  --color-ice-300: #b4c2d6;
+  --color-ice-400: #8a9bb4;
+  --color-ice-500: #66788f;
+  --color-goal: #e5484d;
+  --color-blueline: #3b82f6;
+  --color-win: #34d399;
+  --color-warn: #fbbf24;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  @apply bg-rink-950 font-sans text-ice-100 antialiased;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Data tables */
+.table {
+  @apply w-full text-sm;
+}
+.table th {
+  @apply sticky top-0 bg-rink-850 px-2 py-2 text-left text-[11px] font-semibold tracking-wider text-ice-400 uppercase;
+}
+.table td {
+  @apply border-t border-rink-700/60 px-2 py-1.5 whitespace-nowrap;
+}
+.table tbody tr:hover td {
+  @apply bg-rink-800/60;
+}
+.table .num {
+  @apply text-right tabular-nums;
+}
+
+select.slot {
+  @apply w-full appearance-none rounded-md border border-rink-600 bg-rink-800 px-2 py-1.5 text-sm text-ice-50 focus:border-blueline focus:outline-none;
+}

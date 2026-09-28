@@ -7,5 +7,6 @@ export * from './schedule';
 export * from './game';
 export * from './league';
 export * from './roster';
+export * from './lineup-check';
 export * from './playoffs';
 export * from './awards';

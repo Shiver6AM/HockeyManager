@@ -1,0 +1,77 @@
+/**
+ * SQL migrations, applied in order at startup. Plain Postgres, so the same
+ * files work on PGlite locally and on Supabase later.
+ *
+ * Storage model: the live league (players, teams, schedule, stats) is one
+ * JSONB document versioned by `leagues.version`. Box scores, which make up ~85%
+ * of the data by the end of a season, live in their own table and are loaded
+ * only when someone opens a game. Membership, readiness and the advance audit
+ * log are ordinary relational tables so they can be queried and locked cheaply.
+ */
+export const MIGRATIONS: Array<[string, string]> = [
+  [
+    '001_init',
+    `
+create table users (
+  id text primary key,
+  username text not null unique,
+  display_name text not null,
+  password_hash text not null,
+  created_at timestamptz not null default now()
+);
+
+create table sessions (
+  token text primary key,
+  user_id text not null references users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+
+create table leagues (
+  id text primary key,
+  name text not null,
+  commissioner_id text not null references users(id),
+  invite_code text not null unique,
+  seed bigint not null,
+  advance jsonb not null,
+  state jsonb not null,
+  version integer not null default 0,
+  next_advance_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table league_members (
+  league_id text not null references leagues(id) on delete cascade,
+  user_id text not null references users(id) on delete cascade,
+  team_id text,
+  ready boolean not null default false,
+  joined_at timestamptz not null default now(),
+  primary key (league_id, user_id)
+);
+
+create unique index league_members_team on league_members (league_id, team_id) where team_id is not null;
+
+create table box_scores (
+  league_id text not null references leagues(id) on delete cascade,
+  season integer not null,
+  game_id integer not null,
+  box jsonb not null,
+  primary key (league_id, season, game_id)
+);
+
+create table advance_log (
+  id bigserial primary key,
+  league_id text not null references leagues(id) on delete cascade,
+  triggered_by text not null,
+  from_day integer not null,
+  to_day integer not null,
+  games integer not null,
+  phase_changes jsonb not null,
+  created_at timestamptz not null default now()
+);
+
+create index advance_log_league on advance_log (league_id, id desc);
+`,
+  ],
+];

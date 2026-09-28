@@ -796,6 +796,10 @@ export function simulateGame(
     goals,
     penalties,
     injuries,
+    rosters: {
+      home: [...homeTeam.lines.forwards.flat(), ...homeTeam.lines.defense.flat(), ...homeTeam.lines.goalies],
+      away: [...awayTeam.lines.forwards.flat(), ...awayTeam.lines.defense.flat(), ...awayTeam.lines.goalies],
+    },
     skaters,
     goalies,
     gwg,

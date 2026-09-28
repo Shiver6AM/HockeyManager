@@ -6,7 +6,8 @@
  *    returning players back in).
  *  - Human teams keep their lines. Only injured players are swapped out, for
  *    the best healthy scratch at the same position. Managers decide when a
- *    returning player goes back in.
+ *    returning player goes back in, unless they've handed lines to the
+ *    assistant coach (`team.autoLines`), who re-optimizes before every game.
  *  - If a team can't dress a full lineup, it makes an emergency call-up from
  *    the free-agent pool on a one-year league-minimum deal. AI teams send
  *    call-ups back down once they have more than 23 healthy players again.
@@ -143,6 +144,10 @@ export function prepareTeamForGame(league: League, team: Team) {
   if (team.controller.kind === 'ai') {
     team.lines = autoLines(healthyRoster(league, team));
     sendDownCallUps(league, team);
+    return;
+  }
+  if (team.autoLines) {
+    team.lines = autoLines(healthyRoster(league, team));
     return;
   }
   if (linesValid(league, team, team.lines)) return;
