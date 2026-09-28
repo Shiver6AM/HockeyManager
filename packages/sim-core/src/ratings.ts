@@ -72,3 +72,6 @@ export function defensiveDrive(r: SkaterRatings): number {
 export function age(p: Player, season: number): number {
   return season - p.birthYear;
 }
+
+/** Highest ceiling a playing style can realistically reach (callers add a little noise). */
+export const ARCHETYPE_CEILING: Record<string, number> = { Enforcer: 74, Grinder: 82, 'Shutdown D': 90 };

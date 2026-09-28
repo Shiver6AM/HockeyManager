@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { InterestPill, OfferForm } from '../components/OfferForm';
+import { MyRfas } from '../components/RfaPanels';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Rating, Spinner } from '../components/ui';
 import { money } from '../format';
 import { useTRPC } from '../trpc';
@@ -28,7 +29,7 @@ export function ResignPage() {
         <p className="text-sm text-ice-400">
           Each player has his own level of interest in your team (contender status, role, loyalty, market, your coach), which sets what he asks
           you for. He then weighs money against term in his own way: veterans want security, young players avoid being locked in. Lowballs annoy
-          him, and you get three offers per player. Restricted free agents (RFA) can also be qualified. Players you never decide on are handled by
+          him, and you get three offers per player. Restricted free agents (RFA) can also be qualified: a qualified RFA without a deal stays yours on his qualifying offer, but other teams can tender offer sheets during free agency, and he may file for arbitration. Players you never decide on are handled by
           your assistant GM when this stage ends; press Let go to release someone.
         </p>
       </div>
@@ -40,6 +41,7 @@ export function ResignPage() {
         </div>
         {!d.open && <p className="mt-3 text-sm text-warn">The re-signing window has closed.</p>}
       </Card>
+      <MyRfas />
       <ErrorBox error={letGo.error ?? qualify.error} />
       <Card title={`Your expiring players (${d.players.length})`}>
         {d.players.length === 0 ? (
@@ -47,7 +49,9 @@ export function ResignPage() {
         ) : (
           <ul className="-my-2 divide-y divide-rink-700/60">
             {d.players.map((p) => {
-              const status = p.agreed
+              const status = p.signedNow
+                ? { tone: 'good' as const, text: `Re-signed: ${money(p.signedNow.salary)} × ${p.signedNow.yearsLeft}y` }
+                : p.agreed
                 ? { tone: 'good' as const, text: `Agreed: ${money(p.agreed.salary)} × ${p.agreed.years}y` }
                 : p.qualified
                   ? { tone: 'info' as const, text: `Qualified at ${money(p.qualifyingOffer!.salary)} × 1y` }

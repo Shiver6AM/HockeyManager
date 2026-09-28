@@ -1,5 +1,11 @@
 import {
   aiAsk,
+  assetFits,
+  NEED_LABEL,
+  NEED_TAGS,
+  setTradeBlock,
+  tradeBlock,
+  type NeedTag,
   capRoom,
   describeAsset,
   evaluateForAi,
@@ -81,19 +87,82 @@ function capDelta(L: League, incoming: TradeAsset[], outgoing: TradeAsset[]) {
 }
 
 export const tradesRouter = router({
-  /** Everything a team could put in a deal. */
-  assets: memberProcedure.input(z.object({ teamId: z.string() })).query(async ({ ctx, input }) => {
+  /**
+   * Everything a team could put in a deal, with its trade block. With
+   * `fitsFor`, each asset also lists which of that team's needs it would fill.
+   */
+  assets: memberProcedure.input(z.object({ teamId: z.string(), fitsFor: z.string().optional() })).query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
     const t = L.teams[input.teamId];
     if (!t) throw badRequest('No such team');
+    const block = tradeBlock(L, t);
+    const onBlock = new Set([...block.players, ...block.picks]);
+    const needs = input.fitsFor && L.teams[input.fitsFor] ? tradeBlock(L, L.teams[input.fitsFor]).needs : [];
+    const player = (id: string, prospect: boolean) => ({
+      ...publicPlayer(L, L.players[id]),
+      prospect,
+      onBlock: onBlock.has(id),
+      fits: assetFits(L, { kind: 'player', id }, needs),
+    });
     return {
       team: teamInfo(t),
       controller: t.controller.kind,
       capRoom: capRoom(L, t),
       payroll: payroll(L, t),
-      players: t.roster.map((id) => ({ ...publicPlayer(L, L.players[id]), prospect: false })).sort((a, b) => b.overall - a.overall),
-      prospects: (t.prospects ?? []).map((id) => ({ ...publicPlayer(L, L.players[id]), prospect: true })).sort((a, b) => b.overall - a.overall),
-      picks: teamPicks(L, t.id).map((key) => ({ key, label: pickLabel(key) })),
+      block: { ...block, needLabels: block.needs.map((n) => NEED_LABEL[n]) },
+      players: t.roster.map((id) => player(id, false)).sort((a, b) => b.overall - a.overall),
+      prospects: (t.prospects ?? []).filter((id) => L.players[id]).map((id) => player(id, true)).sort((a, b) => b.overall - a.overall),
+      picks: teamPicks(L, t.id).map((key) => {
+        const [season, round, orig] = key.split(':');
+        return { key, label: pickLabel(key), season: Number(season), round: Number(round), original: orig, onBlock: onBlock.has(key), fits: assetFits(L, { kind: 'pick', key }, needs) };
+      }),
+    };
+  }),
+
+  /** Set your trade block: who and what you're shopping, and what you want back. */
+  setBlock: memberProcedure
+    .input(
+      z.object({
+        players: z.array(z.string()).max(40),
+        picks: z.array(z.string()).max(40),
+        needs: z.array(z.enum(NEED_TAGS as [NeedTag, ...NeedTag[]])).max(9),
+        note: z.string().max(200).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const teamId = requireTeam(ctx.membership);
+      return mutateLeague(ctx.db, input.leagueId, (L) => {
+        try {
+          setTradeBlock(L, L.teams[teamId], { players: input.players, picks: input.picks, needs: input.needs, note: input.note });
+        } catch (e) {
+          throw badRequest((e as Error).message);
+        }
+        return tradeBlock(L, L.teams[teamId]);
+      });
+    }),
+
+  /** Every team's trade block, for the league-wide view. */
+  leagueBlock: memberProcedure.query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    const my = ctx.membership.teamId;
+    const myNeeds = my ? tradeBlock(L, L.teams[my]).needs : [];
+    return {
+      needLabels: NEED_LABEL,
+      teams: Object.values(L.teams)
+        .filter((t) => t.id !== my)
+        .map((t) => {
+          const b = tradeBlock(L, t);
+          return {
+            team: teamInfo(t),
+            needs: b.needs,
+            note: b.note ?? null,
+            players: b.players
+              .map((id) => L.players[id])
+              .filter(Boolean)
+              .map((p) => ({ ...publicPlayer(L, p), prospect: !p.teamId, fits: assetFits(L, { kind: 'player', id: p.id }, myNeeds) })),
+            picks: b.picks.map((key) => ({ key, label: pickLabel(key) })),
+          };
+        }),
     };
   }),
 

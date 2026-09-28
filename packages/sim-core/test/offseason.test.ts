@@ -118,10 +118,12 @@ describe('offseason with a human manager', () => {
   it('lets the human sign a free agent within the cap, then AI teams fill their rosters', () => {
     const team = L.teams[ME];
     // Bid generously on a few mid-market players; rival bids and team fit decide the rest.
+    // (Spread whatever cap room the team has over two bids.)
     const targets = freeAgents(L)
-      .filter((p) => L.offseason!.freeAgentAsks[p.id]?.salary * 1.5 <= capRoom(L, team) / 3)
+      .filter((p) => L.offseason!.freeAgentAsks[p.id]?.salary * 1.5 <= capRoom(L, team) / 2)
       .sort((a, b) => overall(b) - overall(a))
-      .slice(0, 3);
+      .slice(0, 2);
+    expect(targets.length).toBeGreaterThanOrEqual(1);
     for (const t of targets) {
       const ask = L.offseason!.freeAgentAsks[t.id];
       placeBid(L, team, t, { salary: Math.round((ask.salary * 1.5) / 25_000) * 25_000, years: ask.years });

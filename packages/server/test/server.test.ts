@@ -400,6 +400,22 @@ describe('trades API', () => {
     expect((await b.trades.assets({ leagueId, teamId: 'QUE' })).picks.map((p) => p.key)).toContain(pick.key);
     expect((await a.life.notifications({ leagueId })).items[0].text).toMatch(/accepted your trade/);
     expect((await a.life.news({ leagueId })).some((x) => x.kind === 'trade')).toBe(true);
+
+    // Trade blocks: set mine, see it from the other side, and see fits.
+    const halAssets = await a.trades.assets({ leagueId, teamId: 'HAL' });
+    expect(halAssets.picks.length).toBeGreaterThanOrEqual(30); // five drafts
+    const shopping = halAssets.players.slice(-2).map((p) => p.id);
+    await a.trades.setBlock({ leagueId, players: shopping, picks: [], needs: ['D', 'picks'], note: 'Need a top-4 D' });
+    const seen = await b.trades.assets({ leagueId, teamId: 'HAL', fitsFor: 'QUE' });
+    expect(seen.block.needs).toEqual(['D', 'picks']);
+    expect(seen.players.filter((p) => p.onBlock).map((p) => p.id).sort()).toEqual([...shopping].sort());
+    const queForHal = await a.trades.assets({ leagueId, teamId: 'QUE', fitsFor: 'HAL' });
+    expect(queForHal.picks.every((pk) => pk.fits.includes('picks'))).toBe(true);
+    const board = await b.trades.leagueBlock({ leagueId });
+    expect(board.teams.find((t) => t.team.id === 'HAL')!.note).toBe('Need a top-4 D');
+    expect(board.teams.some((t) => t.team.controller === 'ai' && t.needs.length > 0)).toBe(true);
+    await expect(a.trades.setBlock({ leagueId, players: [], picks: [], needs: ['nonsense' as never] })).rejects.toThrow();
+    expect(await a.offseason.rfa({ leagueId })).toBeNull(); // no RFA cases in season
     await db.close();
   }, 60_000);
 });

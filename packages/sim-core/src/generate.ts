@@ -1,7 +1,7 @@
 import { autoLines } from './lines';
 import { FRANCHISES, NAME_POOLS } from './names';
 import { clamp, deriveSeed, Rng } from './rng';
-import { overall } from './ratings';
+import { ARCHETYPE_CEILING, overall } from './ratings';
 import { buildSchedule } from './schedule';
 import { salaryScale } from './contracts';
 import { initFinances } from './finances';
@@ -27,6 +27,7 @@ const FORWARD_ARCHETYPES: Record<string, Partial<Record<SkaterKey, number>>> = {
   'Two-Way': { defIQ: 8, faceoffs: 3, shooting: -3, offIQ: -1 },
   Speedster: { skating: 10, handling: 3, checking: -6, defIQ: -3, passing: -1 },
   Grinder: { checking: 9, defIQ: 4, endurance: 3, shooting: -6, handling: -6, passing: -5, offIQ: -5, discipline: -6 },
+  Enforcer: { checking: 13, endurance: 2, skating: -4, shooting: -9, handling: -9, passing: -8, offIQ: -8, defIQ: -2, discipline: -14 },
 };
 /** Once-a-generation talent: elite everywhere, no real weakness. Never picked at random. */
 const GENERATIONAL: Partial<Record<SkaterKey, number>> = {
@@ -124,12 +125,35 @@ function fitToTarget(p: Player, target: number) {
 }
 
 /** Pick a playing style that fits a young player's ceiling rather than his current level. */
+/**
+ * How likely each playing style is at a given level (a ceiling for prospects,
+ * current overall for veterans). Role players dominate the bottom of the
+ * league; grinders and enforcers almost never become franchise players, and
+ * stay-at-home defensemen rarely do.
+ */
+export function archetypeWeight(name: string, level: number): number {
+  const band = level < 62 ? 0 : level < 70 ? 1 : level < 78 ? 2 : level < 84 ? 3 : level < 88 ? 4 : 5;
+  const table: Record<string, number[]> = {
+    Grinder: [3, 1.2, 0.3, 0.06, 0.01, 0],
+    Enforcer: [1.6, 0.35, 0.05, 0.005, 0, 0],
+    'Power Forward': [1, 1, 1, 0.9, 0.7, 0.5],
+    'Two-Way': [1, 1, 1, 1, 0.8, 0.6],
+    Sniper: [0.8, 1, 1, 1.1, 1.3, 1.5],
+    Playmaker: [0.8, 1, 1, 1.1, 1.3, 1.5],
+    Speedster: [1, 1, 1, 1, 1, 1],
+    'Shutdown D': [1.4, 1.2, 1, 0.7, 0.4, 0.25],
+    'Offensive D': [0.8, 1, 1, 1.1, 1.3, 1.5],
+    'Two-Way D': [1, 1, 1, 1, 1, 1.1],
+  };
+  return (table[name] ?? [1, 1, 1, 1, 1, 1])[band];
+}
+
+
 export function archetypeForCeiling(rng: Rng, pos: Position, ceiling: number): string | undefined {
   if (pos === 'G') return undefined;
   const pool = pos === 'D' ? DEFENSE_ARCHETYPES : FORWARD_ARCHETYPES;
   const names = Object.keys(pool);
-  const weights = names.map((n) => (n === 'Grinder' ? (ceiling < 66 ? 3 : 0.2) : 1));
-  return names[rng.weighted(weights)];
+  return names[rng.weighted(names.map((n) => archetypeWeight(n, ceiling)))];
 }
 
 export function generatePlayer(
@@ -162,9 +186,8 @@ export function generatePlayer(
   } else {
     const pool = pos === 'D' ? DEFENSE_ARCHETYPES : FORWARD_ARCHETYPES;
     const names = Object.keys(pool);
-    // Low-end forwards skew toward grinders; high-end away from them.
-    const weights = names.map((n) => (n === 'Grinder' ? (ovr < 68 ? 4 : 0.3) : 1));
-    archetype = names[rng.weighted(weights)];
+    // Low-end forwards skew toward grinders and enforcers; the elite almost never are.
+    archetype = names[rng.weighted(names.map((n) => archetypeWeight(n, ovr)))];
     skater = generateSkaterRatings(rng, pos, ovr, archetype);
   }
 
@@ -191,6 +214,8 @@ export function generatePlayer(
   };
   fitToTarget(p, ovr);
   p.hidden.potential = potentialFor(rng, overall(p), age);
+  const cap = ARCHETYPE_CEILING[archetype];
+  if (cap !== undefined) p.hidden.potential = Math.max(overall(p), Math.min(p.hidden.potential, Math.round(cap + rng.normal(0, 1.5))));
   p.contract = contractFor(rng, overall(p), age);
   return p;
 }
@@ -303,8 +328,10 @@ export function generateLeague(opts: GenerateOptions): League {
     for (let i = 0; i < 4; i++) {
       const pos = prRng.pick(['C', 'LW', 'RW', 'D', 'D', 'G'] as Position[]);
       const a = prRng.int(18, 21);
-      const potential = Math.min(95, Math.max(55, prRng.normal(69, 6)));
-      const p = generatePlayer(prRng, pos, potential - (24 - a) * 3.2 + 4, season, a, archetypeForCeiling(prRng, pos, potential));
+      let potential = Math.min(95, Math.max(55, prRng.normal(69, 6)));
+      const arch = archetypeForCeiling(prRng, pos, potential);
+      if (arch && ARCHETYPE_CEILING[arch] !== undefined) potential = Math.min(potential, ARCHETYPE_CEILING[arch]);
+      const p = generatePlayer(prRng, pos, potential - (24 - a) * 3.2 + 4, season, a, arch);
       p.id = `pr${++prN}`;
       const round = potential >= 76 ? 1 : potential >= 71 ? 2 : potential >= 66 ? prRng.int(3, 4) : prRng.int(5, 7);
       p.draft = { season: season - Math.max(1, a - 17), round, overall: (round - 1) * 32 + prRng.int(1, 32), teamId: t.id };

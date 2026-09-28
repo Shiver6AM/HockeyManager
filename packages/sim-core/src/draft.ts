@@ -6,7 +6,7 @@
 import { archetypeForCeiling, generatePlayer } from './generate';
 import { scoutingError } from './staff';
 import { clamp, deriveSeed, Rng } from './rng';
-import { age, overall } from './ratings';
+import { age, ARCHETYPE_CEILING, overall } from './ratings';
 import type { DraftPick, DraftState, League, Player, Position, StandingsRow, TeamId } from './types';
 
 export const DRAFT_ROUNDS = 7;
@@ -36,9 +36,13 @@ export function generateDraftClass(league: League, season: number, size = 32 * D
     // Ceiling tiers: a handful of future stars, some solid regulars, many long shots.
     const tier = rng.weighted(DRAFT_TUNING.tierWeights);
     const [mu, sd] = DRAFT_TUNING.tiers[tier];
-    const potential = clamp(rng.normal(mu, sd), 45, 97);
+    let potential = clamp(rng.normal(mu, sd), 45, 97);
+    const archetype = archetypeForCeiling(rng, pos, potential);
+    // Some styles top out: a grinder can become a great grinder, not a franchise player.
+    const cap = archetype ? ARCHETYPE_CEILING[archetype] : undefined;
+    if (cap !== undefined) potential = Math.min(potential, cap + rng.normal(0, 1.5));
     const now = clamp(potential - rng.normal(19, 3.5) + (a - 18) * 2, 36, potential);
-    const p = generatePlayer(rng, pos, now + 4, season + 1, a + 1, archetypeForCeiling(rng, pos, potential)); // ages as of next season
+    const p = generatePlayer(rng, pos, now + 4, season + 1, a + 1, archetype); // ages as of next season
     p.id = `d${season}-${i}`;
     p.birthYear = season + 1 - (a + 1);
     p.hidden.potential = Math.round(Math.max(overall(p), potential));
