@@ -1,4 +1,4 @@
-# Hockey GM — Phase 1: sim-core
+# Hockey GM: sim-core
 
 A multiplayer hockey management game. This package is the **simulation core**, a pure
 TypeScript engine with no UI and no server. The web app and multiplayer server (Phase 2)
@@ -8,7 +8,7 @@ will both import it.
 
 ```bash
 npm install
-npm run demo          # generate a league, sim a season, print standings/leaders/box score
+npm run demo          # sim a full season + playoffs: box score, standings, leaders, injuries, bracket, awards
 npm run calibrate 8   # sim 8 seasons and compare league stats to real NHL averages
 npm test              # determinism + consistency tests
 ```
@@ -24,9 +24,12 @@ packages/sim-core/src
   generate.ts   league / player generator (archetypes, hidden potential, contracts)
   names.ts      name pools + 32 fictional franchises in 4 divisions
   lines.ts      auto depth chart: 4 F lines, 3 D pairs, 2 PP units, 2 PK units
+  roster.ts     game-day lineups around injuries, emergency call-ups / send-downs
   schedule.ts   82-game NHL-format schedule (41 home / 41 away for every team)
-  game.ts       second-by-second game sim (all tuning constants in TUNING)
-  league.ts     advanceDays(), season stats, standings with NHL tiebreakers
+  game.ts       second-by-second game sim: fatigue, injuries, playoff OT (tuning in TUNING)
+  playoffs.ts   16-team NHL bracket, best-of-7, 2-2-1-1-1 home ice
+  awards.ts     Hart, Art Ross, Richard, Vezina, Norris, Selke, Calder, Presidents', Conn Smythe
+  league.ts     advanceDays() day loop, stats, standings, playoffs, season history
 tools/
   calibrate.ts  multi-season calibration report vs. NHL norms
   demo.ts       one-season showcase
@@ -57,19 +60,39 @@ The rates depend on the skaters on the ice:
   A struggling starter gets pulled.
 - **Nightly form:** each player's form varies game to game according to their hidden
   `consistency` trait.
-- **Overtime and shootout:** 5-minute 3v3 sudden death, then a shootout.
+- **Overtime and shootout:** 5-minute 3v3 sudden death, then a shootout. Playoff
+  overtime is full-strength 20-minute sudden-death periods, with no shootout.
+- **Fatigue:** skaters lose energy on the ice and recover on the bench, faster or
+  slower depending on endurance, and tired players play worse. Long shifts and
+  short benches hurt. Teams on the second night of a back-to-back start tired and
+  usually start their backup goalie.
+- **Injuries:** players get hurt mid-game (more often if they're injury-prone) and
+  leave the game. Injuries range from day-to-day to season-ending, and players heal
+  day by day.
+- **Game-day rosters:** AI teams rebuild their lines every game day. Human teams
+  keep their own lines, with only injured players swapped for the best healthy
+  scratch. A team that can't dress 12 F, 6 D and 2 G makes an emergency call-up;
+  AI teams send call-ups back down when their regulars return.
 
-### Calibration (8 seasons, ~10,500 games)
+### Season flow
 
-27 of 28 league-wide stats land within tolerance of recent NHL averages. That covers
-goals, shots, save %, PP %, OT and shootout rates, home win %, hits, blocks, PIM, team
-point spread, ice time and goalie ranges. The one gap is the single-season points
-leader: about 119 against a recent NHL average of about 139. The generator doesn't yet
-create "generational" all-around superstars.
+Regular season → one rest day → playoffs (games every other day, a rest day
+between rounds) → offseason. When the regular season ends, the league hands out
+its awards and writes a record to `league.history`. `advanceDays` never skips
+ahead: both advance modes walk through the same days in the same order, so they
+end up with the same champion.
+
+### Calibration (6 seasons with playoffs)
+
+All 33 checks land within tolerance of recent NHL figures. They cover scoring, shots,
+save %, special teams, OT and shootouts, home ice, team point spread, scoring leaders
+(helped by two generational superstars per league), ice time, goalie ranges, injuries
+and man-games lost, backup-goalie usage, series length and playoff OT rate. Some
+targets (man-games lost, series length) are approximate.
 
 ## Next up
 
-- **Phase 1 remainder:** fatigue and energy, injuries, superstar generation, playoffs.
 - **Phase 2:** Postgres schema, Fastify + tRPC API, Supabase auth, league-advance
   worker (commissioner button plus cron with ready-up), React UI for standings,
   rosters, box scores and the lines editor.
+- **Phase 3 (career loop):** aging and development, retirement, draft, offseason rollover.

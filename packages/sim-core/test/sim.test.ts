@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { advanceDays, advanceToEnd, generateLeague, lastDay, simulateGame, standings, gameSeed } from '../src/index';
+import { advanceDays, advanceToPlayoffs as advanceToEnd, generateLeague, lastDay, simulateGame, standings, gameSeed } from '../src/index';
 
 describe('schedule', () => {
   const L = generateLeague({ seed: 42 });
@@ -60,12 +60,15 @@ describe('determinism (both advance modes produce the same league)', () => {
     expect(r1).toEqual(r2);
   });
 
-  it('human vs AI control does not change the simulation', () => {
+  it('human vs AI control only matters through lineup decisions', () => {
+    // Identical lineups on opening night -> identical results. After that,
+    // humans keep their own lines (e.g. when a player returns from injury),
+    // so outcomes are allowed to diverge.
     const a = generateLeague({ seed: 9 });
     const b = generateLeague({ seed: 9, humans: { HAL: 'user-1', KC: 'user-2' } });
     expect(b.teams.HAL.controller).toEqual({ kind: 'human', userId: 'user-1' });
-    advanceDays(a, 20);
-    advanceDays(b, 20);
+    advanceDays(a, 1);
+    advanceDays(b, 1);
     expect(JSON.stringify(standings(a))).toBe(JSON.stringify(standings(b)));
   });
 });

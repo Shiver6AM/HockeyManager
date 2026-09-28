@@ -13,6 +13,8 @@ import { clamp, Rng } from './rng';
 import { defensiveDrive, goalieQuality, offensiveDrive } from './ratings';
 import type {
   BoxScore,
+  InjuryEvent,
+  InjurySeverity,
   GameSummary,
   GoalEvent,
   GoalieGameLine,
@@ -62,11 +64,31 @@ export const TUNING = {
   fightsPerGame: 0.15,
   homeIce: 1.12,
   scoreEffect: 0.12, // attempt-rate swing per goal of deficit, 3rd period
-  backupStartChance: 0.18,
+  backupStartChance: 0.12,
+  /** Chance the backup starts when the team played yesterday. */
+  backupStartBackToBack: 0.6,
+  fatigue: {
+    /** Energy lost per second on ice for an average-endurance skater. */
+    drainPerSec: 0.5,
+    recoverPerSec: 0.2,
+    /** Below this energy, ratings start to suffer. */
+    threshold: 80,
+    /** Rating points lost per energy point below the threshold. */
+    penaltyPerPoint: 0.15,
+    intermissionRecovery: 35,
+    /** Starting energy / drain multiplier on the second night of a back-to-back. */
+    backToBackStart: 92,
+    backToBackDrain: 1.1,
+  },
+  injuries: {
+    skatersPerTeamGame: 0.32,
+    goaliesPerTeamGame: 0.012,
+    severityWeights: [0.36, 0.33, 0.19, 0.08, 0.04],
+  },
   pullGoalie: { down1: 170, down2: 240 },
   formSd: { skater: 3, goalie: 4.5 },
-  forwardShare: [0.32, 0.28, 0.23, 0.17],
-  defenseShare: [0.39, 0.335, 0.275],
+  forwardShare: [0.3, 0.28, 0.24, 0.18],
+  defenseShare: [0.37, 0.34, 0.29],
 };
 
 const INFRACTIONS = [
@@ -98,6 +120,12 @@ interface GP {
   fo: number;
   block: number;
   gq: number;
+  endurance: number;
+  prone: number;
+  energy: number;
+  lastT: number;
+  on: boolean;
+  drainMult: number;
 }
 
 interface Side {
@@ -123,6 +151,36 @@ interface Side {
   block: number;
   line: TeamGameLine;
   goalieStartGoals: number;
+  /** Players knocked out of this game by injury. */
+  out: Set<PlayerId>;
+}
+
+export interface GameContext {
+  playoff?: boolean;
+  homeBackToBack?: boolean;
+  awayBackToBack?: boolean;
+}
+
+const SEVERITIES: InjurySeverity[] = ['day-to-day', 'short-term', 'medium-term', 'long-term', 'season-ending'];
+const INJURY_DAYS: Record<InjurySeverity, [number, number]> = {
+  'day-to-day': [1, 4],
+  'short-term': [5, 20],
+  'medium-term': [21, 45],
+  'long-term': [46, 100],
+  'season-ending': [120, 220],
+};
+const INJURY_TYPES: Record<InjurySeverity, string[]> = {
+  'day-to-day': ['Upper-body', 'Lower-body', 'Illness', 'Bruised foot'],
+  'short-term': ['Upper-body', 'Lower-body', 'Groin strain', 'Ankle sprain', 'Hand'],
+  'medium-term': ['Upper-body', 'Lower-body', 'Concussion', 'Shoulder', 'Knee sprain', 'Broken finger'],
+  'long-term': ['Broken foot', 'Knee', 'Shoulder separation', 'Broken wrist', 'Concussion'],
+  'season-ending': ['Torn ACL', 'Shoulder surgery', 'Achilles tear', 'Hip surgery'],
+};
+
+export function sampleInjury(rng: Rng): { type: string; severity: InjurySeverity; days: number } {
+  const severity = SEVERITIES[rng.weighted(TUNING.injuries.severityWeights)];
+  const [lo, hi] = INJURY_DAYS[severity];
+  return { severity, days: rng.int(lo, hi), type: rng.pick(INJURY_TYPES[severity]) };
 }
 
 const newSkaterLine = (): SkaterGameLine => ({
@@ -136,16 +194,25 @@ function weightedPick<T>(rng: Rng, items: T[], w: (t: T) => number): T {
   return items[rng.weighted(items.map(w))];
 }
 
-export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, seed: number): GameSummary {
+export function simulateGame(
+  league: League,
+  homeTeam: Team,
+  awayTeam: Team,
+  seed: number,
+  ctx: GameContext = {},
+): GameSummary {
   const rng = new Rng(seed);
+  const playoff = !!ctx.playoff;
   const T = TUNING;
   const skaters: Record<PlayerId, SkaterGameLine> = {};
   const goalies: Record<PlayerId, GoalieGameLine> = {};
   const gp: Record<PlayerId, GP> = {};
 
   // ---- Build per-game player views (with nightly form) ----
-  const prepare = (team: Team) => {
+  const prepare = (team: Team, backToBack: boolean) => {
     const L = team.lines;
+    const startEnergy = backToBack ? T.fatigue.backToBackStart : 100;
+    const drainMult = backToBack ? T.fatigue.backToBackDrain : 1;
     for (const id of [...L.forwards.flat(), ...L.defense.flat()]) {
       const p = league.players[id];
       const s = p.skater!;
@@ -163,20 +230,30 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
         fo: s.faceoffs + form,
         block: 0.5 * s.defIQ + 0.5 * s.checking,
         gq: 0,
+        endurance: s.endurance,
+        prone: p.hidden.injuryProneness,
+        energy: startEnergy,
+        lastT: 0,
+        on: false,
+        drainMult,
       };
       skaters[id] = newSkaterLine();
     }
     for (const id of L.goalies) {
       const p = league.players[id];
       const form = rng.normal(0, T.formSd.goalie * (1.4 - p.hidden.consistency));
-      gp[id] = { id, pos: 'G', off: 0, def: 0, shoot: 0, pass: 0, support: 0, check: 0, disc: 0, fo: 0, block: 0, gq: goalieQuality(p.goalie!) + form };
+      gp[id] = {
+        id, pos: 'G', off: 0, def: 0, shoot: 0, pass: 0, support: 0, check: 0, disc: 0, fo: 0, block: 0,
+        gq: goalieQuality(p.goalie!) + form - (backToBack ? 1.5 : 0),
+        endurance: 100, prone: p.hidden.injuryProneness, energy: 100, lastT: 0, on: false, drainMult: 1,
+      };
     }
   };
-  prepare(homeTeam);
-  prepare(awayTeam);
+  prepare(homeTeam, !!ctx.homeBackToBack);
+  prepare(awayTeam, !!ctx.awayBackToBack);
 
-  const makeSide = (key: 'home' | 'away', team: Team): Side => {
-    const backupStarts = rng.chance(T.backupStartChance);
+  const makeSide = (key: 'home' | 'away', team: Team, backToBack: boolean): Side => {
+    const backupStarts = !playoff && rng.chance(backToBack ? T.backupStartBackToBack : T.backupStartChance);
     const [g1, g2] = team.lines.goalies;
     const goalie = backupStarts ? g2 : g1;
     const backup = backupStarts ? g1 : g2;
@@ -185,23 +262,43 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
       key, team, goalie, backup, goalieIn: true, goaliePulled: false, box: [],
       fIdx: 0, dIdx: 0, fLeft: 45, dLeft: 50, fTime: [0, 0, 0, 0], dTime: [0, 0, 0], esTime: 0, ppClock: 0,
       onIce: [], off: 0, def: 0, support: 0, block: 0, line: newTeamLine(), goalieStartGoals: 0,
+      out: new Set(),
     };
   };
-  const home = makeSide('home', homeTeam);
-  const away = makeSide('away', awayTeam);
+  const home = makeSide('home', homeTeam, !!ctx.homeBackToBack);
+  const away = makeSide('away', awayTeam, !!ctx.awayBackToBack);
   const other = (s: Side) => (s === home ? away : home);
 
   const goals: GoalEvent[] = [];
   const penalties: PenaltyEvent[] = [];
+  const injuries: InjuryEvent[] = [];
   let period = 1;
   let clock = 0; // seconds into period
+  let gameT = 0; // seconds since opening faceoff
   let overtime = false;
+  /** Regular-season OT is 3v3; playoff OT is full-strength sudden death. */
+  let threeOnThree = false;
+
+  // ---- Fatigue: energy is updated lazily whenever a player's on-ice status is touched ----
+  const touch = (p: GP) => {
+    const dt = gameT - p.lastT;
+    if (dt > 0) {
+      if (p.on) p.energy -= T.fatigue.drainPerSec * (1.5 - p.endurance / 100) * p.drainMult * dt;
+      else p.energy += T.fatigue.recoverPerSec * dt;
+      p.energy = clamp(p.energy, 0, 100);
+      p.lastT = gameT;
+    }
+  };
+  const fat = (p: GP) => {
+    touch(p);
+    return Math.max(0, T.fatigue.threshold - p.energy) * T.fatigue.penaltyPerPoint;
+  };
 
   // ---- Strength & on-ice composition ----
   const skaterCount = (s: Side): number => {
     const o = other(s);
-    let n = overtime ? 3 + Math.min(2, o.box.length) - 0 : 5 - Math.min(2, s.box.length);
-    if (overtime && s.box.length > 0) n = 3;
+    let n = threeOnThree ? 3 + Math.min(2, o.box.length) : 5 - Math.min(2, s.box.length);
+    if (threeOnThree && s.box.length > 0) n = 3;
     if (s.goaliePulled) n += 1;
     return n;
   };
@@ -248,28 +345,41 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
       else if (base === 4) ids = [f[1], f[0], ...d];
       else ids = [f[1], f[0], d[0]];
     }
+    // Anyone in the box or hurt is replaced by the next available skater of the same kind.
+    const unavailable = new Set([...s.box.map((b) => b.id), ...s.out]);
     if (s.goaliePulled) {
-      const extra = [...L.forwards[0], ...L.forwards[1]].find((id) => !ids.includes(id) && !s.box.some((b) => b.id === id));
+      const extra = [...L.forwards[0], ...L.forwards[1]].find((id) => !ids.includes(id) && !unavailable.has(id));
       if (extra) ids = [...ids, extra];
     }
-    // Anyone in the box is replaced by the next available skater of the same kind.
-    const inBox = new Set(s.box.map((b) => b.id));
     const dressed = [...L.forwards.flat(), ...L.defense.flat()];
-    ids = ids.map((id) => {
-      if (!inBox.has(id)) return id;
+    const chosen: PlayerId[] = [];
+    for (const id of ids) {
+      if (!unavailable.has(id) && !chosen.includes(id)) {
+        chosen.push(id);
+        continue;
+      }
       const isD = league.players[id].pos === 'D';
-      return (
-        dressed.find((x) => !inBox.has(x) && !ids.includes(x) && (league.players[x].pos === 'D') === isD) ??
-        dressed.find((x) => !inBox.has(x) && !ids.includes(x))!
-      );
-    });
-    s.onIce = ids.map((id) => gp[id]);
+      const free = (x: PlayerId) => !unavailable.has(x) && !chosen.includes(x) && !ids.includes(x);
+      const sub =
+        dressed.find((x) => free(x) && (league.players[x].pos === 'D') === isD) ??
+        dressed.find((x) => free(x)) ??
+        dressed.find((x) => !unavailable.has(x) && !chosen.includes(x));
+      if (sub) chosen.push(sub);
+    }
+    for (const p of s.onIce) {
+      touch(p);
+      p.on = false;
+    }
+    s.onIce = chosen.map((id) => gp[id]);
     let off = 0, def = 0, sup = 0, blk = 0;
     for (const p of s.onIce) {
-      off += p.off;
-      def += p.def;
-      sup += p.support;
-      blk += p.block;
+      touch(p);
+      p.on = true;
+      const f = fat(p);
+      off += p.off - f;
+      def += p.def - f;
+      sup += p.support - f;
+      blk += p.block - f;
     }
     const k = s.onIce.length;
     s.off = off / k;
@@ -306,7 +416,7 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
     const base = T.attemptsPer60[key] ?? T.attemptsPer60['5v5'];
     let r = (base / 3600) * Math.exp((T.driveEffect * (s.off - o.def)) / 10);
     if (s === home) r *= T.homeIce;
-    if (period >= 2 && !overtime) {
+    if (period >= 2 && period <= 3) {
       const diff = s.line.goals - o.line.goals;
       const d = clamp(diff, -2, 2);
       r *= 1 - T.scoreEffect * d;
@@ -341,7 +451,7 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
       for (const p of o.onIce) skaters[p.id].pm--;
     }
     s.line.goals++;
-    if (!overtime) s.line.periodGoals[period - 1]++;
+    if (period <= 3) s.line.periodGoals[period - 1]++;
     if (strength === 'PP') {
       s.line.ppGoals++;
       // A power-play goal ends the shortest remaining minor.
@@ -352,7 +462,7 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
       }
     }
     if (o.goalieIn) goalies[o.goalie].ga++;
-    goals.push({ period: overtime ? 4 : period, time: clock, teamId: s.team.id, scorer: scorer.id, assists, strength });
+    goals.push({ period, time: clock, teamId: s.team.id, scorer: scorer.id, assists, strength });
   };
 
   /** Resolve one shot attempt. Returns 'goal' | 'stoppage' | 'rebound' | 'play'. */
@@ -391,13 +501,13 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
       return 'play';
     }
     goalies[o.goalie].sa++;
-    const baseKey = overtime && sit === 'EV' ? 'OT' : sit;
+    const baseKey = threeOnThree && sit === 'EV' ? 'OT' : sit;
     const mates = s.onIce.filter((p) => p !== shooter);
     const support = mates.length ? mates.reduce((a, p) => a + p.support, 0) / mates.length : shooter.support;
     const g = gp[o.goalie];
     let pGoal =
       T.shPct[baseKey] *
-      Math.exp((T.shooterEffect * (shooter.shoot - 72)) / 10) *
+      Math.exp((T.shooterEffect * (shooter.shoot - fat(shooter) - 72)) / 10) *
       Math.exp((T.supportEffect * (support - o.def)) / 10) *
       Math.exp((-T.goalieEffect * (g.gq - 76)) / 10);
     if (shooter.pos === 'D') pGoal *= T.defenseShotFactor;
@@ -424,7 +534,7 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
     if (!hadAdvantage) o.line.ppOpps++;
     o.ppClock = 0;
     s.ppClock = 0;
-    penalties.push({ period: overtime ? 4 : period, time: clock, teamId: s.team.id, playerId: offender.id, minutes, infraction: inf });
+    penalties.push({ period, time: clock, teamId: s.team.id, playerId: offender.id, minutes, infraction: inf });
   };
 
   /** Fighting majors: offsetting 5-minute penalties, no power play. */
@@ -435,7 +545,7 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
     for (const [s, p] of [[home, h], [away, a]] as const) {
       skaters[p.id].pim += 5;
       s.line.pim += 5;
-      penalties.push({ period: overtime ? 4 : period, time: clock, teamId: s.team.id, playerId: p.id, minutes: 5, infraction: 'Fighting' });
+      penalties.push({ period, time: clock, teamId: s.team.id, playerId: p.id, minutes: 5, infraction: 'Fighting' });
     }
   };
 
@@ -445,12 +555,32 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
     s.line.hits++;
   };
 
+  /** A skater (or occasionally a goalie) gets hurt and leaves the game. */
+  const injury = (s: Side, goalie: boolean): boolean => {
+    let victim: PlayerId;
+    if (goalie) {
+      if (!s.goalieIn || s.out.has(s.backup) || !goalies[s.goalie]) return false;
+      victim = s.goalie;
+      s.goalie = s.backup;
+      s.backup = victim;
+      goalies[s.goalie] ??= { sa: 0, ga: 0, toi: 0, decision: null };
+    } else {
+      const dressed = [...s.team.lines.forwards.flat(), ...s.team.lines.defense.flat()];
+      if (dressed.length - s.out.size <= 14) return false; // keep enough bodies to finish
+      victim = weightedPick(rng, s.onIce, (p) => 0.4 + p.prone * 2).id;
+    }
+    s.out.add(victim);
+    const inj = sampleInjury(rng);
+    injuries.push({ period, time: clock, teamId: s.team.id, playerId: victim, type: inj.type, severity: inj.severity, days: inj.days });
+    return true;
+  };
+
   const updateGoaliePull = (s: Side) => {
     const o = other(s);
     const deficit = o.line.goals - s.line.goals;
     const left = 1200 - clock;
     const shouldPull =
-      period === 3 && !overtime && s.box.length === 0 &&
+      period === 3 && s.box.length === 0 &&
       ((deficit === 1 && left <= T.pullGoalie.down1) || (deficit === 2 && left <= T.pullGoalie.down2));
     if (shouldPull !== s.goaliePulled) {
       s.goaliePulled = shouldPull;
@@ -466,19 +596,19 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
     s.fLeft--;
     s.dLeft--;
     const sit = situation(s);
-    if (sit === 'EV' && !overtime) {
+    if (sit === 'EV' && !threeOnThree) {
       s.esTime++;
       s.fTime[s.fIdx]++;
       s.dTime[s.dIdx]++;
     }
     if (s.fLeft <= 0) {
       s.fIdx = pickEsLine(s.fTime, T.forwardShare, s.fIdx, s.esTime);
-      s.fLeft = clamp(rng.normal(overtime ? 38 : 44, 8), 22, 75);
+      s.fLeft = clamp(rng.normal(threeOnThree ? 38 : 44, 8), 22, 75);
       changed = true;
     }
     if (s.dLeft <= 0) {
       s.dIdx = pickEsLine(s.dTime, T.defenseShare, s.dIdx, s.esTime);
-      s.dLeft = clamp(rng.normal(overtime ? 42 : 50, 9), 25, 85);
+      s.dLeft = clamp(rng.normal(threeOnThree ? 42 : 50, 9), 25, 85);
       changed = true;
     }
     if (sit !== 'EV') {
@@ -498,11 +628,17 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
   };
 
   // ---- Main loop ----
-  const periodLength = (p: number) => (p <= 3 ? 1200 : 300);
+  const periodLength = (p: number) => (p <= 3 || playoff ? 1200 : 300);
   let lastWasRebound: Side | null = null;
   const playPeriod = () => {
     clock = 0;
     lastWasRebound = null;
+    if (period > 1) {
+      for (const p of Object.values(gp)) {
+        touch(p);
+        p.energy = Math.min(100, p.energy + T.fatigue.intermissionRecovery);
+      }
+    }
     for (const s of [home, away]) {
       s.fIdx = 0;
       s.dIdx = 0;
@@ -514,6 +650,7 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
     const len = periodLength(period);
     while (clock < len) {
       clock++;
+      gameT++;
       // Ice time
       for (const s of [home, away]) {
         for (const p of s.onIce) skaters[p.id].toi++;
@@ -525,7 +662,8 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
         if (tickShifts(s)) needRefresh = true;
         if (updateGoaliePull(s)) needRefresh = true;
       }
-      if (needRefresh) refreshBoth();
+      // Re-evaluate on-ice fatigue every 15 seconds so long shifts hurt.
+      if (needRefresh || gameT % 15 === 0) refreshBoth();
 
       if (lastWasRebound) {
         const s = lastWasRebound;
@@ -543,11 +681,13 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
       const hA = attemptRate(home);
       const aA = attemptRate(away);
       const hP = (T.penaltiesPer60 / 3600) * (overtime ? 0.5 : 1);
+      const injR = T.injuries.skatersPerTeamGame / 3600;
+      const gInjR = T.injuries.goaliesPerTeamGame / 3600;
       const aP = hP;
       const hitR = T.hitsPer60 / 3600;
       const stopR = T.randomStoppagesPer60 / 3600;
       const fightR = overtime ? 0 : T.fightsPerGame / 3600;
-      const total = hA + aA + hP + aP + 2 * hitR + stopR + fightR;
+      const total = hA + aA + hP + aP + 2 * hitR + stopR + fightR + 2 * injR + 2 * gInjR;
       let u = rng.next();
       if (u >= total) continue;
       let shooterSide: Side | null = null;
@@ -576,6 +716,14 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
       else if ((u -= fightR) < 0) {
         fight();
         faceoff();
+      } else if ((u -= injR) < 0) {
+        if (injury(home, false)) refreshBoth();
+      } else if ((u -= injR) < 0) {
+        if (injury(away, false)) refreshBoth();
+      } else if ((u -= gInjR) < 0) {
+        injury(home, true);
+      } else if ((u -= gInjR) < 0) {
+        injury(away, true);
       } else faceoff();
     }
   };
@@ -585,7 +733,7 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
     if (period === 3) {
       for (const s of [home, away]) {
         const ga = goalies[s.goalie].ga;
-        if (ga >= 5 || (ga >= 4 && goalies[s.goalie].sa <= 22 && rng.chance(0.5))) {
+        if (!s.out.has(s.backup) && (ga >= 5 || (ga >= 4 && goalies[s.goalie].sa <= 22 && rng.chance(0.5)))) {
           const out = s.goalie;
           s.goalie = s.backup;
           s.backup = out;
@@ -599,12 +747,15 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
   let shootout = false;
   if (home.line.goals === away.line.goals) {
     overtime = true;
-    period = 4;
+    threeOnThree = !playoff;
     for (const s of [home, away]) {
       s.goaliePulled = false;
       s.goalieIn = true;
     }
-    playPeriod();
+    // Playoff OT: 20-minute sudden-death periods until someone scores.
+    const maxPeriod = playoff ? 13 : 4;
+    for (period = 4; period <= maxPeriod && home.line.goals === away.line.goals; period++) playPeriod();
+    period = Math.min(period, maxPeriod);
     if (home.line.goals === away.line.goals) {
       shootout = true;
       const winner = runShootout(rng, league, home.team, away.team, gp[home.goalie].gq, gp[away.goalie].gq);
@@ -621,7 +772,7 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
     return ids.reduce((a, b) => (goalies[b].toi > goalies[a].toi ? b : a));
   };
   goalies[mainGoalie(winSide)].decision = 'W';
-  goalies[mainGoalie(loseSide)].decision = overtime ? 'OTL' : 'L';
+  goalies[mainGoalie(loseSide)].decision = overtime && !playoff ? 'OTL' : 'L';
 
   let gwg: PlayerId | null = null;
   if (!shootout) {
@@ -644,6 +795,7 @@ export function simulateGame(league: League, homeTeam: Team, awayTeam: Team, see
     shootout,
     goals,
     penalties,
+    injuries,
     skaters,
     goalies,
     gwg,

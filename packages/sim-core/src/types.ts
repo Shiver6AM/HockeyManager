@@ -52,6 +52,18 @@ export interface Contract {
   expiresAs: 'RFA' | 'UFA';
 }
 
+export type InjurySeverity = 'day-to-day' | 'short-term' | 'medium-term' | 'long-term' | 'season-ending';
+
+export interface Injury {
+  /** e.g. "Upper-body", "Knee sprain". */
+  type: string;
+  severity: InjurySeverity;
+  /** Calendar days until the player is healthy again. */
+  daysLeft: number;
+  /** Day the injury happened. */
+  sinceDay: number;
+}
+
 export interface Player {
   id: PlayerId;
   firstName: string;
@@ -66,6 +78,7 @@ export interface Player {
   goalie?: GoalieRatings;
   hidden: HiddenTraits;
   contract: Contract | null;
+  injury: Injury | null;
 }
 
 /** Who makes decisions for a team. Adding human managers never changes the team count. */
@@ -182,6 +195,16 @@ export interface TeamGameLine {
   periodGoals: number[];
 }
 
+export interface InjuryEvent {
+  period: number;
+  time: number;
+  teamId: TeamId;
+  playerId: PlayerId;
+  type: string;
+  severity: InjurySeverity;
+  days: number;
+}
+
 export interface BoxScore {
   home: TeamGameLine;
   away: TeamGameLine;
@@ -189,6 +212,7 @@ export interface BoxScore {
   shootout: boolean;
   goals: GoalEvent[];
   penalties: PenaltyEvent[];
+  injuries: InjuryEvent[];
   skaters: Record<PlayerId, SkaterGameLine>;
   goalies: Record<PlayerId, GoalieGameLine>;
   /** Player credited with the game-winning goal (not in shootouts). */
@@ -202,6 +226,52 @@ export interface ScheduledGame {
   home: TeamId;
   away: TeamId;
   result: GameSummary | null;
+  /** Set for playoff games. */
+  seriesId?: string;
+  gameNumber?: number;
+}
+
+export interface PlayoffSeries {
+  id: string; // e.g. "R1-East-1"
+  round: number; // 1..4 (4 = final)
+  conference: string | null; // null for the final
+  /** Higher seed has home ice. */
+  high: TeamId;
+  low: TeamId;
+  highWins: number;
+  lowWins: number;
+  games: ScheduledGame[];
+  winner: TeamId | null;
+}
+
+export interface Playoffs {
+  rounds: PlayoffSeries[][];
+  /** Day the current round's game 1 is played. */
+  roundStartDay: number;
+  champion: TeamId | null;
+}
+
+export interface AwardWinner {
+  playerId: PlayerId | null;
+  teamId: TeamId;
+  /** Short, human-readable reason, e.g. "132 PTS". */
+  note: string;
+}
+
+export interface SeasonRecord {
+  season: number;
+  champion: TeamId | null;
+  runnerUp: TeamId | null;
+  awards: Record<string, AwardWinner>;
+}
+
+export interface Transaction {
+  day: number;
+  season: number;
+  type: 'call-up' | 'send-down' | 'injury' | 'return';
+  teamId: TeamId;
+  playerId: PlayerId;
+  note: string;
 }
 
 export interface GameSummary {
@@ -243,6 +313,13 @@ export interface League {
   schedule: ScheduledGame[];
   skaterStats: Record<PlayerId, SkaterSeasonStats>;
   goalieStats: Record<PlayerId, GoalieSeasonStats>;
+  playoffs: Playoffs | null;
+  playoffSkaterStats: Record<PlayerId, SkaterSeasonStats>;
+  playoffGoalieStats: Record<PlayerId, GoalieSeasonStats>;
+  /** Awards for the current season as they're decided. */
+  awards: Record<string, AwardWinner>;
+  history: SeasonRecord[];
+  transactions: Transaction[];
 }
 
 export interface StandingsRow {

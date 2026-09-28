@@ -1,9 +1,13 @@
+import { playoffMvp, regularSeasonAwards } from './awards';
 import { simulateGame } from './game';
+import { currentRound, HOME_PATTERN, nextRound, seedPlayoffs, WINS_NEEDED } from './playoffs';
 import { deriveSeed } from './rng';
+import { prepareTeamForGame } from './roster';
 import type {
   GameSummary,
   GoalieSeasonStats,
   League,
+  PlayerId,
   ScheduledGame,
   SkaterSeasonStats,
   StandingsRow,
@@ -14,7 +18,8 @@ export interface AdvanceResult {
   fromDay: number;
   toDay: number;
   games: ScheduledGame[];
-  seasonComplete: boolean;
+  /** Phase changes that happened during this advance, e.g. "playoffs", "offseason". */
+  phaseChanges: League['phase'][];
 }
 
 /** Seed for a specific game: depends only on league seed, season and game id. */
@@ -31,30 +36,198 @@ export function lastDay(league: League): number {
  *
  * This is the only entry point the server needs for both advance modes:
  * the commissioner button calls it with N days; the scheduler calls it with
- * `settings.advance.daysPerTick`. Results are identical either way.
+ * `settings.advance.daysPerTick`. Results are identical either way, because
+ * every day is processed the same way and every game has its own seed.
  */
 export function advanceDays(league: League, days: number): AdvanceResult {
-  if (league.phase !== 'regular-season') {
-    return { fromDay: league.day, toDay: league.day, games: [], seasonComplete: true };
-  }
   const fromDay = league.day;
-  const end = Math.min(fromDay + days, lastDay(league) + 1);
-  const played: ScheduledGame[] = [];
-  for (const g of league.schedule) {
-    if (g.day < fromDay || g.day >= end || g.result) continue;
-    const res = simulateGame(league, league.teams[g.home], league.teams[g.away], gameSeed(league, g.id));
-    g.result = res;
-    recordStats(league, res);
-    played.push(g);
+  const games: ScheduledGame[] = [];
+  const phaseChanges: League['phase'][] = [];
+  for (let i = 0; i < days && league.phase !== 'offseason'; i++) {
+    const before = league.phase;
+    games.push(...simDay(league));
+    if (league.phase !== before) phaseChanges.push(league.phase);
   }
-  league.day = end;
-  const seasonComplete = league.day > lastDay(league);
-  if (seasonComplete) league.phase = 'playoffs';
-  return { fromDay, toDay: end, games: played, seasonComplete };
+  return { fromDay, toDay: league.day, games, phaseChanges };
 }
 
-export function advanceToEnd(league: League): AdvanceResult {
-  return advanceDays(league, lastDay(league) + 1 - league.day);
+/** Play out the rest of the regular season (stops before playoff game 1). */
+export function advanceToPlayoffs(league: League): AdvanceResult {
+  const out: AdvanceResult = { fromDay: league.day, toDay: league.day, games: [], phaseChanges: [] };
+  while (league.phase === 'regular-season') {
+    const r = advanceDays(league, 1);
+    out.games.push(...r.games);
+    out.phaseChanges.push(...r.phaseChanges);
+  }
+  out.toDay = league.day;
+  return out;
+}
+
+/** Play out the rest of the season, playoffs included. */
+export function advanceToEndOfSeason(league: League): AdvanceResult {
+  return advanceDays(league, 10_000);
+}
+
+/** @deprecated use advanceToPlayoffs / advanceToEndOfSeason */
+export const advanceToEnd = advanceToPlayoffs;
+
+// ---------------------------------------------------------------------------
+// One calendar day
+// ---------------------------------------------------------------------------
+
+function healInjuries(league: League) {
+  for (const p of Object.values(league.players)) {
+    if (!p.injury) continue;
+    p.injury.daysLeft--;
+    if (p.injury.daysLeft <= 0) {
+      if (p.teamId) {
+        league.transactions.push({
+          day: league.day, season: league.season, type: 'return', teamId: p.teamId, playerId: p.id,
+          note: `${p.firstName} ${p.lastName} returns from injury (${p.injury.type})`,
+        });
+      }
+      p.injury = null;
+    }
+  }
+}
+
+function applyInjuries(league: League, res: GameSummary) {
+  for (const inj of res.box.injuries) {
+    const p = league.players[inj.playerId];
+    p.injury = { type: inj.type, severity: inj.severity, daysLeft: inj.days, sinceDay: league.day };
+    league.transactions.push({
+      day: league.day, season: league.season, type: 'injury', teamId: inj.teamId, playerId: p.id,
+      note: `${p.firstName} ${p.lastName}: ${inj.type} (${inj.severity}, ~${inj.days} days)`,
+    });
+  }
+}
+
+function playGame(league: League, g: ScheduledGame, playoff: boolean, playedYesterday: Set<TeamId>) {
+  const home = league.teams[g.home];
+  const away = league.teams[g.away];
+  prepareTeamForGame(league, home);
+  prepareTeamForGame(league, away);
+  const res = simulateGame(league, home, away, gameSeed(league, g.id), {
+    playoff,
+    homeBackToBack: playedYesterday.has(g.home),
+    awayBackToBack: playedYesterday.has(g.away),
+  });
+  g.result = res;
+  if (playoff) recordStats(league, res, league.playoffSkaterStats, league.playoffGoalieStats);
+  else recordStats(league, res, league.skaterStats, league.goalieStats);
+  applyInjuries(league, res);
+}
+
+function teamsPlayingOn(league: League, day: number): Set<TeamId> {
+  const out = new Set<TeamId>();
+  for (const g of league.schedule) {
+    if (g.day === day) {
+      out.add(g.home);
+      out.add(g.away);
+    }
+  }
+  if (league.playoffs) {
+    for (const round of league.playoffs.rounds) {
+      for (const s of round) {
+        for (const g of s.games) {
+          if (g.day === day) {
+            out.add(g.home);
+            out.add(g.away);
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function simDay(league: League): ScheduledGame[] {
+  if (league.day > 0) healInjuries(league);
+  const yesterday = teamsPlayingOn(league, league.day - 1);
+  const played: ScheduledGame[] = [];
+
+  if (league.phase === 'regular-season') {
+    for (const g of league.schedule) {
+      if (g.day !== league.day || g.result) continue;
+      playGame(league, g, false, yesterday);
+      played.push(g);
+    }
+    league.day++;
+    if (league.day > lastDay(league)) startPlayoffs(league);
+    return played;
+  }
+
+  if (league.phase === 'playoffs' && league.playoffs) {
+    played.push(...playoffDay(league, yesterday));
+    league.day++;
+  }
+  return played;
+}
+
+// ---------------------------------------------------------------------------
+// Playoffs
+// ---------------------------------------------------------------------------
+
+function startPlayoffs(league: League) {
+  const st = standings(league);
+  league.awards = regularSeasonAwards(league, st);
+  // One rest day after the regular season.
+  league.playoffs = seedPlayoffs(league, st, league.day + 1);
+  league.phase = 'playoffs';
+}
+
+function playoffDay(league: League, yesterday: Set<TeamId>): ScheduledGame[] {
+  const po = league.playoffs!;
+  const offset = league.day - po.roundStartDay;
+  // Games every other day within a round.
+  if (offset < 0 || offset % 2 !== 0) return [];
+  const round = currentRound(po);
+  const played: ScheduledGame[] = [];
+  round.forEach((s, idx) => {
+    if (s.winner) return;
+    const k = s.games.length + 1;
+    const highHome = HOME_PATTERN[k - 1];
+    const g: ScheduledGame = {
+      id: 100_000 + s.round * 1000 + idx * 10 + k,
+      day: league.day,
+      home: highHome ? s.high : s.low,
+      away: highHome ? s.low : s.high,
+      result: null,
+      seriesId: s.id,
+      gameNumber: k,
+    };
+    playGame(league, g, true, yesterday);
+    s.games.push(g);
+    const homeWon = g.result!.homeScore > g.result!.awayScore;
+    const winner = homeWon ? g.home : g.away;
+    if (winner === s.high) s.highWins++;
+    else s.lowWins++;
+    if (s.highWins === WINS_NEEDED) s.winner = s.high;
+    if (s.lowWins === WINS_NEEDED) s.winner = s.low;
+    played.push(g);
+  });
+
+  if (round.every((s) => s.winner)) {
+    const next = nextRound(league, po, standings(league));
+    if (next) {
+      po.rounds.push(next);
+      po.roundStartDay = league.day + 2; // a rest day between rounds
+    } else {
+      finishSeason(league);
+    }
+  }
+  return played;
+}
+
+function finishSeason(league: League) {
+  const po = league.playoffs!;
+  const final = currentRound(po)[0];
+  po.champion = final.winner;
+  const runnerUp = final.winner === final.high ? final.low : final.high;
+  const mvp = playoffMvp(league, final.winner!, runnerUp);
+  if (mvp) league.awards['Conn Smythe Trophy'] = mvp;
+  league.history.push({ season: league.season, champion: final.winner, runnerUp, awards: { ...league.awards } });
+  league.phase = 'offseason';
 }
 
 const emptySkater = (): SkaterSeasonStats => ({
@@ -62,10 +235,15 @@ const emptySkater = (): SkaterSeasonStats => ({
 });
 const emptyGoalie = (): GoalieSeasonStats => ({ gp: 0, gs: 0, w: 0, l: 0, otl: 0, sa: 0, ga: 0, so: 0, toi: 0 });
 
-function recordStats(league: League, res: GameSummary) {
+function recordStats(
+  league: League,
+  res: GameSummary,
+  skaterStats: Record<PlayerId, SkaterSeasonStats>,
+  goalieStats: Record<PlayerId, GoalieSeasonStats>,
+) {
   const b = res.box;
   for (const [id, l] of Object.entries(b.skaters)) {
-    const s = (league.skaterStats[id] ??= emptySkater());
+    const s = (skaterStats[id] ??= emptySkater());
     s.gp++;
     s.g += l.g; s.a += l.a; s.pm += l.pm; s.pim += l.pim; s.sog += l.sog; s.att += l.att;
     s.ppg += l.ppg; s.ppa += l.ppa; s.shg += l.shg; s.hits += l.hits; s.blk += l.blk;
@@ -74,7 +252,7 @@ function recordStats(league: League, res: GameSummary) {
   }
   for (const [id, l] of Object.entries(b.goalies)) {
     if (l.toi === 0 && l.sa === 0) continue;
-    const s = (league.goalieStats[id] ??= emptyGoalie());
+    const s = (goalieStats[id] ??= emptyGoalie());
     s.gp++;
     s.sa += l.sa;
     s.ga += l.ga;
@@ -85,7 +263,7 @@ function recordStats(league: League, res: GameSummary) {
   }
   // Shutout: one goalie played the whole game and allowed nothing.
   for (const [id, l] of Object.entries(b.goalies)) {
-    const s = league.goalieStats[id];
+    const s = goalieStats[id];
     if (!s) continue;
     const teammates = Object.entries(b.goalies).filter(
       ([other]) => other !== id && league.players[other].teamId === league.players[id].teamId,
@@ -103,7 +281,7 @@ function recordStats(league: League, res: GameSummary) {
     // The starter is the one who entered first: when a swap happens the reliever
     // is added later, so insertion order tells us who started.
     const starter = list[0][0];
-    if (league.goalieStats[starter]) league.goalieStats[starter].gs++;
+    if (goalieStats[starter]) goalieStats[starter].gs++;
   }
 }
 

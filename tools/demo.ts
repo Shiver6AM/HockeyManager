@@ -1,10 +1,18 @@
 /**
- * Generate a league, simulate a full season, and print standings, leaders
- * and a sample box score.
+ * Generate a league, simulate a full season and playoffs, and print a box
+ * score, standings, leaders, injuries, the playoff bracket and awards.
  *
  *   npm run demo -- [seed]
  */
-import { advanceDays, advanceToEnd, generateLeague, overall, standings } from '../packages/sim-core/src/index';
+import {
+  advanceDays,
+  advanceToEndOfSeason,
+  advanceToPlayoffs,
+  generateLeague,
+  overall,
+  ROUND_NAMES,
+  standings,
+} from '../packages/sim-core/src/index';
 
 const seed = Number(process.argv[2] ?? 2026);
 const L = generateLeague({ seed, humans: { HAL: 'you' } });
@@ -29,7 +37,7 @@ for (const g of b.goals) {
 }
 console.log(`  Stars: ${b.stars.map(name).join(', ')}`);
 
-advanceToEnd(L);
+advanceToPlayoffs(L);
 const st = standings(L);
 console.log(`\n=== ${L.name} ${L.season}-${String(L.season + 1).slice(2)} final standings ===`);
 const divisions = [...new Set(Object.values(L.teams).map((t) => `${t.conference}|${t.division}`))];
@@ -66,4 +74,35 @@ for (const [id, g] of gs.sort((a, b) => (1 - b[1].ga / b[1].sa) - (1 - a[1].ga /
   const sv = (1 - g.ga / g.sa).toFixed(3).slice(1);
   const gaa = ((g.ga * 3600) / g.toi).toFixed(2);
   console.log(`${name(id).padEnd(22)}${p.teamId!.padEnd(5)}${String(g.gp).padEnd(4)}${String(g.w).padEnd(4)}${String(g.l).padEnd(4)}${String(g.otl).padEnd(4)}${sv.padEnd(7)}${gaa.padEnd(6)}${g.so}`);
+}
+
+console.log('\n=== Injury report (end of regular season) ===');
+const hurt = Object.values(L.players).filter((p) => p.injury && p.teamId);
+hurt.sort((a, b) => overall(b) - overall(a));
+for (const p of hurt.slice(0, 10)) {
+  console.log(`${`${p.firstName[0]}. ${p.lastName}`.padEnd(22)}${p.teamId!.padEnd(5)}${p.injury!.type.padEnd(20)}${p.injury!.severity.padEnd(15)}~${p.injury!.daysLeft} days`);
+}
+const injuries = L.transactions.filter((t) => t.type === 'injury').length;
+const callUps = L.transactions.filter((t) => t.type === 'call-up').length;
+console.log(`${injuries} injuries and ${callUps} emergency call-ups this season.`);
+
+advanceToEndOfSeason(L);
+const po = L.playoffs!;
+console.log('\n=== Playoffs ===');
+po.rounds.forEach((round, i) => {
+  console.log(`\n${ROUND_NAMES[i]}`);
+  for (const s of round) {
+    const w = s.winner!;
+    const l = w === s.high ? s.low : s.high;
+    const ot = s.games.filter((g) => g.result!.overtime).length;
+    console.log(`  ${team(w).city} ${team(w).name} def. ${team(l).city} ${team(l).name}, ${Math.max(s.highWins, s.lowWins)}-${Math.min(s.highWins, s.lowWins)}${ot ? `  (${ot} OT game${ot > 1 ? 's' : ''})` : ''}`);
+  }
+});
+const champ = team(po.champion!);
+console.log(`\n🏆 ${champ.city} ${champ.name} win the ${L.season}-${String(L.season + 1).slice(2)} championship!`);
+
+console.log('\n=== Awards ===');
+for (const [award, w] of Object.entries(L.awards)) {
+  const who = w.playerId ? `${L.players[w.playerId].firstName} ${L.players[w.playerId].lastName} (${w.teamId})` : `${team(w.teamId).city} ${team(w.teamId).name}`;
+  console.log(`${award.padEnd(24)}${who.padEnd(34)}${w.note}`);
 }
