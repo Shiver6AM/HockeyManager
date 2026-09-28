@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { createContext, useContext } from 'react';
 import { Link, NavLink, Outlet, useParams } from 'react-router-dom';
+import { NotificationBell } from '../components/NotificationBell';
 import { Badge, cx, ErrorBox, Spinner, TeamChip } from '../components/ui';
 import { dayLabel, PHASE_LABEL } from '../format';
 import { useTRPC, type Outputs } from '../trpc';
@@ -39,7 +40,9 @@ export function LeagueLayout() {
     ...(L.phase !== 'regular-season' ? ([['playoffs', 'Playoffs']] as Array<[string, string]>) : []),
     ['free-agents', 'Free agents'],
     ...(L.myTeamId ? ([['trades', 'Trades']] as Array<[string, string]>) : []),
+    ['news', 'News'],
     ['teams', 'Teams'],
+    ['history', 'History'],
     ['settings', 'League'],
   ];
 
@@ -59,6 +62,7 @@ export function LeagueLayout() {
               </span>
               <Badge tone={L.phase === 'playoffs' ? 'bad' : L.phase === 'offseason' ? 'neutral' : 'info'}>{PHASE_LABEL[L.phase]}</Badge>
               {myTeam && <TeamChip team={myTeam} size="sm" />}
+              <NotificationBell leagueId={leagueId} />
             </div>
           </div>
           <nav className="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-3">

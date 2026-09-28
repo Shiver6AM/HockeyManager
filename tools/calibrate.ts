@@ -3,7 +3,7 @@
  * stats to real NHL norms (roughly 2022-25 averages; leader and best-team
  * targets are the mean of the 2022-23, 2023-24 and 2024-25 seasons).
  *
- *   npm run calibrate -- [seasons=5]
+ *   npm run calibrate -- [seasons=10]   (fewer seasons → noisier league-leader maxima)
  */
 import { advanceToEndOfSeason, generateLeague, overall, standings, type League } from '../packages/sim-core/src/index';
 
@@ -225,7 +225,7 @@ export function report(m: Metrics) {
 
 const isMain = process.argv[1]?.endsWith('calibrate.ts');
 if (isMain) {
-  const n = Number(process.argv[2] ?? 5);
+  const n = Number(process.argv[2] ?? 10);
   const leagues: League[] = [];
   const t0 = Date.now();
   for (let i = 0; i < n; i++) {

@@ -55,11 +55,11 @@ describe('offseason with a human manager', () => {
     const d = L.offseason!.draft;
     expect(d.picks).toHaveLength(32 * DRAFT_ROUNDS);
     for (const [, from, to] of d.lottery) expect(from - to).toBeLessThanOrEqual(LOTTERY_MAX_JUMP);
-    // The champion picks last in every round.
-    expect(d.picks[31].teamId).toBe(L.playoffs!.champion);
+    // The champion's own pick is last in every round (it may have been traded away).
+    expect(d.picks[31].originalTeamId).toBe(L.playoffs!.champion);
     // Non-playoff teams pick before playoff teams.
     const playoff = new Set(L.playoffs!.rounds[0].flatMap((s) => [s.high, s.low]));
-    expect(d.picks.slice(0, 16).every((p) => !playoff.has(p.teamId))).toBe(true);
+    expect(d.picks.slice(0, 16).every((p) => !playoff.has(p.originalTeamId))).toBe(true);
   });
 
   it('pauses when the human is on the clock and resumes after the pick', () => {
@@ -104,6 +104,7 @@ describe('offseason with a human manager', () => {
     expect(r.result).toBe('accept');
     const rfa = myExpiring.slice(1).find((id) => L.players[id].contract?.expiresAs === 'RFA');
     if (rfa) (L.offseason!.qualified ??= {})[rfa] = true;
+    for (const id of myExpiring.slice(1)) if (id !== rfa) L.offseason!.resign[id] = false; // explicitly let go
     offseasonStep(L, { force: true });
     expect(L.players[keep].teamId).toBe(ME);
     expect(L.players[keep].contract).toMatchObject({ salary: offer.salary, yearsLeft: offer.years });

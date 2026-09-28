@@ -34,6 +34,7 @@ import {
 } from '@hockey-gm/sim-core';
 import { z } from 'zod';
 import { mutateLeague } from '../advance';
+import { deliver } from '../notify';
 import { readLeague } from '../state';
 import { badRequest, memberProcedure, router, type Membership } from '../trpc';
 import { publicPlayer, teamInfo } from '../views';
@@ -146,7 +147,7 @@ export const offseasonRouter = router({
 
   makePick: memberProcedure.input(z.object({ playerId: z.string() })).mutation(async ({ ctx, input }) => {
     const teamId = requireTeam(ctx.membership);
-    return mutateLeague(ctx.db, input.leagueId, (L) => {
+    return mutateLeague(ctx.db, input.leagueId, async (L, q) => {
       mustBeStage(L, 'draft');
       try {
         makePick(L, teamId, input.playerId);
@@ -155,6 +156,10 @@ export const offseasonRouter = router({
       }
       // Keep the draft moving until the next human is on the clock.
       const step = offseasonStep(L, { force: false });
+      const next = onTheClock(L);
+      if (next && next.teamId !== teamId && L.teams[next.teamId].controller.kind === 'human') {
+        await deliver(q, input.leagueId, [{ teamId: next.teamId, kind: 'draft', text: `You're on the clock: round ${next.round}, pick #${next.overall}.`, link: '/draft' }]);
+      }
       return { next: step.to };
     });
   }),
