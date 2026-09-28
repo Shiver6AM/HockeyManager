@@ -3,6 +3,7 @@ import { simulateGame } from './game';
 import { currentRound, HOME_PATTERN, nextRound, seedPlayoffs, WINS_NEEDED } from './playoffs';
 import { deriveSeed } from './rng';
 import { prepareTeamForGame } from './roster';
+import { aiTradeDay, invalidateStale } from './trades';
 import type {
   GameSummary,
   GoalieSeasonStats,
@@ -147,6 +148,7 @@ function simDay(league: League): ScheduledGame[] {
   const played: ScheduledGame[] = [];
 
   if (league.phase === 'regular-season') {
+    aiTradeDay(league);
     for (const g of league.schedule) {
       if (g.day !== league.day || g.result) continue;
       playGame(league, g, false, yesterday);
@@ -154,6 +156,7 @@ function simDay(league: League): ScheduledGame[] {
     }
     league.day++;
     if (league.day > lastDay(league)) startPlayoffs(league);
+    else if (league.trades?.length) invalidateStale(league);
     return played;
   }
 

@@ -9,6 +9,7 @@ import { dataRouter } from './routers/data';
 import { leaguesRouter } from './routers/leagues';
 import { offseasonRouter } from './routers/offseason';
 import { simRouter } from './routers/sim';
+import { tradesRouter } from './routers/trades';
 import { router, type Context } from './trpc';
 
 export const appRouter = router({
@@ -17,6 +18,7 @@ export const appRouter = router({
   sim: simRouter,
   data: dataRouter,
   offseason: offseasonRouter,
+  trades: tradesRouter,
 });
 export type AppRouter = typeof appRouter;
 

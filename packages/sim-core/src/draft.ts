@@ -111,8 +111,13 @@ export function createDraft(league: League, st: StandingsRow[], season: number):
   const { order, lottery } = buildDraftOrder(league, st, season);
   const picks: DraftPick[] = [];
   for (let round = 1; round <= DRAFT_ROUNDS; round++) {
-    for (const teamId of order) picks.push({ round, overall: picks.length + 1, teamId, originalTeamId: teamId, playerId: null });
+    for (const teamId of order) {
+      const owner = league.pickOwners?.[`${season}:${round}:${teamId}`] ?? teamId;
+      picks.push({ round, overall: picks.length + 1, teamId: owner, originalTeamId: teamId, playerId: null });
+    }
   }
+  // These picks are now real; their ownership lives in the draft itself.
+  for (const key of Object.keys(league.pickOwners ?? {})) if (key.startsWith(`${season}:`)) delete league.pickOwners![key];
   return { state: { season, classIds: prospects.map((p) => p.id), picks, current: 0, lottery }, prospects };
 }
 

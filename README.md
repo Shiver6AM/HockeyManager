@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 51 tests: sim determinism, playoffs, injuries, offseason, and the full multiplayer API flow
+npm test              # 61 tests: sim determinism, playoffs, injuries, offseason, and the full multiplayer API flow
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate 8   # sim 8 seasons and compare league stats to real NHL figures
@@ -154,6 +154,29 @@ anyone who hasn't acted gets sensible defaults.
 - **Pay scale:** salaries scale with the cap, which grows 2.5% a year. Typical
   payrolls sit between the floor and the cap.
 
+## Trades
+
+- **Trade center:** pick a team, tick players, prospects and draft picks on both sides,
+  and see the cap impact for both teams. Future picks (this draft plus the next two)
+  are tradeable, and the draft uses whoever owns each pick.
+- **AI teams value assets from their own point of view.** Stars are worth far more
+  than depth, young players carry scouted upside, age brings decline, and cheap good
+  contracts are gold while overpaid ones hurt. Pending UFAs are rentals, and picks are
+  valued by projected slot. Contenders pay for help now; rebuilders pay for youth and
+  picks. What an AI receives is summed with diminishing weights, so three depth players
+  never buy a star, and it wants to come out slightly ahead.
+- **Feedback without the numbers:** an interest meter ("Close, but we'd need a little
+  more"), and a **"What would they want?"** button that finds the cheapest addition
+  (up to three assets) from your side that gets it done.
+- **Human-to-human** proposals with accept/decline/withdraw. Proposals are voided if
+  their assets move. An optional **commissioner review** holds trades involving managers
+  until approved (anti-collusion).
+- **Deadline:** trades freeze after ~78% of the regular season through the playoffs,
+  and during the draft.
+- **AI-to-AI trades:** contenders buy veterans and pending UFAs from rebuilding teams
+  with prospects and picks, more often near the deadline, and at most two deals per team
+  per season so nobody guts a roster.
+
 ## The simulation
 
 Each second, each team can generate a shot attempt, penalty, hit, fight, injury or
@@ -193,10 +216,9 @@ playoff OT rate. Some targets are approximate.
 - A full-season "sim to end" takes a few seconds and blocks the API while it runs.
   It should move to a worker thread before the game is hosted.
 - Live updates use 5-second polling. Supabase Realtime can replace it later.
-- No offer sheets for RFAs yet (qualifying offers only).
+- No offer sheets for RFAs yet (qualifying offers only), and no retained salary in trades.
 - The league document grows about 0.3 MB per season of history (careers, retirees).
 
 ## Roadmap
 
-- **Phase 5, trades:** human-to-human proposals, AI trade valuation, approval/veto rules.
 - **Phase 6, league life:** scouting fog of war, staff, finances, news, notifications.

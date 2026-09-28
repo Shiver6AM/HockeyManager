@@ -15,3 +15,4 @@ export * from './development';
 export * from './draft';
 export * from './offseason';
 export * from './negotiation';
+export * from './trades';

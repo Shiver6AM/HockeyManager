@@ -17,6 +17,7 @@ import { StandingsPage } from './pages/Standings';
 import { StatsPage } from './pages/Stats';
 import { TeamPage } from './pages/Team';
 import { TeamsPage } from './pages/Teams';
+import { TradesPage } from './pages/Trades';
 import { useTRPC } from './trpc';
 
 export function App() {
@@ -41,6 +42,7 @@ export function App() {
         <Route path="re-sign" element={<ResignPage />} />
         <Route path="free-agents" element={<FreeAgentsPage />} />
         <Route path="player/:playerId" element={<PlayerPage />} />
+        <Route path="trades" element={<TradesPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -159,6 +159,10 @@ export interface LeagueSettings {
   talentAnchor?: number;
   /** Standard deviation of that same group at creation (keeps the star/depth spread stable). */
   talentSpread?: number;
+  /** 'commissioner' = trades involving a human team wait for commissioner approval. */
+  tradeReview?: 'none' | 'commissioner';
+  /** Last regular-season day on which trades are allowed (default: ~78% of the season). */
+  tradeDeadlineDay?: number;
 }
 
 export type Strength = 'EV' | 'PP' | 'SH' | 'EN';
@@ -307,7 +311,8 @@ export interface Transaction {
     | 'retirement'
     | 'buyout'
     | 'extension'
-    | 'qualifying-offer';
+    | 'qualifying-offer'
+    | 'trade';
   teamId: TeamId;
   playerId: PlayerId;
   note: string;
@@ -360,6 +365,9 @@ export interface League {
   history: SeasonRecord[];
   transactions: Transaction[];
   offseason?: OffseasonState | null;
+  /** Draft pick ownership by pick key "season:round:originalTeam". Missing = original team. */
+  pickOwners?: Record<string, TeamId>;
+  trades?: TradeProposal[];
   /** Ongoing contract talks (reset each season/team). */
   negotiations?: Record<PlayerId, NegotiationState>;
   /** One line per player per season they appeared in. */
@@ -415,6 +423,23 @@ export interface OffseasonState {
   draftLists?: Record<TeamId, PlayerId[]>;
   /** Rating changes from this summer's development: [before, after]. */
   development: Record<PlayerId, [number, number]>;
+}
+
+export type TradeAsset = { kind: 'player'; id: PlayerId } | { kind: 'pick'; key: string };
+
+export interface TradeProposal {
+  id: string;
+  season: number;
+  day: number;
+  fromTeam: TeamId;
+  toTeam: TeamId;
+  /** Assets going from fromTeam to toTeam. */
+  give: TradeAsset[];
+  /** Assets going from toTeam to fromTeam. */
+  get: TradeAsset[];
+  status: 'pending' | 'awaiting-approval' | 'completed' | 'rejected' | 'withdrawn' | 'vetoed' | 'invalid';
+  note?: string;
+  resolvedDay?: number;
 }
 
 export interface FaResult {

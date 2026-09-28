@@ -38,6 +38,7 @@ export function LeagueLayout() {
     ['stats', 'Stats'],
     ...(L.phase !== 'regular-season' ? ([['playoffs', 'Playoffs']] as Array<[string, string]>) : []),
     ['free-agents', 'Free agents'],
+    ...(L.myTeamId ? ([['trades', 'Trades']] as Array<[string, string]>) : []),
     ['teams', 'Teams'],
     ['settings', 'League'],
   ];
