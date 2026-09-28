@@ -107,6 +107,8 @@ interface Before {
   clock: string | null;
   faLog: number;
   bids: Record<string, string[]>;
+  tx: number;
+  pendingSheets: Set<string>;
 }
 
 function snapshotForNotices(L: League): Before {
@@ -115,7 +117,8 @@ function snapshotForNotices(L: League): Before {
   for (const [teamId, b] of Object.entries(L.offseason?.bids ?? {})) {
     if (L.teams[teamId]?.controller.kind === 'human') bids[teamId] = Object.keys(b);
   }
-  return { clock: pick ? `${pick.overall}:${pick.teamId}` : null, faLog: L.offseason?.faLog?.length ?? 0, bids };
+  const pendingSheets = new Set(Object.entries(L.offseason?.rfa ?? {}).filter(([, c]) => c.status === 'unsigned' && c.sheet).map(([id]) => id));
+  return { clock: pick ? `${pick.overall}:${pick.teamId}` : null, faLog: L.offseason?.faLog?.length ?? 0, bids, tx: L.transactions.length, pendingSheets };
 }
 
 const STAGE_TEXT: Record<string, string> = {
@@ -171,6 +174,27 @@ export function advanceNotices(L: League, before: Before, res: AdvanceResult): {
         team.push({ teamId, kind: 'free-agency', text: `${who} signed with ${L.teams[r.teamId].city} instead.`, link: '/free-agents' });
       }
     }
+  }
+  // Restricted free agents: offer sheets waiting on you, and results of sheets and hearings.
+  const isHuman = (id?: string) => !!id && L.teams[id]?.controller.kind === 'human';
+  const name = (id: string) => (L.players[id] ? `${L.players[id].firstName} ${L.players[id].lastName}` : id);
+  for (const [id, c] of Object.entries(L.offseason?.rfa ?? {})) {
+    if (c.status === 'unsigned' && c.sheet && !before.pendingSheets.has(id) && isHuman(c.teamId)) {
+      const o = c.sheet.offer;
+      team.push({
+        teamId: c.teamId,
+        kind: 'free-agency',
+        text: `${name(id)} signed an offer sheet with ${L.teams[c.sheet.fromTeam].city} (${o.years} yr × $${(o.salary / 1e6).toFixed(2)}M). Match or decline before the next advance.`,
+        link: '/re-sign',
+      });
+    }
+  }
+  for (const t of L.transactions.slice(Math.min(before.tx, L.transactions.length))) {
+    const c = L.offseason?.rfa?.[t.playerId];
+    if (t.type === 'offer-sheet' && c) {
+      for (const teamId of new Set([c.teamId, c.sheet?.fromTeam])) if (isHuman(teamId)) team.push({ teamId: teamId!, kind: 'free-agency', text: t.note, link: '/free-agents' });
+    }
+    if ((t.type === 'arbitration' || (t.type === 'departure' && c)) && isHuman(t.teamId)) team.push({ teamId: t.teamId, kind: 'free-agency', text: t.note, link: '/re-sign' });
   }
   return { team, all };
 }

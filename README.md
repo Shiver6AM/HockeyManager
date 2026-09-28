@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 83 tests: sim determinism, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 93 tests: sim determinism, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -92,7 +92,9 @@ time produces exactly the same league as simming a week at once. The tests check
 
 ### Managing your team
 
-- **Roster:** ratings, season stats, contracts and injury status.
+- **Roster:** ratings, season stats, contracts (AAV, years left and status after expiry
+  as separate, sortable columns) and injury status, with the same filters as the trade
+  screen.
 - **Lines editor (drag and drop):** 4 forward lines, 3 D pairs, starter/backup goalie,
   2 PP units and 2 PK units. Drag a scratch onto a slot to dress him, drag between slots
   to swap, or drag a dressed skater onto a PP/PK spot. On a phone, tap one player and then
@@ -123,6 +125,10 @@ anyone who hasn't acted gets sensible defaults.
 - **Development:** young players close part of the gap to their hidden potential each
   year, faster with real NHL ice time. Veterans decline from about 30, speed first
   and hockey sense last, and goalies peak later. Breakouts and busts happen.
+- **Playing styles set ceilings:** grinders and enforcers fill out the bottom of rosters
+  and top out as good role players (capped potential); they are never top-5 talents in a
+  draft class and rarely first-rounders. Snipers, playmakers and offensive defensemen are
+  more common among the elite; stay-at-home defensemen less so.
 - **Scouting:** potential is never shown. Your scouts give draft prospects and young
   players a grade (A+ … F) and a projection ("Top-six / top-four"). Every team's scouts
   make different, repeatable errors.
@@ -154,8 +160,17 @@ anyone who hasn't acted gets sensible defaults.
 - **Negotiation:** he accepts, counters (at his preferred term, or yours if it barely
   matters to him), or, if you lowball him, gets annoyed and raises his price. You get
   three offers per player per window. The AI goes through the same function.
-- **Restricted free agents:** RFAs can be qualified. If you don't reach a deal, he stays
-  on a one-year qualifying offer at 105% of his salary.
+- **Restricted free agents:** RFAs can be qualified. A qualified RFA without a deal stays
+  yours on a one-year qualifying offer (105% of his salary), and then:
+  - **Offer sheets** (free agency): any other team can tender one. If he signs it, his team
+    matches (he stays at those terms) or takes draft-pick compensation from the offering
+    team's own picks, scaled by salary as a share of the cap (NHL-style tiers, from nothing
+    under ~$1.7M up to four 1sts). Managers decide before the next advance; otherwise the
+    assistant GM decides. AI teams tender them occasionally.
+  - **Arbitration** (end of free agency): players worth clearly more than their qualifying
+    offer file; the arbitrator awards a 1–2 year deal near market value. In training camp a
+    team can walk away from an award of ~$4.5M or more, making him a UFA.
+  - You can keep negotiating with your own unsigned RFA throughout.
 - **Blind-bid free agency:** managers in different time zones get the same shot,
   because what counts is the best offer, not who clicked first. Teams under the
   salary floor overpay to reach it.
@@ -170,9 +185,20 @@ anyone who hasn't acted gets sensible defaults.
 
 ## Trades
 
-- **Trade center:** pick a team, tick players, prospects and draft picks on both sides,
-  and see the cap impact for both teams. Future picks (this draft plus the next two)
-  are tradeable, and the draft uses whoever owns each pick.
+- **Trade center:** pick a team and tick any number of players, prospects and draft picks
+  on both sides. A **trade preview** at the top lists each side's assets (players by
+  overall, then picks by round) with cap impact. Both sides are sortable tables (overall,
+  position, type, age, AAV, years left, status after contract) with shared **filters**
+  (position, player type, age range, years left, UFA/RFA/ELC, minimum overall, health,
+  on-the-block, fits-their-needs). Picks in **five drafts** (this one plus four more) are
+  tradeable, and the draft uses whoever owns each pick.
+- **Trade block:** every team lists players and picks it's shopping and what it's looking
+  for (a position, young players, prospects, picks, proven veterans, cap relief). Managers
+  set their own; AI blocks follow strategy and roster (rebuilders shop veterans and want
+  picks and youth; teams in the bottom third at a position need one). Your assets that fit
+  the other team's needs are starred, and theirs that fit yours are too. AI teams value
+  assets that fit their needs ~10% higher and are more willing to move what's on their
+  block. A league-wide block view has one-click **Trade for**.
 - **AI teams value assets from their own point of view.** Stars are worth far more
   than depth, young players carry scouted upside, age brings decline, and cheap good
   contracts are gold while overpaid ones hurt. Pending UFAs are rentals, and picks are

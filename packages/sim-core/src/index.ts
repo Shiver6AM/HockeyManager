@@ -19,3 +19,5 @@ export * from './trades';
 export * from './staff';
 export * from './finances';
 export * from './news';
+export * from './block';
+export * from './rfa';

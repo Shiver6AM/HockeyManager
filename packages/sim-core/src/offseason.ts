@@ -26,11 +26,11 @@ import {
   expiresAsFor,
   LEAGUE_MIN_SALARY,
   PROSPECT_MAX,
-  qualifyingOffer,
   ROSTER_MAX,
   SUMMER_ROSTER_MAX,
 } from './contracts';
 import { aiValuation, askFromTeam, offerUtility, respondToOffer, type OfferResult } from './negotiation';
+import { holdArbitration, openCase, openRfaCase, resolveOfferSheets, settleRfaCase } from './rfa';
 import { developPlayer, retirementChance } from './development';
 import { createDraft, runDraft } from './draft';
 import { generatePlayer, talentStats } from './generate';
@@ -250,10 +250,12 @@ function offseasonStepInner(league: League, opts: { force: boolean }): StepResul
     }
     case 'free-agency': {
       const round = os.faRound ?? 1;
+      resolveOfferSheets(league, round);
       const results = resolveFreeAgencyRound(league);
       if ((os.faRound ?? 1) <= FA_ROUNDS) {
         return { from, to: 'free-agency', note: `Bidding round ${round}: ${results.length} players signed` };
       }
+      holdArbitration(league);
       const n = aiFreeAgency(league);
       os.stage = 'training-camp';
       return { from, to: 'training-camp', note: `Final round: ${results.length} signed; ${n} more depth signings` };
@@ -297,7 +299,7 @@ function aiWantsToResign(league: League, team: Team, p: Player): boolean {
 }
 
 /** Apply an agreed contract (re-signing, extension, qualifying offer or signing). */
-function applyContract(league: League, p: Player, offer: ContractOffer) {
+export function applyContract(league: League, p: Player, offer: ContractOffer) {
   const yearsIn = (league.careerStats?.[p.id]?.length ?? 0) + 1;
   p.contract = {
     salary: offer.salary,
@@ -356,7 +358,6 @@ function finishResigning(league: League): number {
       const p = league.players[id];
       const isRfa = p.contract?.expiresAs === 'RFA';
       let deal: ContractOffer | null = null;
-      let how: 're-sign' | 'qualifying-offer' = 're-sign';
       let byAssistant = false;
       if (p.extension) deal = p.extension; // agreed during the season or this summer
       else if (team.controller.kind === 'ai') deal = aiResign(league, team, p, room);
@@ -367,25 +368,22 @@ function finishResigning(league: League): number {
         byAssistant = !!deal;
       }
       if (!deal && isRfa) {
-        const qualify = team.controller.kind === 'human' ? os.qualified?.[id] === true : aiWantsToResign(league, team, p);
+        // Humans qualify explicitly; an undecided manager's assistant GM qualifies like an AI would.
+        const undecided = os.resign[id] === undefined && !negotiated(league, p, teamId);
+        const qualify =
+          team.controller.kind === 'human' ? os.qualified?.[id] === true || (undecided && aiWantsToResign(league, team, p)) : aiWantsToResign(league, team, p);
         if (qualify) {
-          deal = qualifyingOffer(p);
-          how = 'qualifying-offer';
+          // He stays on his qualifying offer for now; offer sheets and arbitration follow.
+          openRfaCase(league, team, p);
+          room -= p.contract!.salary;
+          continue;
         }
       }
       if (deal) {
         applyContract(league, p, deal);
         room -= deal.salary;
         resigned++;
-        tx(
-          league,
-          how,
-          teamId,
-          p,
-          how === 'qualifying-offer'
-            ? `${nm(p)} signs his qualifying offer: 1 yr × $${(deal.salary / 1e6).toFixed(2)}M`
-            : `${nm(p)} re-signs: ${deal.years} yr × $${(deal.salary / 1e6).toFixed(2)}M${byAssistant ? ' (assistant GM; no decision was made)' : ''}`,
-        );
+        tx(league, 're-sign', teamId, p, `${nm(p)} re-signs: ${deal.years} yr × $${(deal.salary / 1e6).toFixed(2)}M${byAssistant ? ' (assistant GM; no decision was made)' : ''}`);
       } else {
         team.roster = team.roster.filter((x) => x !== id);
         p.teamId = null;
@@ -597,6 +595,7 @@ export function canExtend(league: League, p: Player): boolean {
   if (!p.contract || !p.teamId) return false;
   if (league.phase === 'offseason') {
     const stage = league.offseason?.stage;
+    if (stage === 'free-agency' && openCase(league, p.id)?.teamId === p.teamId) return true; // RFA still unsigned
     return !!league.offseason?.expiring[p.id] && (stage === 'draft' || stage === 're-sign' || !league.offseason);
   }
   return p.contract.yearsLeft === 1;
@@ -613,10 +612,18 @@ export function offerExtension(league: League, team: Team, p: Player, offer: Con
     .map((id) => league.players[id])
     .filter((x) => x.contract && (x.contract.yearsLeft > 1 || x.extension))
     .reduce((s, x) => s + (x.extension?.salary ?? x.contract!.salary), 0);
-  if (nextYear + offer.salary > league.settings.salaryCap) throw new Error('That deal would put you over next season’s cap');
+  const rfaCase = openCase(league, p.id);
+  if (rfaCase) {
+    // Unsigned RFA during free agency: his qualifying offer is already on the books.
+    if (offer.salary > capRoom(league, team) + p.contract!.salary) throw new Error('Not enough cap room for that deal');
+  } else if (nextYear + offer.salary > league.settings.salaryCap) throw new Error('That deal would put you over next season’s cap');
   const ask = league.offseason?.expiring[p.id] ?? askingContract(league, p);
   const r = respondToOffer(league, p, team, offer, { ask });
-  if (r.result === 'accept') {
+  if (r.result === 'accept' && rfaCase) {
+    applyContract(league, p, offer);
+    settleRfaCase(league, p);
+    tx(league, 're-sign', team.id, p, `${nm(p)} re-signs: ${offer.years} yr × $${(offer.salary / 1e6).toFixed(2)}M`);
+  } else if (r.result === 'accept') {
     p.extension = offer;
     tx(league, 'extension', team.id, p, `${nm(p)} agrees to a new deal: ${offer.years} yr × $${(offer.salary / 1e6).toFixed(2)}M`);
   }

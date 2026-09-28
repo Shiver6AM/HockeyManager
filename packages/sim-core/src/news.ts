@@ -90,6 +90,12 @@ export function newsFromTransactions(league: League) {
       case 'injury':
         if (p && overall(p) >= 80 && p.injury && p.injury.daysLeft >= 20) addNews(league, 'injury', `${city(league, t.teamId)} lose ${name(p)}: ${p.injury.type}, about ${Math.round(p.injury.daysLeft / 7)} weeks`, [t.teamId], [p.id]);
         break;
+      case 'offer-sheet':
+        addNews(league, 'signing', t.note, [t.teamId], [t.playerId]);
+        break;
+      case 'arbitration':
+        if (p?.contract && p.contract.salary >= 4_000_000) addNews(league, 'signing', `${city(league, t.teamId)}: ${t.note}`, [t.teamId], [t.playerId]);
+        break;
       case 'retirement': {
         const r = league.retired?.[t.playerId];
         if (r && r.peakOverall >= 80) addNews(league, 'retirement', t.note, [t.teamId], [t.playerId]);

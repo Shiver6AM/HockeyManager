@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { InterestPill, OfferForm, Priorities } from '../components/OfferForm';
+import { OfferSheetTargets } from '../components/RfaPanels';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Rating, Spinner, TeamChip } from '../components/ui';
 import { money } from '../format';
 import { useTRPC } from '../trpc';
@@ -70,6 +71,8 @@ export function FreeAgentsPage() {
           </ul>
         </Card>
       )}
+
+      <OfferSheetTargets />
 
       <div className="grid gap-5 xl:grid-cols-3">
         <Card

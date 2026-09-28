@@ -1,8 +1,8 @@
 /**
  * Trades.
  *
- * Assets are players (roster or prospects) and draft picks up to two years
- * out. AI teams value assets from their own point of view:
+ * Assets are players (roster or prospects) and draft picks up to four years
+ * out (five drafts). AI teams value assets from their own point of view:
  *
  *  - players: today's rating on a convex scale (stars are worth far more than
  *    depth), plus scouted upside for young players, minus age decline, plus
@@ -22,7 +22,8 @@ import { autoLines } from './lines';
 import { age, overall } from './ratings';
 import { deriveSeed, Rng } from './rng';
 import { healthyRoster } from './roster';
-import type { League, Player, PlayerId, Team, TeamId, TradeAsset, TradeProposal } from './types';
+import type { League, NeedTag, Player, PlayerId, Team, TeamId, TradeAsset, TradeProposal } from './types';
+import { assetFits, BLOCK_DISCOUNT, NEED_BONUS, tradeBlock } from './block';
 
 export const TRADE = {
   /** AI wants to come out ahead by this much (ratio of value received to value given). */
@@ -30,7 +31,8 @@ export const TRADE = {
   aiFlatMargin: 10,
   consolidation: [1, 0.7, 0.5, 0.35, 0.25, 0.2],
   futureDiscount: 0.85,
-  pickSeasonsAhead: 2,
+  /** Tradeable draft years: this one plus four more. */
+  pickSeasonsAhead: 4,
 };
 
 const group = (p: Player) => (p.pos === 'G' ? 'G' : p.pos === 'D' ? 'D' : 'F');
@@ -272,11 +274,23 @@ export interface TradeVerdict {
   reason: string;
 }
 
+/** What an AI team is looking for and shopping, computed once per decision. */
+export interface AiContext {
+  needs: NeedTag[];
+  onBlock: Set<string>;
+}
+
+export function aiContext(league: League, aiId: TeamId): AiContext {
+  const b = tradeBlock(league, league.teams[aiId]);
+  return { needs: b.needs, onBlock: new Set([...b.players, ...b.picks]) };
+}
+
 /** How the AI team `aiId` feels about receiving `incoming` for `outgoing`. */
-export function evaluateForAi(league: League, aiId: TeamId, incoming: TradeAsset[], outgoing: TradeAsset[]): TradeVerdict {
+export function evaluateForAi(league: League, aiId: TeamId, incoming: TradeAsset[], outgoing: TradeAsset[], ctx = aiContext(league, aiId)): TradeVerdict {
   const team = league.teams[aiId];
-  const vin = packageIn(incoming.map((a) => assetValue(league, team, a)));
-  const vout = outgoing.reduce((s, a) => s + Math.max(0, assetValue(league, team, a)), 0);
+  // Assets that fit a need are worth a bit more; ones already on the block a bit less.
+  const vin = packageIn(incoming.map((a) => assetValue(league, team, a) * (assetFits(league, a, ctx.needs).length ? NEED_BONUS : 1)));
+  const vout = outgoing.reduce((s, a) => s + Math.max(0, assetValue(league, team, a)) * (ctx.onBlock.has(a.kind === 'pick' ? a.key : a.id) ? BLOCK_DISCOUNT : 1), 0);
   // Don't leave the roster short at a position.
   const roster = team.roster.map((id) => league.players[id]);
   for (const g of ['F', 'D', 'G'] as const) {
@@ -309,16 +323,20 @@ export function aiAsk(league: League, aiId: TeamId, otherId: TeamId, incoming: T
   const candidates: TradeAsset[] = [
     ...other.roster.map((id) => ({ kind: 'player' as const, id })),
     ...(other.prospects ?? []).map((id) => ({ kind: 'player' as const, id })),
-    ...teamPicks(league, otherId).map((key) => ({ kind: 'pick' as const, key })),
+    // Late-round picks are near-worthless and would crowd out real options (five drafts' worth).
+    ...teamPicks(league, otherId)
+      .filter((key) => parsePickKey(key).round <= 3)
+      .map((key) => ({ kind: 'pick' as const, key })),
   ].filter((a) => !already.has(a.kind === 'pick' ? a.key : a.id));
   const scored = candidates
     .map((a) => ({ a, v: assetValue(league, team, a) }))
     .filter((x) => x.v > 0)
     .sort((x, y) => x.v - y.v)
     .slice(0, 40);
+  const ctx = aiContext(league, aiId);
   const works = (extra: TradeAsset[]) => {
     const next = [...incoming, ...extra];
-    return !validateTrade(league, otherId, aiId, next, outgoing) && evaluateForAi(league, aiId, next, outgoing).accept;
+    return !validateTrade(league, otherId, aiId, next, outgoing) && evaluateForAi(league, aiId, next, outgoing, ctx).accept;
   };
   let best: { assets: TradeAsset[]; cost: number } | null = null;
   const consider = (xs: typeof scored) => {
@@ -462,10 +480,10 @@ export function aiTradeDay(league: League): TradeProposal | null {
   const buyer = rng.pick(buyers);
   const seller = rng.pick(sellers);
   if (dealsThisSeason(buyer.id, 'fromTeam') >= 2 || dealsThisSeason(seller.id, 'toTeam') >= 2) return null;
-  // Sellers move veterans and pending free agents, not their young core.
-  const vets = seller.roster
-    .map((id) => league.players[id])
-    .filter((p) => overall(p) >= 70 && !p.injury && (age(p, league.season) >= 29 || (p.contract?.yearsLeft ?? 0) <= 1))
+  // Sellers move what's on their block (veterans and pending free agents), not their young core.
+  const vets = tradeBlock(league, seller)
+    .players.map((id) => league.players[id])
+    .filter((p) => p && p.teamId === seller.id && overall(p) >= 70 && !p.injury)
     .sort((a, b) => overall(b) - overall(a));
   if (!vets.length) return null;
   const target = vets[rng.int(0, Math.min(2, vets.length - 1))];
@@ -477,6 +495,8 @@ export function aiTradeDay(league: League): TradeProposal | null {
   ];
   const scored = pieces.map((a) => ({ a, v: assetValue(league, seller, a) })).filter((x) => x.v > 0).sort((a, b) => b.v - a.v);
   const give: TradeAsset[] = [];
+  const sellerCtx = aiContext(league, seller.id);
+  const buyerCtx = aiContext(league, buyer.id);
   for (const { a } of scored) {
     if (give.length >= 3) break;
     give.push(a);
@@ -484,9 +504,10 @@ export function aiTradeDay(league: League): TradeProposal | null {
       give.pop();
       continue;
     }
-    if (evaluateForAi(league, seller.id, give, get).accept) {
+    if (evaluateForAi(league, seller.id, give, get, sellerCtx).accept) {
       // The buyer has to like it too.
-      if (!evaluateForAi(league, buyer.id, get, give).accept && evaluateForAi(league, buyer.id, get, give).ratio < 0.9) return null;
+      const b = evaluateForAi(league, buyer.id, get, give, buyerCtx);
+      if (!b.accept && b.ratio < 0.9) return null;
       const t: TradeProposal = {
         id: `t${league.season}-${(league.trades ??= []).length + 1}`,
         season: league.season,

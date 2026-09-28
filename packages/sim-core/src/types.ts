@@ -134,6 +134,8 @@ export interface Team {
    * game (the same logic AI teams use). Turned off when the manager edits lines.
    */
   autoLines?: boolean;
+  /** Human managers' trade block (AI blocks are computed). */
+  tradeBlock?: TradeBlock;
 }
 
 /**
@@ -321,6 +323,8 @@ export interface Transaction {
     | 'buyout'
     | 'extension'
     | 'qualifying-offer'
+    | 'offer-sheet'
+    | 'arbitration'
     | 'trade';
   teamId: TeamId;
   playerId: PlayerId;
@@ -438,6 +442,30 @@ export interface OffseasonState {
   draftLists?: Record<TeamId, PlayerId[]>;
   /** Rating changes from this summer's development: [before, after]. */
   development: Record<PlayerId, [number, number]>;
+  /** Qualified RFAs without a deal: offer sheets during free agency, then arbitration. */
+  rfa?: Record<PlayerId, RfaCase>;
+  /** Offer sheets tendered this bidding round, by offering team. */
+  sheets?: Record<TeamId, Record<PlayerId, ContractOffer>>;
+}
+
+export interface OfferSheet {
+  fromTeam: TeamId;
+  offer: ContractOffer;
+  /** Draft picks (keys) the original team receives if it doesn't match. */
+  compensation: string[];
+  /** The original team's decision; undecided sheets are settled at the next advance. */
+  decision?: 'match' | 'decline';
+  round: number;
+}
+
+export interface RfaCase {
+  teamId: TeamId;
+  qualifyingOffer: ContractOffer;
+  /** He filed for salary arbitration (heard at the end of free agency). */
+  arbitration: boolean;
+  status: 'unsigned' | 'signed' | 'awarded' | 'walked' | 'departed';
+  award?: ContractOffer;
+  sheet?: OfferSheet;
 }
 
 export type TradeAsset = { kind: 'player'; id: PlayerId } | { kind: 'pick'; key: string };
@@ -569,4 +597,14 @@ export interface StandingsRow {
   pointsPct: number;
   streak: string;
   last10: string;
+}
+
+export type NeedTag = 'C' | 'W' | 'D' | 'G' | 'young' | 'prospects' | 'picks' | 'veteran' | 'cap-space';
+
+/** Players and picks a team is shopping, and what it wants back. */
+export interface TradeBlock {
+  players: PlayerId[];
+  picks: string[];
+  needs: NeedTag[];
+  note?: string;
 }

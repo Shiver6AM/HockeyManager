@@ -5,7 +5,7 @@
  * Also decides who retires.
  */
 import { clamp, deriveSeed, Rng } from './rng';
-import { age, goalieQuality, overall, skaterOverall } from './ratings';
+import { age, ARCHETYPE_CEILING, goalieQuality, overall, skaterOverall } from './ratings';
 import { coachDevMultiplier } from './staff';
 import type { GoalieRatings, League, Player, SkaterRatings } from './types';
 
@@ -66,6 +66,8 @@ export function developPlayer(league: League, p: Player, u: Usage): [number, num
   if (effAge <= 24 && rng.chance(T.breakoutChance)) {
     delta += rng.int(3, 6);
     p.hidden.potential += rng.int(2, 5);
+    const cap = ARCHETYPE_CEILING[p.archetype];
+    if (cap !== undefined) p.hidden.potential = Math.min(p.hidden.potential, Math.max(before, cap + 3));
   } else if (effAge <= 24 && rng.chance(T.bustChance)) {
     delta -= rng.int(2, 5);
     p.hidden.potential -= rng.int(3, 6);

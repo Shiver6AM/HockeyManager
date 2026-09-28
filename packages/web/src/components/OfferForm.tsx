@@ -162,17 +162,20 @@ export function OfferForm({
   initial,
   capRoom,
   blocked,
+  compensation,
   onClose,
 }: {
   leagueId: string;
   playerId: string;
   deal: Deal;
-  mode: 'negotiate' | 'bid' | 'sign';
+  mode: 'negotiate' | 'bid' | 'sign' | 'sheet';
   attemptsLeft?: number;
   initial?: Offer | null;
   capRoom?: number | null;
   /** Why an offer can't be made right now (e.g. roster full); the form stays browsable. */
   blocked?: string;
+  /** Offer sheets: what the offering team would owe at a given salary. */
+  compensation?: (salary: number) => string;
   onClose?: () => void;
 }) {
   const trpc = useTRPC();
@@ -184,9 +187,11 @@ export function OfferForm({
   const negotiate = useMutation(trpc.offseason.negotiate.mutationOptions(opts));
   const sign = useMutation(trpc.offseason.negotiateFreeAgent.mutationOptions(opts));
   const bid = useMutation(trpc.offseason.placeBid.mutationOptions(opts));
+  const sheet = useMutation(trpc.offseason.tenderOfferSheet.mutationOptions(opts));
   const talk = mode === 'sign' ? sign : negotiate;
   const result = talk.data;
-  const busy = negotiate.isPending || bid.isPending || sign.isPending;
+  const busy = negotiate.isPending || bid.isPending || sign.isPending || sheet.isPending;
+  const sealed = mode === 'bid' || mode === 'sheet';
 
   const maxSalary = Math.max(snap(deal.ask.salary * 1.6), 2_000_000, ...deal.estimate.map((e) => e.salary));
   const cap = Math.min(16_500_000, maxSalary);
@@ -197,6 +202,7 @@ export function OfferForm({
   const submit = (o: Offer) => {
     if (mode === 'negotiate') negotiate.mutate({ leagueId, playerId, ...o });
     else if (mode === 'sign') sign.mutate({ leagueId, playerId, ...o });
+    else if (mode === 'sheet') sheet.mutate({ leagueId, playerId, ...o });
     else bid.mutate({ leagueId, playerId, ...o });
   };
 
@@ -239,20 +245,20 @@ export function OfferForm({
             ))}
           </div>
           <p className="mt-1 text-[11px] text-ice-500">
-            He asked for {money(deal.ask.salary)} × {deal.ask.years}y. Estimates are the agent’s, not a promise{mode === 'bid' ? ', and other teams may bid too' : ''}.
+            He asked for {money(deal.ask.salary)} × {deal.ask.years}y. Estimates are the agent’s, not a promise{sealed ? ', and other teams may bid too' : ''}.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button disabled={busy || overCap || !!blocked || (mode !== 'bid' && attemptsLeft === 0)} onClick={() => submit({ salary, years })}>
-            {mode === 'bid' ? 'Place sealed bid' : mode === 'sign' ? 'Offer contract' : 'Make offer'}: {money(salary)} × {years}y
+          <Button disabled={busy || overCap || !!blocked || (!sealed && attemptsLeft === 0)} onClick={() => submit({ salary, years })}>
+            {mode === 'bid' ? 'Place sealed bid' : mode === 'sheet' ? 'Tender offer sheet' : mode === 'sign' ? 'Offer contract' : 'Make offer'}: {money(salary)} × {years}y
           </Button>
           {onClose && (
             <Button variant="ghost" onClick={onClose}>
               Close
             </Button>
           )}
-          {attemptsLeft !== undefined && mode !== 'bid' && (
+          {attemptsLeft !== undefined && !sealed && (
             <span className="text-xs text-ice-500">
               {attemptsLeft} offer{attemptsLeft === 1 ? '' : 's'} left
             </span>
@@ -276,12 +282,30 @@ export function OfferForm({
             )}
           </div>
         )}
+        {compensation && (
+          <p className="rounded-md bg-rink-800 px-3 py-2 text-xs text-ice-300">
+            If his team doesn't match, you owe: <span className="font-semibold text-white">{compensation(salary)}</span> (your own picks).
+          </p>
+        )}
         {bid.isSuccess && <p className="text-sm text-win">Bid placed. It's sealed until the round resolves when the league advances.</p>}
-        <ErrorBox error={negotiate.error ?? bid.error ?? sign.error} />
+        {sheet.isSuccess && (
+          <p className="text-sm text-win">Offer sheet tendered. If he signs it when the league advances, his team gets until the following advance to match.</p>
+        )}
+        <ErrorBox error={negotiate.error ?? bid.error ?? sign.error ?? sheet.error} />
       </div>
       <div className="border-t border-rink-700 pt-3 md:border-t-0 md:border-l md:pt-0 md:pl-4">
         <InterestPanel deal={deal} />
       </div>
     </div>
   );
+}
+
+const ROUNDS = ['', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th'];
+/** "1st + 3rd round picks" etc. from the server's compensation table. */
+export function compensationText(table: Array<{ from: number; to: number | null; rounds: number[] }>, salary: number): string {
+  const row = table.find((r) => r.to === null || salary < r.to) ?? table[table.length - 1];
+  if (!row.rounds.length) return 'no compensation';
+  const counts = new Map<number, number>();
+  for (const r of row.rounds) counts.set(r, (counts.get(r) ?? 0) + 1);
+  return [...counts].map(([r, n]) => (n > 1 ? `${n}× ${ROUNDS[r]}` : ROUNDS[r])).join(' + ') + ` round pick${row.rounds.length > 1 ? 's' : ''}`;
 }

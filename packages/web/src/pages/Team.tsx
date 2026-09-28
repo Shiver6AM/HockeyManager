@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import { GameCard } from '../components/GameCard';
 import { FrontOffice } from '../components/FrontOffice';
 import { LinesBoard } from '../components/LinesBoard';
+import { PlayerFilterBar, SortTh, usePlayerFilters, useSort } from '../components/PlayerFilters';
 import { OfferForm } from '../components/OfferForm';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Modal, Rating, Spinner, TeamChip } from '../components/ui';
 import { gaa, money, signed, svPct, toi } from '../format';
@@ -126,45 +127,70 @@ function Status({ p }: { p: P }) {
   );
 }
 
-function Contract({ p }: { p: P }) {
-  if (!p.contract) return <span className="text-ice-500">—</span>;
+/** Contract as three columns: AAV, years left, and status when it ends. */
+function ContractCells({ p }: { p: P }) {
+  const c = p.contract;
   return (
-    <span className="tabular">
-      {money(p.contract.salary)} <span className="text-ice-500">× {p.contract.yearsLeft}y</span>
-      {p.contract.kind === 'ELC' && <span className="ml-1 text-[10px] text-blue-300">ELC</span>}
-      {p.contract.yearsLeft === 1 && !p.extension && <span className="ml-1 text-[10px] text-warn">{p.contract.expiresAs}</span>}
-      {p.extension && (
-        <span className="ml-1 text-[10px] text-win" title="Agreed new deal">
-          → {money(p.extension.salary)}×{p.extension.years}
-        </span>
-      )}
-    </span>
+    <>
+      <td className="num tabular">
+        {c ? money(c.salary) : <span className="text-ice-500">—</span>}
+        {p.extension && (
+          <span className="block text-[10px] text-win" title="Agreed new deal">
+            → {money(p.extension.salary)} × {p.extension.years}
+          </span>
+        )}
+      </td>
+      <td className="num tabular">{c ? c.yearsLeft : '—'}</td>
+      <td>
+        {c ? (
+          <span className={cx('text-xs', c.yearsLeft === 1 && !p.extension ? 'font-semibold text-warn' : 'text-ice-400')}>
+            {c.kind === 'ELC' && <span className="mr-1 text-blue-300">ELC</span>}
+            {c.expiresAs}
+          </span>
+        ) : (
+          '—'
+        )}
+      </td>
+    </>
+  );
+}
+
+function ContractHeads({ sort }: { sort: ReturnType<typeof useSort> }) {
+  return (
+    <>
+      <SortTh label="AAV" k="aav" sort={sort} className="num" title="Average annual value" />
+      <SortTh label="Yrs" k="years" sort={sort} className="num" title="Years left, including this one" />
+      <SortTh label="Expiry" k="status" sort={sort} title="Status when the contract ends" />
+    </>
   );
 }
 
 function Roster({ t }: { t: TeamData }) {
-  const byOvr = (a: P, b: P) => b.overall - a.overall;
-  const fwd = t.players.filter((p) => p.pos !== 'D' && p.pos !== 'G').sort(byOvr);
-  const def = t.players.filter((p) => p.pos === 'D').sort(byOvr);
-  const gol = t.players.filter((p) => p.pos === 'G').sort(byOvr);
+  const { filters, setFilters, types, filtered } = usePlayerFilters(t.players);
+  const sort = useSort('overall');
+  const fwd = sort.sort(filtered.filter((p) => p.pos !== 'D' && p.pos !== 'G'));
+  const def = sort.sort(filtered.filter((p) => p.pos === 'D'));
+  const gol = sort.sort(filtered.filter((p) => p.pos === 'G'));
   return (
     <div className="space-y-5">
+      <PlayerFilterBar value={filters} onChange={setFilters} types={types} />
+      {filtered.length === 0 && <Empty>No players match these filters.</Empty>}
       {t.isMine && t.players.length > 23 && (
         <p className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
           {t.players.length} players on the roster. The limit is 23 once the season starts; at the end of training camp your lowest-rated extras are
           sent down or released.
         </p>
       )}
-      <SkaterTable title={`Forwards (${fwd.length})`} players={fwd} t={t} />
-      <SkaterTable title={`Defense (${def.length})`} players={def} t={t} />
-      <Card title={`Goalies (${gol.length})`}>
+      {fwd.length > 0 && <SkaterTable title={`Forwards (${fwd.length})`} players={fwd} t={t} sort={sort} />}
+      {def.length > 0 && <SkaterTable title={`Defense (${def.length})`} players={def} t={t} sort={sort} />}
+      {gol.length > 0 && <Card title={`Goalies (${gol.length})`}>
         <div className="-m-4 overflow-x-auto">
           <table className="table">
             <thead>
               <tr>
-                <th>Player</th>
-                <th className="num">Age</th>
-                <th className="num">OVR</th>
+                <SortTh label="Player" k="name" sort={sort} />
+                <SortTh label="Age" k="age" sort={sort} className="num" />
+                <SortTh label="OVR" k="overall" sort={sort} className="num" />
                 <th className="num">REF</th>
                 <th className="num">POS</th>
                 <th className="num">REB</th>
@@ -176,8 +202,8 @@ function Roster({ t }: { t: TeamData }) {
                 <th className="num">SV%</th>
                 <th className="num">GAA</th>
                 <th className="num">SO</th>
-                <th>Contract</th>
-                <th>Status</th>
+                <ContractHeads sort={sort} />
+                <th>Injury</th>
                 {t.isMine && <th />}
               </tr>
             </thead>
@@ -204,9 +230,7 @@ function Roster({ t }: { t: TeamData }) {
                     <td className="num">{s ? svPct(s.sa, s.ga) : '—'}</td>
                     <td className="num">{s ? gaa(s.ga, s.toi) : '—'}</td>
                     <td className="num">{s?.so ?? 0}</td>
-                    <td>
-                      <Contract p={p} />
-                    </td>
+                    <ContractCells p={p} />
                     <td>
                       <Status p={p} />
                     </td>
@@ -221,7 +245,7 @@ function Roster({ t }: { t: TeamData }) {
             </tbody>
           </table>
         </div>
-      </Card>
+      </Card>}
     </div>
   );
 }
@@ -354,17 +378,17 @@ function Prospects({ t }: { t: TeamData }) {
   );
 }
 
-function SkaterTable({ title, players, t }: { title: string; players: P[]; t: TeamData }) {
+function SkaterTable({ title, players, t, sort }: { title: string; players: P[]; t: TeamData; sort: ReturnType<typeof useSort> }) {
   return (
     <Card title={title}>
       <div className="-m-4 overflow-x-auto">
         <table className="table">
           <thead>
             <tr>
-              <th>Player</th>
-              <th>Pos</th>
-              <th className="num">Age</th>
-              <th className="num">OVR</th>
+              <SortTh label="Player" k="name" sort={sort} />
+              <SortTh label="Pos" k="pos" sort={sort} />
+              <SortTh label="Age" k="age" sort={sort} className="num" />
+              <SortTh label="OVR" k="overall" sort={sort} className="num" />
               <th className="num" title="Skating">SKT</th>
               <th className="num" title="Shooting">SHT</th>
               <th className="num" title="Passing">PAS</th>
@@ -379,8 +403,8 @@ function SkaterTable({ title, players, t }: { title: string; players: P[]; t: Te
               <th className="num">P</th>
               <th className="num">+/-</th>
               <th className="num">TOI</th>
-              <th>Contract</th>
-              <th>Status</th>
+              <ContractHeads sort={sort} />
+              <th>Injury</th>
               {t.isMine && <th />}
             </tr>
           </thead>
@@ -409,9 +433,7 @@ function SkaterTable({ title, players, t }: { title: string; players: P[]; t: Te
                   <td className="num font-semibold text-white">{s ? s.g + s.a : 0}</td>
                   <td className="num">{s ? signed(s.pm) : 0}</td>
                   <td className="num">{s?.gp ? toi(s.toi, s.gp) : '—'}</td>
-                  <td>
-                    <Contract p={p} />
-                  </td>
+                  <ContractCells p={p} />
                   <td>
                     <Status p={p} />
                   </td>

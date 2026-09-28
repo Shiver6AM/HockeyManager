@@ -27,6 +27,14 @@ import {
   ROSTER_MAX,
   scoutedPotential,
   negotiateFreeAgent,
+  compensationPicks,
+  compensationTable,
+  decideOfferSheet,
+  pickLabel,
+  tenderOfferSheet,
+  walkAwayFromAward,
+  walkAwayThreshold,
+  withdrawOfferSheet,
   STAGE_LABELS,
   SUMMER_ROSTER_MAX,
   type League,
@@ -182,7 +190,9 @@ export const offseasonRouter = router({
     const os = L.offseason;
     if (!os || !my) return null;
     const team = L.teams[my];
-    const ids = Object.keys(os.expiring).filter((id) => L.players[id]?.teamId === my);
+    // RFAs with an open case are shown in their own list (offer sheets, arbitration).
+    const ids = Object.keys(os.expiring).filter((id) => L.players[id]?.teamId === my && !os.rfa?.[id]);
+    const closed = os.stage !== 'draft' && os.stage !== 're-sign';
     const committed = team.roster
       .filter((id) => !os.expiring[id])
       .reduce((s, id) => s + (L.players[id].contract?.salary ?? 0), 0) + deadCapFor(L, team);
@@ -207,6 +217,8 @@ export const offseasonRouter = router({
             ...publicPlayer(L, p),
             status,
             ...dealTerms(L, p, team, os.expiring[id]),
+            /** After the window closes: the deal he's on now. */
+            signedNow: closed ? p.contract : null,
             agreed: p.extension ?? null,
             letGo: os.resign[id] === false,
             qualified: !!os.qualified?.[id],
@@ -350,6 +362,103 @@ export const offseasonRouter = router({
         }
       });
     }),
+
+  /** Restricted free agents: your open cases (offer sheets, arbitration) and other teams' sheet-eligible RFAs. */
+  rfa: memberProcedure.query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    const my = ctx.membership.teamId;
+    const os = L.offseason;
+    if (!os?.rfa) return null;
+    const team = my ? L.teams[my] : null;
+    const myTenders = (my && os.sheets?.[my]) || {};
+    const cases = Object.entries(os.rfa).filter(([id]) => L.players[id]);
+    return {
+      stage: os.stage,
+      walkAwayThreshold: walkAwayThreshold(L),
+      compensation: compensationTable(L),
+      capRoom: team ? capRoom(L, team) : null,
+      mine: cases
+        .filter(([, c]) => c.teamId === my)
+        .map(([id, c]) => {
+          const p = L.players[id];
+          return {
+            ...publicPlayer(L, p),
+            status: c.status,
+            arbitration: c.arbitration,
+            qualifyingOffer: c.qualifyingOffer,
+            award: c.award ?? null,
+            canWalkAway: os.stage === 'training-camp' && c.status === 'awarded' && (c.award?.salary ?? 0) >= walkAwayThreshold(L),
+            sheet: c.sheet
+              ? { from: teamInfo(L.teams[c.sheet.fromTeam]), offer: c.sheet.offer, compensation: c.sheet.compensation.map(pickLabel), decision: c.sheet.decision ?? null }
+              : null,
+            attemptsLeft: attemptsLeft(L, id, my),
+            deal: c.status === 'unsigned' && team ? dealTerms(L, p, team, os.expiring[id] ?? askingContract(L, p)) : null,
+          };
+        }),
+      others: cases
+        .filter(([, c]) => c.teamId !== my && c.status === 'unsigned')
+        .map(([id, c]) => {
+          const p = L.players[id];
+          return {
+            ...publicPlayer(L, p),
+            team: teamInfo(L.teams[c.teamId]),
+            arbitration: c.arbitration,
+            qualifyingOffer: c.qualifyingOffer,
+            signedSheet: !!c.sheet,
+            myTender: myTenders[id] ?? null,
+            deal: team && os.stage === 'free-agency' && !c.sheet ? dealTerms(L, p, team, askingContract(L, p)) : null,
+            ...scouting(L, my, p),
+          };
+        })
+        .sort((a, b) => b.overall - a.overall),
+    };
+  }),
+
+  tenderOfferSheet: memberProcedure
+    .input(z.object({ playerId: z.string(), salary: z.number().int().min(0).max(30_000_000), years: z.number().int().min(1).max(8) }))
+    .mutation(async ({ ctx, input }) => {
+      const teamId = requireTeam(ctx.membership);
+      return mutateLeague(ctx.db, input.leagueId, (L) => {
+        const p = L.players[input.playerId];
+        if (!p) throw badRequest('No such player');
+        try {
+          tenderOfferSheet(L, L.teams[teamId], p, { salary: input.salary, years: input.years });
+        } catch (e) {
+          throw badRequest((e as Error).message);
+        }
+        return { ok: true, compensation: (compensationPicks(L, teamId, input.salary) ?? []).map(pickLabel) };
+      });
+    }),
+
+  withdrawOfferSheet: memberProcedure.input(z.object({ playerId: z.string() })).mutation(async ({ ctx, input }) => {
+    const teamId = requireTeam(ctx.membership);
+    await mutateLeague(ctx.db, input.leagueId, (L) => withdrawOfferSheet(L, L.teams[teamId], input.playerId));
+    return { ok: true };
+  }),
+
+  decideOfferSheet: memberProcedure.input(z.object({ playerId: z.string(), match: z.boolean() })).mutation(async ({ ctx, input }) => {
+    const teamId = requireTeam(ctx.membership);
+    await mutateLeague(ctx.db, input.leagueId, (L) => {
+      try {
+        decideOfferSheet(L, L.teams[teamId], input.playerId, input.match);
+      } catch (e) {
+        throw badRequest((e as Error).message);
+      }
+    });
+    return { ok: true };
+  }),
+
+  walkAway: memberProcedure.input(z.object({ playerId: z.string() })).mutation(async ({ ctx, input }) => {
+    const teamId = requireTeam(ctx.membership);
+    await mutateLeague(ctx.db, input.leagueId, (L) => {
+      try {
+        walkAwayFromAward(L, L.teams[teamId], input.playerId);
+      } catch (e) {
+        throw badRequest((e as Error).message);
+      }
+    });
+    return { ok: true };
+  }),
 
   promote: memberProcedure.input(z.object({ playerId: z.string() })).mutation(async ({ ctx, input }) => {
     const teamId = requireTeam(ctx.membership);
