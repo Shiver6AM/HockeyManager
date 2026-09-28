@@ -287,7 +287,10 @@ function NewsFeed() {
   const L = useLeague();
   const trpc = useTRPC();
   const tx = useQuery(trpc.data.transactions.queryOptions({ leagueId: L.id, limit: 12 }));
-  const icon: Record<string, string> = { injury: '🩹', return: '✅', 'call-up': '⬆️', 'send-down': '⬇️' };
+  const icon: Record<string, string> = {
+    injury: '🩹', return: '✅', 'call-up': '⬆️', 'send-down': '⬇️', trade: '🔁', signing: '✍️', 're-sign': '✍️', extension: '✍️',
+    'qualifying-offer': '✍️', buyout: '💸', release: '✂️', departure: '👋', draft: '🎓', promotion: '⬆️', retirement: '🏁',
+  };
   return (
     <Card title="League news">
       {tx.data?.length ? (

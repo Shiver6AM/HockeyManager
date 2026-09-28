@@ -20,6 +20,7 @@ export function LeagueSettings() {
     <div className="grid gap-5 lg:grid-cols-2">
       <div className="space-y-5">
         <AdvanceSettings />
+        <TradeSettings />
         <Card title="Invite managers">
           <p className="text-sm text-ice-300">Share this code. Friends create an account, choose “Join a league”, and pick a team.</p>
           <p className="mt-3 inline-block rounded-lg border border-dashed border-rink-500 bg-rink-850 px-4 py-2 font-mono text-2xl tracking-[0.3em] text-white">
@@ -157,6 +158,32 @@ function AdvanceSettings() {
       ) : (
         <p className="mt-3 text-xs text-ice-500">Only the commissioner can change these settings.</p>
       )}
+    </Card>
+  );
+}
+
+function TradeSettings() {
+  const L = useLeague();
+  const trpc = useTRPC();
+  const qc = useQueryClient();
+  const status = useQuery(trpc.trades.status.queryOptions({ leagueId: L.id }));
+  const set = useMutation(trpc.trades.setReview.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));
+  if (!status.data) return null;
+  return (
+    <Card title="Trades">
+      <p className="text-sm text-ice-300">
+        Deadline: day {status.data.deadlineDay + 1} of the regular season. Trades are frozen from then through the playoffs and during the draft.
+      </p>
+      <label className="mt-3 flex items-center gap-2 text-sm text-ice-200">
+        <input
+          type="checkbox"
+          disabled={!L.isCommissioner || set.isPending}
+          checked={status.data.review === 'commissioner'}
+          onChange={(e) => set.mutate({ leagueId: L.id, review: e.target.checked ? 'commissioner' : 'none' })}
+        />
+        Commissioner must approve trades involving a manager (anti-collusion)
+      </label>
+      <ErrorBox error={set.error} />
     </Card>
   );
 }

@@ -244,7 +244,7 @@ export function generateLeague(opts: GenerateOptions): League {
     if (generationalTeams.has(f.abbr)) {
       const slot = teamRng.int(0, 2);
       const old = roster[slot];
-      const star = generatePlayer(teamRng, old.pos, teamRng.normal(95.5, 1.2), season, teamRng.int(21, 28), 'Generational');
+      const star = generatePlayer(teamRng, old.pos, teamRng.normal(94.5, 1.2), season, teamRng.int(21, 28), 'Generational');
       star.teamId = f.abbr;
       roster[slot] = star;
     }

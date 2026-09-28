@@ -28,6 +28,7 @@ import {
   PROSPECT_MAX,
   qualifyingOffer,
   ROSTER_MAX,
+  SUMMER_ROSTER_MAX,
 } from './contracts';
 import { aiValuation, offerUtility, respondToOffer, type OfferResult } from './negotiation';
 import { developPlayer, retirementChance } from './development';
@@ -48,8 +49,6 @@ export const STAGE_LABELS: Record<OffseasonStage, string> = {
   'free-agency': 'Free agency',
   'training-camp': 'Training camp',
 };
-/** Roster size allowed during the summer; cut to ROSTER_MAX at camp. */
-export const SUMMER_ROSTER_MAX = 28;
 const CAP_GROWTH = 1.025;
 
 const isF = (p: Player) => p.pos === 'C' || p.pos === 'LW' || p.pos === 'RW';

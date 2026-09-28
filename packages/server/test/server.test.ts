@@ -273,3 +273,64 @@ describe('persistence', () => {
     }
   }, 60_000);
 });
+
+describe('trades API', () => {
+  it('evaluates and executes AI trades, and runs human-to-human proposals', async () => {
+    db = await createDb('memory://');
+    scheduler = new Scheduler(db);
+    const a = await register('trader_a');
+    const b = await register('trader_b');
+    const { id: leagueId } = await a.leagues.create({ name: 'Trade League' });
+    const { inviteCode } = await a.leagues.overview({ leagueId });
+    await b.leagues.join({ inviteCode });
+    await a.leagues.claimTeam({ leagueId, teamId: 'HAL' });
+    await b.leagues.claimTeam({ leagueId, teamId: 'QUE' });
+
+    const mine = await a.trades.assets({ leagueId, teamId: 'HAL' });
+    const kc = await a.trades.assets({ leagueId, teamId: 'KC' });
+    // A lopsided ask: their best player for our worst.
+    const worst = mine.players.at(-1)!;
+    const star = kc.players.find((p) => (p.contract?.salary ?? 0) <= mine.capRoom + (worst.contract?.salary ?? 0))!;
+    const lopsided = { leagueId, partner: 'KC', give: [{ kind: 'player' as const, id: worst.id }], get: [{ kind: 'player' as const, id: star.id }] };
+    const ev = await a.trades.evaluate(lopsided);
+    expect(ev.verdict!.accept).toBe(false);
+    expect(JSON.stringify(ev)).not.toMatch(/ratio/);
+    const rejected = await a.trades.propose(lopsided);
+    expect(rejected.status).toBe('rejected');
+
+    // Ask what they'd want for a depth player, add it, and make the trade.
+    // League seeds are random, so try cheap depth players until one has a price we can pay.
+    type A = { kind: 'player'; id: string } | { kind: 'pick'; key: string };
+    let want: { leagueId: string; partner: string; give: A[]; get: A[] } | null = null;
+    let extra: Awaited<ReturnType<typeof a.trades.askAi>> = null;
+    let cheap = kc.players[0];
+    for (const p of [...kc.players].sort((x, y) => (x.contract?.salary ?? 0) - (y.contract?.salary ?? 0)).slice(0, 8)) {
+      want = { leagueId, partner: 'KC', give: [], get: [{ kind: 'player', id: p.id }] };
+      extra = await a.trades.askAi(want);
+      if (extra) {
+        cheap = p;
+        break;
+      }
+    }
+    expect(extra).toBeTruthy();
+    want = want!;
+    for (const x of extra!) want.give.push(x.kind === 'pick' ? { kind: 'pick', key: x.key } : { kind: 'player', id: x.id });
+    const done = await a.trades.propose(want);
+    expect(done.status).toBe('completed');
+    expect((await a.data.team({ leagueId, teamId: 'HAL' })).players.map((p) => p.id)).toContain(cheap.id);
+
+    // Human to human: HAL offers a pick for a QUE depth player; QUE accepts.
+    const que = await b.trades.assets({ leagueId, teamId: 'QUE' });
+    const pick = (await a.trades.assets({ leagueId, teamId: 'HAL' })).picks.find((p) => p.key.endsWith(':3:HAL'))!;
+    const target = [...que.players].sort((x, y) => (x.contract?.salary ?? 0) - (y.contract?.salary ?? 0))[0];
+    const prop = await a.trades.propose({ leagueId, partner: 'QUE', give: [{ kind: 'pick', key: pick.key }], get: [{ kind: 'player', id: target.id }] });
+    expect(prop.status).toBe('pending');
+    const inbox = await b.trades.list({ leagueId });
+    expect(inbox.incoming.map((t) => t.id)).toContain(prop.id);
+    await expect(a.trades.respond({ leagueId, tradeId: prop.id, accept: true })).rejects.toThrow(/receiving team/);
+    const accepted = await b.trades.respond({ leagueId, tradeId: prop.id, accept: true });
+    expect(accepted.status).toBe('completed');
+    expect((await b.trades.assets({ leagueId, teamId: 'QUE' })).picks.map((p) => p.key)).toContain(pick.key);
+    await db.close();
+  }, 60_000);
+});

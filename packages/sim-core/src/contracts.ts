@@ -20,6 +20,8 @@ export function salaryScale(eff: number, cap = BASE_CAP): number {
 }
 export const ROSTER_MAX = 23;
 export const PROSPECT_MAX = 20;
+/** Roster size allowed during the summer; teams cut to ROSTER_MAX at camp. */
+export const SUMMER_ROSTER_MAX = 28;
 
 /** What a player of this quality and age is worth per season. */
 export function marketValue(p: Player, season: number, cap = BASE_CAP): number {
