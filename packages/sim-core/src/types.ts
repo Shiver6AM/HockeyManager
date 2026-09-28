@@ -81,6 +81,8 @@ export interface Player {
   injury: Injury | null;
   /** Team holding this player's rights while he develops outside the NHL roster. */
   prospectOf?: TeamId;
+  /** A new deal agreed in advance (extension or re-signing); replaces his contract when it expires. */
+  extension?: ContractOffer;
   /** How the player entered the league, if through the draft. */
   draft?: { season: number; round: number; overall: number; teamId: TeamId };
 }
@@ -113,6 +115,8 @@ export interface Team {
   division: string;
   controller: TeamController;
   roster: PlayerId[];
+  /** Buyout charges: cap hits for players no longer on the team. Seasons inclusive. */
+  deadCap?: Array<{ playerName: string; amount: number; fromSeason: number; untilSeason: number }>;
   /** Draft picks and young players developing outside the active roster (junior/minors). */
   prospects?: PlayerId[];
   lines: Lines;
@@ -300,7 +304,10 @@ export interface Transaction {
     | 'departure'
     | 'release'
     | 'promotion'
-    | 'retirement';
+    | 'retirement'
+    | 'buyout'
+    | 'extension'
+    | 'qualifying-offer';
   teamId: TeamId;
   playerId: PlayerId;
   note: string;
@@ -353,6 +360,8 @@ export interface League {
   history: SeasonRecord[];
   transactions: Transaction[];
   offseason?: OffseasonState | null;
+  /** Ongoing contract talks (reset each season/team). */
+  negotiations?: Record<PlayerId, NegotiationState>;
   /** One line per player per season they appeared in. */
   careerStats?: Record<PlayerId, CareerLine[]>;
   retired?: Record<PlayerId, RetiredPlayer>;
@@ -392,14 +401,37 @@ export interface OffseasonState {
   draft: DraftState;
   /** Players whose contracts end this summer, with what they're asking for. */
   expiring: Record<PlayerId, ContractOffer>;
-  /** Human decisions on expiring players: true = re-sign at the asking price. */
+  /** Explicit human decisions on expiring players: false = let him go. (Deals live on player.extension.) */
   resign: Record<PlayerId, boolean>;
+  /** RFAs whose team extended a qualifying offer (keeps his rights on a 1-year deal). */
+  qualified?: Record<PlayerId, boolean>;
+  /** Blind-bid free agency: current round (1-based) and sealed bids by team. */
+  faRound?: number;
+  bids?: Record<TeamId, Record<PlayerId, ContractOffer>>;
+  faLog?: FaResult[];
   /** Asking prices for this summer's free agents. */
   freeAgentAsks: Record<PlayerId, ContractOffer>;
   /** Each human team's ranked draft list, used when they're auto-picked for. */
   draftLists?: Record<TeamId, PlayerId[]>;
   /** Rating changes from this summer's development: [before, after]. */
   development: Record<PlayerId, [number, number]>;
+}
+
+export interface FaResult {
+  round: number;
+  playerId: PlayerId;
+  teamId: TeamId;
+  offer: ContractOffer;
+  /** How many teams bid on him that round. */
+  bidders: number;
+}
+
+export interface NegotiationState {
+  season: number;
+  teamId: TeamId;
+  attempts: number;
+  /** Raised by insulting offers. */
+  annoyance: number;
 }
 
 export interface CareerLine {

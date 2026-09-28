@@ -83,7 +83,8 @@ const TARGETS: Target[] = [
   { label: 'Best team points', nhl: 122, tol: 10, fmt: f1, get: (m) => mean(m.ptsMax) },
   { label: 'Worst team points', nhl: 58, tol: 8, fmt: f1, get: (m) => mean(m.ptsMin) },
   { label: 'Team points std. dev.', nhl: 14, tol: 3, fmt: f1, get: (m) => mean(m.ptsSd) },
-  { label: 'Points leader', nhl: 139, tol: 15, fmt: f1, get: (m) => mean(m.topPoints) },
+  // The real leader swings a lot year to year (153, 144, 121 over 2022-25), so the band is wide.
+  { label: 'Points leader', nhl: 139, tol: 18, fmt: f1, get: (m) => mean(m.topPoints) },
   { label: 'Goals leader', nhl: 62, tol: 8, fmt: f1, get: (m) => mean(m.topGoals) },
   { label: 'Assists leader', nhl: 91, tol: 12, fmt: f1, get: (m) => mean(m.topAssists) },
   { label: '100-point players', nhl: 6, tol: 3, fmt: f1, get: (m) => mean(m.top100Pts) },

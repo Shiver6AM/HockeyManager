@@ -204,20 +204,30 @@ describe('multiplayer league flow', () => {
     const picks = (await bob.offseason.draftBoard({ leagueId }))!.picks.filter((p) => p.teamId === 'HAL');
     if (picks[0].overall > 1) expect(picks.map((p) => p.playerId)).toContain(longShot.id);
 
-    // Re-sign: keep Bob's best expiring player.
+    // Re-sign: negotiate with Bob's best expiring player (accept his counter if he makes one).
     const exp = await bob.offseason.expiring({ leagueId });
     const keep = exp!.players[0];
-    if (keep) await bob.offseason.setResign({ leagueId, playerId: keep.id, resign: true });
+    if (keep) {
+      let r = await bob.offseason.negotiate({ leagueId, playerId: keep.id, salary: Math.min(15_500_000, Math.round((keep.ask.salary * 1.2) / 25_000) * 25_000), years: keep.ask.years });
+      if (r.result === 'counter') r = await bob.offseason.negotiate({ leagueId, playerId: keep.id, ...r.counter });
+      expect(r.result).toBe('accept');
+      expect((await bob.offseason.expiring({ leagueId }))!.players.find((p) => p.id === keep.id)!.agreed).toBeTruthy();
+    }
     await comm.sim.advance({ leagueId, target: { days: 1 } }); // -> free agency
     if (keep) expect((await bob.data.team({ leagueId, teamId: 'HAL' })).players.map((p) => p.id)).toContain(keep.id);
 
-    // Free agency: Bob signs the best player he can afford.
+    // Free agency is blind bidding: place a bid, then the round resolves on advance.
     const fa = await bob.offseason.freeAgents({ leagueId });
-    expect(fa.canSign).toBe(true);
-    const target = fa.players.find((p) => p.ask.salary <= fa.capRoom!)!;
-    await bob.offseason.signFreeAgent({ leagueId, playerId: target.id });
+    expect(fa.bidding).toBe(true);
+    expect(fa.canSign).toBe(false);
+    const target = fa.players.find((p) => p.ask.salary * 1.5 <= fa.capRoom!)!;
+    await bob.offseason.placeBid({ leagueId, playerId: target.id, salary: Math.round((target.ask.salary * 1.5) / 25_000) * 25_000, years: target.ask.years });
+    expect((await bob.offseason.freeAgents({ leagueId })).myBids).toHaveLength(1);
+    await expect(bob.offseason.signFreeAgent({ leagueId, playerId: target.id })).rejects.toThrow(/Training camp/);
+    await comm.sim.advance({ leagueId, target: { days: 3 } }); // three bidding rounds
+    const faAfter = await bob.offseason.freeAgents({ leagueId });
+    expect(faAfter.results.length).toBeGreaterThan(5);
     const team = await bob.data.team({ leagueId, teamId: 'HAL' });
-    expect(team.players.map((p) => p.id)).toContain(target.id);
 
     // Promote a prospect.
     const prospect = team.prospects[0];

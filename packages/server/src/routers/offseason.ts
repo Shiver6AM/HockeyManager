@@ -6,7 +6,15 @@ import {
   age,
   askingContract,
   capRoom,
+  deadCapFor,
   demoteToProspects,
+  FA_ROUNDS,
+  NEGOTIATION,
+  offerExtension,
+  placeBid,
+  priorities,
+  qualifyingOffer,
+  withdrawBid,
   freeAgents,
   makePick,
   offseasonStep,
@@ -171,21 +179,34 @@ export const offseasonRouter = router({
     const ids = Object.keys(os.expiring).filter((id) => L.players[id]?.teamId === my);
     const committed = team.roster
       .filter((id) => !os.expiring[id])
-      .reduce((s, id) => s + (L.players[id].contract?.salary ?? 0), 0);
-    const kept = ids.filter((id) => os.resign[id]).reduce((s, id) => s + os.expiring[id].salary, 0);
+      .reduce((s, id) => s + (L.players[id].contract?.salary ?? 0), 0) + deadCapFor(L, team);
+    const kept = ids.reduce((s, id) => {
+      const p = L.players[id];
+      if (p.extension) return s + p.extension.salary;
+      if (os.qualified?.[id]) return s + qualifyingOffer(p).salary;
+      return s;
+    }, 0);
     return {
       stage: os.stage,
+      open: os.stage === 'draft' || os.stage === 're-sign',
       salaryCap: L.settings.salaryCap,
       committed,
       committedWithResigns: committed + kept,
       players: ids
         .map((id) => {
           const p = L.players[id];
+          const neg = L.negotiations?.[id];
+          const status = p.contract?.expiresAs ?? 'UFA';
           return {
             ...publicPlayer(L, p),
             ask: os.expiring[id],
-            decision: os.resign[id] ?? null,
-            status: p.contract?.expiresAs ?? 'UFA',
+            status,
+            priorities: priorities(p),
+            agreed: p.extension ?? null,
+            letGo: os.resign[id] === false,
+            qualified: !!os.qualified?.[id],
+            qualifyingOffer: status === 'RFA' ? qualifyingOffer(p) : null,
+            attemptsLeft: neg && neg.teamId === my && neg.season === L.season ? Math.max(0, NEGOTIATION.maxAttempts - neg.attempts) : NEGOTIATION.maxAttempts,
             stats: L.skaterStats[id] ?? null,
             goalieStats: L.goalieStats[id] ?? null,
             ...scouting(L, my, p),
@@ -201,7 +222,37 @@ export const offseasonRouter = router({
       mustBeStage(L, 'draft', 're-sign');
       const os = L.offseason!;
       if (!os.expiring[input.playerId] || L.players[input.playerId]?.teamId !== teamId) throw badRequest('Not one of your expiring players');
-      os.resign[input.playerId] = input.resign;
+      if (input.resign) delete os.resign[input.playerId];
+      else os.resign[input.playerId] = false;
+    });
+    return { ok: true };
+  }),
+
+  /** Offer a contract to one of your players: an expiring player this summer, or a final-year player in season. */
+  negotiate: memberProcedure
+    .input(z.object({ playerId: z.string(), salary: z.number().int().min(0).max(30_000_000), years: z.number().int().min(1).max(8) }))
+    .mutation(async ({ ctx, input }) => {
+      const teamId = requireTeam(ctx.membership);
+      return mutateLeague(ctx.db, input.leagueId, (L) => {
+        const p = L.players[input.playerId];
+        if (!p) throw badRequest('No such player');
+        try {
+          return offerExtension(L, L.teams[teamId], p, { salary: input.salary, years: input.years });
+        } catch (e) {
+          throw badRequest((e as Error).message);
+        }
+      });
+    }),
+
+  setQualify: memberProcedure.input(z.object({ playerId: z.string(), qualify: z.boolean() })).mutation(async ({ ctx, input }) => {
+    const teamId = requireTeam(ctx.membership);
+    await mutateLeague(ctx.db, input.leagueId, (L) => {
+      mustBeStage(L, 'draft', 're-sign');
+      const os = L.offseason!;
+      const p = L.players[input.playerId];
+      if (!os.expiring[input.playerId] || p?.teamId !== teamId) throw badRequest('Not one of your expiring players');
+      if (p.contract?.expiresAs !== 'RFA') throw badRequest('Only restricted free agents can be qualified');
+      (os.qualified ??= {})[input.playerId] = input.qualify;
     });
     return { ok: true };
   }),
@@ -211,29 +262,72 @@ export const offseasonRouter = router({
     const my = ctx.membership.teamId;
     const team = my ? L.teams[my] : null;
     const os = L.offseason;
-    const canSign = L.phase !== 'offseason' || os?.stage === 'free-agency' || os?.stage === 'training-camp';
+    const bidding = os?.stage === 'free-agency';
+    const canSign = L.phase !== 'offseason' || os?.stage === 'training-camp';
+    const myBids = (my && os?.bids?.[my]) || {};
+    const nameOf = (id: string) => (L.players[id] ? `${L.players[id].firstName} ${L.players[id].lastName}` : id);
     return {
       canSign,
+      bidding,
+      faRound: os?.faRound ?? null,
+      faRounds: FA_ROUNDS,
       phase: L.phase,
       stage: os?.stage ?? null,
       capRoom: team ? capRoom(L, team) : null,
       payroll: team ? payroll(L, team) : null,
       rosterCount: team ? team.roster.length : null,
       rosterMax: L.phase === 'offseason' ? SUMMER_ROSTER_MAX : ROSTER_MAX,
+      myBids: Object.entries(myBids).map(([id, offer]) => ({ playerId: id, name: nameOf(id), offer })),
+      results: (os?.faLog ?? [])
+        .slice()
+        .sort((a, b) => b.round - a.round || b.offer.salary - a.offer.salary)
+        .slice(0, 60)
+        .map((r) => ({ ...r, name: nameOf(r.playerId), team: teamInfo(L.teams[r.teamId]), mine: r.teamId === my })),
       players: freeAgents(L)
         .map((p) => {
           const ask = os?.freeAgentAsks[p.id] ?? inSeasonAsk(L, p);
-          return { ...publicPlayer(L, p), ask, ...scouting(L, my, p), careerGp: (L.careerStats?.[p.id] ?? []).reduce((s, c) => s + (c.skater?.gp ?? c.goalie?.gp ?? 0), 0) };
+          return {
+            ...publicPlayer(L, p),
+            ask,
+            priorities: priorities(p),
+            myBid: myBids[p.id] ?? null,
+            ...scouting(L, my, p),
+            careerGp: (L.careerStats?.[p.id] ?? []).reduce((s, c) => s + (c.skater?.gp ?? c.goalie?.gp ?? 0), 0),
+          };
         })
         .sort((a, b) => b.overall - a.overall)
         .slice(0, 150),
     };
   }),
 
+  placeBid: memberProcedure
+    .input(z.object({ playerId: z.string(), salary: z.number().int().min(0).max(30_000_000), years: z.number().int().min(1).max(8) }))
+    .mutation(async ({ ctx, input }) => {
+      const teamId = requireTeam(ctx.membership);
+      await mutateLeague(ctx.db, input.leagueId, (L) => {
+        const p = L.players[input.playerId];
+        const team = L.teams[teamId];
+        if (!p) throw badRequest('No such player');
+        if (team.roster.length >= SUMMER_ROSTER_MAX) throw badRequest(`Your roster is full (${SUMMER_ROSTER_MAX}).`);
+        try {
+          placeBid(L, team, p, { salary: input.salary, years: input.years });
+        } catch (e) {
+          throw badRequest((e as Error).message);
+        }
+      });
+      return { ok: true };
+    }),
+
+  withdrawBid: memberProcedure.input(z.object({ playerId: z.string() })).mutation(async ({ ctx, input }) => {
+    const teamId = requireTeam(ctx.membership);
+    await mutateLeague(ctx.db, input.leagueId, (L) => withdrawBid(L, L.teams[teamId], input.playerId));
+    return { ok: true };
+  }),
+
   signFreeAgent: memberProcedure.input(z.object({ playerId: z.string() })).mutation(async ({ ctx, input }) => {
     const teamId = requireTeam(ctx.membership);
     await mutateLeague(ctx.db, input.leagueId, (L) => {
-      if (L.phase === 'offseason') mustBeStage(L, 'free-agency', 'training-camp');
+      if (L.phase === 'offseason') mustBeStage(L, 'training-camp');
       const team = L.teams[teamId];
       const p = L.players[input.playerId];
       if (!p || !freeAgents(L).includes(p)) throw badRequest('That player is not a free agent');
