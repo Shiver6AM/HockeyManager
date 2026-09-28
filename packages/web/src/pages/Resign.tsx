@@ -16,11 +16,13 @@ export function ResignPage() {
   const done = { onSuccess: () => qc.invalidateQueries() };
   const letGo = useMutation(trpc.offseason.setResign.mutationOptions(done));
   const qualify = useMutation(trpc.offseason.setQualify.mutationOptions(done));
+  const qualifyAll = useMutation(trpc.offseason.setQualifyAll.mutationOptions(done));
   const [open, setOpen] = useState<string | null>(null);
   if (q.isLoading) return <Spinner />;
   const d = q.data;
   if (!d) return <Card><Empty>Contract decisions happen during the offseason.</Empty></Card>;
   const room = d.salaryCap - d.committedWithResigns;
+  const unqualified = d.players.filter((p) => p.status === 'RFA' && !p.qualified && !p.agreed && !p.letGo && !p.signedNow);
 
   return (
     <div className="space-y-5">
@@ -40,9 +42,20 @@ export function ResignPage() {
           <Stat label="Cap space left" value={money(room)} tone={room < 0 ? 'bad' : 'good'} />
         </div>
         {!d.open && <p className="mt-3 text-sm text-warn">The re-signing window has closed.</p>}
+        {d.open && unqualified.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-ice-300">
+            <span>
+              {unqualified.length} RFA{unqualified.length > 1 ? 's' : ''} without a deal or a qualifying offer (
+              {money(unqualified.reduce((s, p) => s + (p.qualifyingOffer?.salary ?? 0), 0))} to qualify all).
+            </span>
+            <Button variant="secondary" className="px-2 py-0.5 text-xs" disabled={qualifyAll.isPending} onClick={() => qualifyAll.mutate({ leagueId: L.id, qualify: true })}>
+              Qualify all RFAs
+            </Button>
+          </div>
+        )}
       </Card>
       <MyRfas />
-      <ErrorBox error={letGo.error ?? qualify.error} />
+      <ErrorBox error={letGo.error ?? qualify.error ?? qualifyAll.error} />
       <Card title={`Your expiring players (${d.players.length})`}>
         {d.players.length === 0 ? (
           <Empty>No contracts expire this summer.</Empty>
@@ -104,6 +117,19 @@ export function ResignPage() {
                       </div>
                     )}
                   </div>
+                  {p.qoOutlook && p.qualifyingOffer && !p.agreed && !p.signedNow && (
+                    <p className="mt-1.5 text-xs text-ice-400">
+                      Qualifying offer <span className="text-ice-100">{money(p.qualifyingOffer.salary)} × 1y</span>. If qualified, he'd likely{' '}
+                      <span className="text-ice-100">
+                        {p.qoOutlook.response === 'accept'
+                          ? 'accept it'
+                          : p.qoOutlook.response === 'arbitration'
+                            ? `file for arbitration (award around ${money(p.qoOutlook.expectedAward)})`
+                            : 'hold out for more (other teams can tender offer sheets)'}
+                      </span>
+                      {!p.qoOutlook.arbitrationEligible && ' · not yet arbitration-eligible'}. If not qualified, he becomes an unrestricted free agent.
+                    </p>
+                  )}
                   {open === p.id && !p.agreed && (
                     <OfferForm leagueId={L.id} playerId={p.id} deal={p} mode="negotiate" attemptsLeft={p.attemptsLeft} capRoom={room} onClose={() => setOpen(null)} />
                   )}

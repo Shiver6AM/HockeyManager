@@ -76,10 +76,22 @@ export function buyoutTerms(league: League, p: Player): { perSeason: number; sea
   return { perSeason: Math.round(total / seasons / 25_000) * 25_000, seasons, total: Math.round(total) };
 }
 
-/** Qualifying offer for a restricted free agent: a one-year deal at 105% of his salary. */
-export function qualifyingOffer(p: Player): ContractOffer {
+/**
+ * Qualifying-offer tiers (NHL-style), in dollars at the base cap; they scale
+ * with the cap. Low salaries get a raise, mid-range salaries a smaller one
+ * (never above the upper threshold), and anyone above it is qualified at his
+ * current salary.
+ */
+export const QO_TIERS = { lowMax: 800_000, lowRate: 1.1, midMax: 1_100_000, midRate: 1.05 };
+
+/** Qualifying offer for a restricted free agent: always a one-year deal. */
+export function qualifyingOffer(p: Player, league?: League): ContractOffer {
+  const scale = league ? league.settings.salaryCap / BASE_CAP : 1;
   const prev = p.contract?.salary ?? LEAGUE_MIN_SALARY;
-  return { salary: Math.max(LEAGUE_MIN_SALARY, round25k(prev * 1.05)), years: 1 };
+  const lowMax = QO_TIERS.lowMax * scale;
+  const midMax = QO_TIERS.midMax * scale;
+  const salary = prev <= lowMax ? prev * QO_TIERS.lowRate : prev <= midMax ? Math.min(prev * QO_TIERS.midRate, midMax) : prev;
+  return { salary: Math.max(LEAGUE_MIN_SALARY, round25k(salary)), years: 1 };
 }
 
 export function capRoom(league: League, team: Team): number {

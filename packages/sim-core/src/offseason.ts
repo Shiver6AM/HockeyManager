@@ -30,9 +30,9 @@ import {
   SUMMER_ROSTER_MAX,
 } from './contracts';
 import { aiValuation, askFromTeam, offerUtility, respondToOffer, type OfferResult } from './negotiation';
-import { holdArbitration, openCase, openRfaCase, resolveOfferSheets, settleRfaCase } from './rfa';
+import { aiWouldQualify, holdArbitration, openCase, openRfaCase, resolveOfferSheets, settleRfaCase } from './rfa';
 import { developPlayer, retirementChance } from './development';
-import { createDraft, runDraft } from './draft';
+import { createDraft, runDraft, scoutedPotential } from './draft';
 import { generatePlayer, talentStats } from './generate';
 import { autoLines } from './lines';
 import { age, overall } from './ratings';
@@ -370,8 +370,10 @@ function finishResigning(league: League): number {
       if (!deal && isRfa) {
         // Humans qualify explicitly; an undecided manager's assistant GM qualifies like an AI would.
         const undecided = os.resign[id] === undefined && !negotiated(league, p, teamId);
-        const qualify =
-          team.controller.kind === 'human' ? os.qualified?.[id] === true || (undecided && aiWantsToResign(league, team, p)) : aiWantsToResign(league, team, p);
+        // Qualifying is cheap: keep the rights to anyone useful, and to young players with upside.
+        const upside = age(p, league.season) + 1 <= 24 && scoutedPotential(league, team.id, p) >= 66;
+        const aiWould = (aiWantsToResign(league, team, p) || upside || overall(p) >= 64) && aiWouldQualify(league, team, p);
+        const qualify = team.controller.kind === 'human' ? os.qualified?.[id] === true || (undecided && aiWould) : aiWould;
         if (qualify) {
           // He stays on his qualifying offer for now; offer sheets and arbitration follow.
           openRfaCase(league, team, p);
@@ -388,7 +390,7 @@ function finishResigning(league: League): number {
         team.roster = team.roster.filter((x) => x !== id);
         p.teamId = null;
         p.contract = null;
-        tx(league, 'departure', teamId, p, `${nm(p)} leaves as a free agent`);
+        tx(league, 'departure', teamId, p, isRfa ? `${nm(p)} is not qualified and becomes an unrestricted free agent` : `${nm(p)} leaves as a free agent`);
       }
     }
   }

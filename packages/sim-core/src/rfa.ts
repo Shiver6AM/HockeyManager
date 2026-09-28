@@ -88,21 +88,60 @@ export function compensationPicks(league: League, teamId: TeamId, salary: number
 
 /** What an arbitrator would award, before the hearing's noise. */
 export function expectedAward(league: League, p: Player): number {
-  return Math.max(qualifyingOffer(p).salary, round25k(marketValue(p, league.season, league.settings.salaryCap) * 0.95));
+  return Math.max(qualifyingOffer(p, league).salary, round25k(marketValue(p, league.season, league.settings.salaryCap) * 0.95));
 }
 
 export function walkAwayThreshold(league: League): number {
   return round25k(WALK_AWAY_SHARE * league.settings.salaryCap);
 }
 
+/** Arbitration needs some professional experience: 22+ next season, or three seasons in the league. */
+export function arbitrationEligible(league: League, p: Player): boolean {
+  return age(p, league.season) + 1 >= 22 || (league.careerStats?.[p.id]?.length ?? 0) >= 3;
+}
+
+export type QoResponse = 'accept' | 'holdout' | 'arbitration';
+
+/**
+ * How a qualified RFA reacts to his qualifying offer: take it if it's about
+ * what he's worth, file for arbitration if he's worth clearly more (and
+ * eligible), otherwise hold out for a better deal or an offer sheet.
+ */
+export function qoResponse(league: League, p: Player, qo = qualifyingOffer(p, league)): QoResponse {
+  const worth = marketValue(p, league.season, league.settings.salaryCap);
+  // Depth players close to their QO just sign it; arbitration is for real raises.
+  if (worth <= qo.salary * 1.15 || worth - qo.salary < 250_000) return 'accept';
+  if (arbitrationEligible(league, p) && expectedAward(league, p) >= Math.max(qo.salary * 1.3, qo.salary + 750_000)) return 'arbitration';
+  return 'holdout';
+}
+
+/** Is a qualifying offer worth tendering, from an AI team's (or assistant GM's) point of view? */
+export function aiWouldQualify(league: League, team: Team, p: Player): boolean {
+  return qualifyingOffer(p, league).salary <= aiValuation(league, team, p) * 1.15;
+}
+
 /** Called when re-signing closes, for a qualified RFA without a deal. */
 export function openRfaCase(league: League, team: Team, p: Player) {
   const os = league.offseason!;
-  const qo = qualifyingOffer(p);
-  applyContract(league, p, qo); // provisional: what he plays on if nothing else happens
-  const arbitration = expectedAward(league, p) >= qo.salary * 1.1;
+  const qo = qualifyingOffer(p, league);
+  applyContract(league, p, qo); // what he plays on unless something else happens
+  const response = qoResponse(league, p, qo);
+  if (response === 'accept') {
+    (os.rfa ??= {})[p.id] = { teamId: team.id, qualifyingOffer: qo, arbitration: false, status: 'signed' };
+    tx(league, 'qualifying-offer', team.id, p, `${nm(p)} accepts his qualifying offer: 1 yr × ${money(qo.salary)}`);
+    return;
+  }
+  const arbitration = response === 'arbitration';
   (os.rfa ??= {})[p.id] = { teamId: team.id, qualifyingOffer: qo, arbitration, status: 'unsigned' };
-  tx(league, 'qualifying-offer', team.id, p, `${nm(p)} is qualified at ${money(qo.salary)}${arbitration ? ' and files for arbitration' : ''}; offer sheets are open`);
+  tx(
+    league,
+    'qualifying-offer',
+    team.id,
+    p,
+    arbitration
+      ? `${nm(p)} is qualified at ${money(qo.salary)} and files for arbitration; offer sheets are open`
+      : `${nm(p)} is qualified at ${money(qo.salary)} but holds out for a better deal; offer sheets are open`,
+  );
 }
 
 export function openCase(league: League, playerId: PlayerId): RfaCase | null {
@@ -273,6 +312,7 @@ export function holdArbitration(league: League): void {
     const team = league.teams[c.teamId];
     if (!c.arbitration) {
       c.status = 'signed';
+      tx(league, 'qualifying-offer', team.id, p, `${nm(p)} signs his qualifying offer: 1 yr × ${money(c.qualifyingOffer.salary)}`);
       continue;
     }
     const salary = Math.max(c.qualifyingOffer.salary, Math.max(LEAGUE_MIN_SALARY, round25k(expectedAward(league, p) * rng.normal(1, 0.05))));

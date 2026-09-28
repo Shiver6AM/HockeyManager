@@ -146,6 +146,11 @@ function ContractCells({ p }: { p: P }) {
           <span className={cx('text-xs', c.yearsLeft === 1 && !p.extension ? 'font-semibold text-warn' : 'text-ice-400')}>
             {c.kind === 'ELC' && <span className="mr-1 text-blue-300">ELC</span>}
             {c.expiresAs}
+            {p.qualifyingOffer && (
+              <span className="block text-[10px] font-normal text-ice-500" title="Qualifying offer needed to keep his rights">
+                QO {money(p.qualifyingOffer.salary)}
+              </span>
+            )}
           </span>
         ) : (
           '—'

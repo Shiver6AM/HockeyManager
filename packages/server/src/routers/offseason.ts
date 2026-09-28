@@ -27,6 +27,9 @@ import {
   ROSTER_MAX,
   scoutedPotential,
   negotiateFreeAgent,
+  arbitrationEligible,
+  expectedAward,
+  qoResponse,
   compensationPicks,
   compensationTable,
   decideOfferSheet,
@@ -199,7 +202,7 @@ export const offseasonRouter = router({
     const kept = ids.reduce((s, id) => {
       const p = L.players[id];
       if (p.extension) return s + p.extension.salary;
-      if (os.qualified?.[id]) return s + qualifyingOffer(p).salary;
+      if (os.qualified?.[id]) return s + qualifyingOffer(p, L).salary;
       return s;
     }, 0);
     return {
@@ -222,7 +225,16 @@ export const offseasonRouter = router({
             agreed: p.extension ?? null,
             letGo: os.resign[id] === false,
             qualified: !!os.qualified?.[id],
-            qualifyingOffer: status === 'RFA' ? qualifyingOffer(p) : null,
+            qualifyingOffer: status === 'RFA' ? qualifyingOffer(p, L) : null,
+            /** If qualified: how he'd likely respond, and roughly what an arbitrator would award. */
+            qoOutlook:
+              status === 'RFA'
+                ? {
+                    response: qoResponse(L, p),
+                    arbitrationEligible: arbitrationEligible(L, p),
+                    expectedAward: Math.round(expectedAward(L, p) / 250_000) * 250_000,
+                  }
+                : null,
             attemptsLeft: neg && neg.teamId === my && neg.season === L.season ? Math.max(0, NEGOTIATION.maxAttempts - neg.attempts) : NEGOTIATION.maxAttempts,
             stats: L.skaterStats[id] ?? null,
             goalieStats: L.goalieStats[id] ?? null,
@@ -272,6 +284,23 @@ export const offseasonRouter = router({
       (os.qualified ??= {})[input.playerId] = input.qualify;
     });
     return { ok: true };
+  }),
+
+  /** Qualify (or un-qualify) every one of your expiring RFAs who doesn't have a deal yet. */
+  setQualifyAll: memberProcedure.input(z.object({ qualify: z.boolean() })).mutation(async ({ ctx, input }) => {
+    const teamId = requireTeam(ctx.membership);
+    return mutateLeague(ctx.db, input.leagueId, (L) => {
+      mustBeStage(L, 'draft', 're-sign');
+      const os = L.offseason!;
+      let n = 0;
+      for (const id of Object.keys(os.expiring)) {
+        const p = L.players[id];
+        if (p?.teamId !== teamId || p.contract?.expiresAs !== 'RFA' || p.extension || os.resign[id] === false) continue;
+        (os.qualified ??= {})[id] = input.qualify;
+        n++;
+      }
+      return { changed: n };
+    });
   }),
 
   freeAgents: memberProcedure.query(async ({ ctx, input }) => {
