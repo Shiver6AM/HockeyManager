@@ -16,6 +16,7 @@
  * Every random choice is seeded from the league seed, so results depend only on
  * the seed and on what the human managers decided.
  */
+import { proSeasons } from './prospects';
 import {
   askingContract,
   buyoutTerms,
@@ -41,6 +42,7 @@ import { ensureBodies, freeAgents, healthyRoster, isFreeAgent } from './roster';
 import { standings } from './league';
 import { closeBooks, setOwnerGoals } from './finances';
 import { considerForHallOfFame, newsFromTransactions } from './news';
+import { offseasonSkillsCoaches } from './skills';
 import { offseasonStaff } from './staff';
 import { buildSchedule } from './schedule';
 import type { CareerLine, ContractOffer, FaResult, League, OffseasonStage, Player, PlayerId, StandingsRow, Team, TeamId } from './types';
@@ -73,7 +75,8 @@ function archiveCareer(league: League) {
     const g = league.goalieStats[p.id] ?? null;
     const psk = league.playoffSkaterStats[p.id] ?? null;
     const pg = league.playoffGoalieStats[p.id] ?? null;
-    if (!sk && !g && !p.teamId) continue;
+    const minor = league.prospectStats?.[p.id] ?? null;
+    if (!sk && !g && !p.teamId && !minor) continue;
     const line: CareerLine = {
       season: league.season,
       teamId: p.teamId,
@@ -84,6 +87,10 @@ function archiveCareer(league: League) {
       playoffSkater: psk,
       playoffGoalie: pg,
     };
+    if (minor && minor.gp > 0) {
+      line.minor = minor;
+      line.orgId = p.prospectOf ?? p.teamId ?? null;
+    }
     (careers[p.id] ??= []).push(line);
   }
 }
@@ -116,8 +123,9 @@ function retire(league: League, p: Player) {
     career,
   });;
   considerForHallOfFame(league, record);
-  if (teamId && (overall(p) >= 68 || career.length >= 8)) {
-    tx(league, 'retirement', teamId, p, `${nm(p)} retires after ${career.length} season${career.length === 1 ? '' : 's'} (age ${age(p, league.season)})`);
+  const pro = proSeasons(career).length;
+  if (teamId && (overall(p) >= 68 || pro >= 8)) {
+    tx(league, 'retirement', teamId, p, `${nm(p)} retires after ${pro} season${pro === 1 ? '' : 's'} (age ${age(p, league.season)})`);
   }
   p.teamId = null;
   p.prospectOf = undefined;
@@ -240,10 +248,22 @@ function offseasonStepInner(league: League, opts: { force: boolean }): StepResul
       const made = runDraft(league, { force: opts.force });
       if (os.draft.current < os.draft.picks.length) return { from, to: 'draft', note: `${made} picks made; a manager is on the clock` };
       finishDraft(league);
+      answerPendingOffers(league);
       os.stage = 're-sign';
-      return { from, to: 're-sign', note: 'Draft complete' };
+      os.resignDay = 1;
+      aiResignDay(league, 1);
+      return { from, to: 're-sign', note: `Draft complete. The re-signing week is open (day 1 of ${RESIGN_DAYS}).` };
     }
     case 're-sign': {
+      // A week to re-sign your own pending free agents. Offers made today are answered tomorrow.
+      const day = os.resignDay ?? RESIGN_DAYS;
+      if (day < RESIGN_DAYS) {
+        os.resignDay = day + 1;
+        answerPendingOffers(league);
+        aiResignDay(league, day + 1);
+        return { from, to: 're-sign', note: `Re-signing week: day ${day + 1} of ${RESIGN_DAYS}` };
+      }
+      answerPendingOffers(league, true);
       const n = finishResigning(league);
       os.stage = 'free-agency';
       return { from, to: 'free-agency', note: `${n} players re-signed` };
@@ -300,7 +320,7 @@ function aiWantsToResign(league: League, team: Team, p: Player): boolean {
 
 /** Apply an agreed contract (re-signing, extension, qualifying offer or signing). */
 export function applyContract(league: League, p: Player, offer: ContractOffer) {
-  const yearsIn = (league.careerStats?.[p.id]?.length ?? 0) + 1;
+  const yearsIn = proSeasons(league.careerStats?.[p.id] ?? []).length + 1;
   p.contract = {
     salary: offer.salary,
     yearsLeft: offer.years,
@@ -326,6 +346,128 @@ function aiResign(league: League, team: Team, p: Player, room: number): Contract
     if (second.result === 'accept') return r.counter;
   }
   return null;
+}
+
+// ---- The re-signing week: offers are answered the next day ----
+
+export const RESIGN_DAYS = 7;
+
+/** Offers during the draft and the re-signing week are answered the next day. */
+export function offersAreDeferred(league: League): boolean {
+  const stage = league.offseason?.stage;
+  return league.phase === 'offseason' && (stage === 'draft' || stage === 're-sign');
+}
+
+/** Make an offer to one of your expiring players; he answers on the next day. */
+export function submitResignOffer(league: League, team: Team, p: Player, offer: ContractOffer): { message: string } {
+  if (!offersAreDeferred(league)) throw new Error('Offers are answered on the spot right now');
+  if (p.teamId !== team.id) throw new Error('Not your player');
+  if (!canExtend(league, p)) throw new Error('He is not eligible for a new deal right now');
+  if (p.extension) throw new Error('He has already agreed to a new deal');
+  if (offer.years < 1 || offer.years > 8) throw new Error('Contracts run 1 to 8 years');
+  if (offer.salary < LEAGUE_MIN_SALARY) throw new Error('Offer is below the league minimum');
+  checkNextSeasonCap(league, team, p, offer);
+  const neg = league.negotiations?.[p.id];
+  if (neg && neg.teamId === team.id && neg.season === league.season && neg.attempts >= 3) {
+    throw new Error(`${p.lastName}'s camp has stopped taking calls. He'll see what the market says.`);
+  }
+  const os = league.offseason!;
+  (os.pendingOffers ??= {})[p.id] = { teamId: team.id, offer, madeOn: os.resignDay ?? 0 };
+  return { message: `Offer sent to ${p.firstName} ${p.lastName}'s agent. Expect an answer tomorrow.` };
+}
+
+export function withdrawResignOffer(league: League, team: Team, playerId: PlayerId) {
+  const pend = league.offseason?.pendingOffers?.[playerId];
+  if (pend?.teamId === team.id) delete league.offseason!.pendingOffers![playerId];
+}
+
+/** Accept the counter-offer a player came back with: he proposed it, so it's a deal. */
+export function acceptCounter(league: League, team: Team, p: Player) {
+  const os = league.offseason;
+  const resp = os?.responses?.[p.id];
+  if (!resp || resp.teamId !== team.id || resp.result !== 'counter' || !resp.counter) throw new Error('There is no counter-offer to accept');
+  if (!canExtend(league, p) || p.extension) throw new Error('He is no longer available on those terms');
+  checkNextSeasonCap(league, team, p, resp.counter);
+  p.extension = resp.counter;
+  tx(league, 'extension', team.id, p, `${nm(p)} agrees to a new deal: ${resp.counter.years} yr × $${(resp.counter.salary / 1e6).toFixed(2)}M`);
+  os!.responses![p.id] = { ...resp, result: 'accept', offer: resp.counter, counter: undefined, message: `${p.lastName} accepts: ${resp.counter.years} yr × $${(resp.counter.salary / 1e6).toFixed(2)}M.` };
+}
+
+function checkNextSeasonCap(league: League, team: Team, p: Player, offer: ContractOffer) {
+  const nextYear = team.roster
+    .filter((id) => id !== p.id)
+    .map((id) => league.players[id])
+    .filter((x) => x.contract && (x.contract.yearsLeft > 1 || x.extension))
+    .reduce((s, x) => s + (x.extension?.salary ?? x.contract!.salary), 0);
+  if (nextYear + offer.salary > league.settings.salaryCap) throw new Error('That deal would put you over next season’s cap');
+}
+
+/**
+ * The morning after: every player with an offer on the table answers it. Close
+ * offers sometimes take an extra day. On the last day everyone answers.
+ */
+function answerPendingOffers(league: League, lastDay = false) {
+  const os = league.offseason!;
+  const pending = os.pendingOffers ?? {};
+  const day = os.resignDay ?? 0;
+  const rng = new Rng(deriveSeed(league.seed, `answers:${league.season}:${day}`));
+  for (const id of Object.keys(pending).sort()) {
+    const pend = pending[id];
+    const p = league.players[id];
+    const team = league.teams[pend.teamId];
+    if (!p || !team || p.teamId !== team.id || p.extension || !canExtend(league, p)) {
+      delete pending[id];
+      continue;
+    }
+    // Close calls: he sleeps on it once in a while (never on the final day).
+    const u = offerUtility(league, p, team, pend.offer, os.expiring[p.id]);
+    if (!lastDay && !pend.delayed && u >= 0.9 && u < 1.05 && rng.chance(0.3)) {
+      pend.delayed = true;
+      (os.responses ??= {})[id] = { teamId: team.id, offer: pend.offer, day, result: 'considering', message: `${p.lastName}'s agent says he's thinking it over. Expect an answer tomorrow.` };
+      continue;
+    }
+    delete pending[id];
+    let r: OfferResult;
+    try {
+      r = offerExtension(league, team, p, pend.offer);
+    } catch (e) {
+      r = { result: 'refuse', message: (e as Error).message };
+    }
+    (os.responses ??= {})[id] = {
+      teamId: team.id,
+      offer: pend.offer,
+      day,
+      result: r.result,
+      counter: r.result === 'counter' ? r.counter : undefined,
+      message: r.message,
+    };
+  }
+}
+
+/** AI teams work through their own pending free agents during the week, a few each day. */
+function aiResignDay(league: League, day: number) {
+  const os = league.offseason!;
+  const decided = (os.aiDecided ??= {});
+  for (const team of Object.values(league.teams)) {
+    if (team.controller.kind !== 'ai') continue;
+    const mine = Object.keys(os.expiring)
+      .map((id) => league.players[id])
+      .filter((p) => p && p.teamId === team.id && !p.extension && !decided[p.id]);
+    // Spread decisions over the week; the best players are settled first.
+    const today = mine
+      .sort((a, b) => overall(b) - overall(a))
+      .filter((p, i) => day >= RESIGN_DAYS || i % RESIGN_DAYS < day || deriveSeed(league.seed, `aiday:${p.id}`) % RESIGN_DAYS < day);
+    for (const p of today) {
+      decided[p.id] = true;
+      if (p.contract?.expiresAs === 'RFA') continue; // qualifying offers are settled when free agency opens
+      const room = capRoom(league, team) + Object.keys(os.expiring).filter((x) => league.players[x]?.teamId === team.id && !league.players[x].extension).reduce((s, x) => s + (league.players[x].contract?.salary ?? 0), 0);
+      const deal = aiResign(league, team, p, room);
+      if (deal) {
+        p.extension = deal;
+        tx(league, 'extension', team.id, p, `${nm(p)} re-signs: ${deal.years} yr × $${(deal.salary / 1e6).toFixed(2)}M`);
+      }
+    }
+  }
 }
 
 function negotiated(league: League, p: Player, teamId: TeamId): boolean {
@@ -360,7 +502,7 @@ function finishResigning(league: League): number {
       let deal: ContractOffer | null = null;
       let byAssistant = false;
       if (p.extension) deal = p.extension; // agreed during the season or this summer
-      else if (team.controller.kind === 'ai') deal = aiResign(league, team, p, room);
+      else if (team.controller.kind === 'ai') deal = os.aiDecided?.[id] && !isRfa ? null : aiResign(league, team, p, room);
       // Human managers who never got to a player: the assistant GM handles him like
       // an AI team would. An explicit "let go" is always respected.
       else if (os.resign[id] === undefined && !os.qualified?.[id] && !negotiated(league, p, teamId)) {
@@ -736,6 +878,7 @@ function startNewSeason(league: League) {
 
   closeBooks(league);
   offseasonStaff(league);
+  offseasonSkillsCoaches(league);
   league.season += 1;
   league.day = 0;
   league.phase = 'regular-season';
@@ -745,6 +888,7 @@ function startNewSeason(league: League) {
   league.goalieStats = {};
   league.playoffSkaterStats = {};
   league.playoffGoalieStats = {};
+  league.prospectStats = {};
   league.offseason = null;
   for (const t of Object.values(league.teams)) if (t.deadCap) t.deadCap = t.deadCap.filter((d) => d.untilSeason >= league.season);
   league.negotiations = {};

@@ -62,8 +62,9 @@ export function TacticsPanel({ t, leagueId }: { t: TeamData; leagueId: string })
         <p className="text-sm text-ice-300">
           Systems change how your team plays in the simulation. Each option's <span className="font-semibold text-white">fit</span> is how well your best
           players suit it, using their role skills (net front, point, forecheck, penalty killing…), which come from their ratings and playing style: a power
-          forward is built for the net front and the forecheck, an offensive defenseman for the point. A good fit amplifies a system's strengths; a poor one
-          mutes them.
+          forward is built for the net front and the forecheck, an offensive defenseman for the point. What matters is how much better your players suit one
+          option than the others: the <span className="font-semibold text-white">rtg</span> chip is roughly what that's worth, in rating points for everyone on
+          the ice. Playing against your roster's grain can cost several wins a season.
           {t.isMine ? ' Changes apply from the next game.' : ''}
         </p>
         {t.isMine && t.autoLines && (
@@ -80,6 +81,7 @@ export function TacticsPanel({ t, leagueId }: { t: TeamData; leagueId: string })
             slots?: Array<{ label: string; role: string }>;
           }>;
           const fits = t.systemFits[g.key] as Record<string, number>;
+          const impact = (t.systemImpact[g.key] ?? {}) as Record<string, number>;
           return (
             <Card key={g.key} title={g.title}>
               <p className="mb-3 text-xs text-ice-400">{g.intro}</p>
@@ -107,8 +109,20 @@ export function TacticsPanel({ t, leagueId }: { t: TeamData; leagueId: string })
                           style={fitTone(fits[o.id])}
                           title="How well your best players fit this system"
                         >
-                          Fit {fits[o.id]}
+                          Fit {Math.round(fits[o.id])}
                         </span>
+                        {impact[o.id] !== undefined && (
+                          <span
+                            className={cx(
+                              'tabular rounded px-1.5 py-0.5 text-[11px] font-semibold',
+                              impact[o.id] >= 0.3 ? 'bg-win/20 text-win' : impact[o.id] <= -0.3 ? 'bg-goal/15 text-red-200' : 'bg-rink-800 text-ice-300',
+                            )}
+                            title="Roughly what this choice is worth to your players on the ice, in rating points (0 = a typical, well-chosen system). It comes from how much better they suit this option than the others."
+                          >
+                            {impact[o.id] >= 0 ? '+' : '−'}
+                            {Math.abs(impact[o.id]).toFixed(1)} rtg
+                          </span>
+                        )}
                       </span>
                       <span className="mt-1 block pl-5 text-xs text-ice-400">{o.help}</span>
                       {o.slots && (

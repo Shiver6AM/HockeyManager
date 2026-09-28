@@ -108,7 +108,7 @@ export function roleSkill(p: Player, role: Role): number {
   return roleSkills(p)[role];
 }
 
-const cache = new WeakMap<object, { sig: number; arch: string; roles: Record<Role, number> }>();
+const cache = new WeakMap<object, { sig: number; arch: string; trained: number; roles: Record<Role, number> }>();
 const signature = (s: SkaterRatings) =>
   s.skating + 3 * s.shooting + 7 * s.passing + 11 * s.handling + 13 * s.offIQ + 17 * s.defIQ + 19 * s.checking + 23 * s.faceoffs + 29 * s.discipline + 31 * s.endurance;
 
@@ -120,6 +120,7 @@ function computeRole(p: Player, role: Role): number {
   v += AFFINITY[p.archetype]?.[role] ?? 0;
   v += POSITION_ADJ[p.pos === 'D' ? 'D' : 'F'][role] ?? 0;
   v += quirk(p.id, role);
+  v += p.roleTraining?.[role] ?? 0;
   return Math.round(Math.max(25, Math.min(99, v)));
 }
 
@@ -127,10 +128,12 @@ function computeRole(p: Player, role: Role): number {
 export function roleSkills(p: Player): Record<Role, number> {
   if (!p.skater) return Object.fromEntries(ROLES.map((r) => [r, 0])) as Record<Role, number>;
   const sig = signature(p.skater);
+  let trained = 0;
+  if (p.roleTraining) ROLES.forEach((r, i) => (trained += (p.roleTraining![r] ?? 0) * (i + 1) * 97));
   const hit = cache.get(p.skater);
-  if (hit && hit.sig === sig && hit.arch === p.archetype) return hit.roles;
+  if (hit && hit.sig === sig && hit.arch === p.archetype && hit.trained === trained) return hit.roles;
   const roles = Object.fromEntries(ROLES.map((r) => [r, computeRole(p, r)])) as Record<Role, number>;
-  cache.set(p.skater, { sig, arch: p.archetype, roles });
+  cache.set(p.skater, { sig, arch: p.archetype, trained, roles });
   return roles;
 }
 
@@ -280,9 +283,50 @@ export interface SystemEffect {
   oppAtt: number;
   /** Opponent's shooting percentage. */
   oppShq: number;
+  /** Rating points added to the unit's offense and defense for suiting the system. */
+  offAdj: number;
+  defAdj: number;
 }
 
-export const NEUTRAL: SystemEffect = { att: 1, shq: 1, rebound: 1, dShare: 1, oppAtt: 1, oppShq: 1 };
+export const NEUTRAL: SystemEffect = { att: 1, shq: 1, rebound: 1, dShare: 1, oppAtt: 1, oppShq: 1, offAdj: 0, defAdj: 0 };
+
+/**
+ * How strongly suiting a system shows up, in rating points per point of
+ * relative fit (the chosen option's fit minus the average of the options in
+ * its group, for the players on the ice). Picking the system your players are
+ * built for is worth a couple of rating points across the lineup; picking the
+ * one they're worst at costs about as much.
+ */
+export const SYSTEM_K = { forecheck: 0.75, offense: 0.36, pp: 2.2, pk: 0.8 };
+/**
+ * Typical relative fit of a coach's pick (the best option usually edges the
+ * average by this much), so that a well-chosen system is neutral league-wide.
+ */
+export const SYSTEM_CENTER = { forecheck: 1.1, offense: 2.4, pp: 0.2, pk: 2.6 };
+
+/** Relative fit of `chosen` among `fits`: its fit minus the group average. */
+export function relativeFit<K extends string>(fits: Record<K, number>, chosen: K): number {
+  const vs = Object.values(fits) as number[];
+  return fits[chosen] - vs.reduce((a, b) => a + b, 0) / vs.length;
+}
+
+/** Fit of each forecheck and offensive style for a unit (or roster), from its role-skill averages. */
+export function evenStrengthFits(avg: (r: Role) => number) {
+  return {
+    forecheck: { aggressive: avg('forecheck'), balanced: (avg('forecheck') + avg('transition')) / 2, trap: avg('pkForward') } as Record<Forecheck, number>,
+    offense: {
+      cycle: (avg('forecheck') + avg('halfWall')) / 2,
+      crash: avg('netFront'),
+      perimeter: avg('point'),
+      rush: avg('transition'),
+    } as Record<OzStyle, number>,
+  };
+}
+
+/** Fit of each PK strategy for a unit, from its role-skill averages. */
+export function penaltyKillFits(avg: (r: Role) => number): Record<PkStrategy, number> {
+  return { box: avg('pkDefense'), diamond: (avg('pkForward') + avg('pkDefense')) / 2, aggressive: avg('pkForward') };
+}
 
 /** Fit relative to a typical unit for that situation, in tens of rating points (-1.5 … +1.5). */
 const fBase = (fit: number, center: number) => Math.max(-1.5, Math.min(1.5, (fit - center) / 10));
@@ -296,6 +340,14 @@ export const FIT_CENTER = { ev: 73.5, pp: 82.5, pk: 80 };
 /** Even strength: forecheck × offensive-zone style, given the on-ice unit's skill averages. */
 export function evenStrengthEffect(t: Tactics, avg: (r: Role) => number): SystemEffect {
   const e = { ...NEUTRAL };
+  const fits = evenStrengthFits(avg);
+  const relFc = relativeFit(fits.forecheck, t.forecheck) - SYSTEM_CENTER.forecheck;
+  const relOz = relativeFit(fits.offense, t.offense) - SYSTEM_CENTER.offense;
+  // Suiting the forecheck helps where that system lives: pressure creates offense,
+  // the trap is a defensive structure, the 1-2-2 a bit of both.
+  const [fo, fd] = t.forecheck === 'aggressive' ? [1, 0.5] : t.forecheck === 'trap' ? [0.5, 1] : [0.75, 0.75];
+  e.offAdj += SYSTEM_K.forecheck * relFc * fo + SYSTEM_K.offense * relOz;
+  e.defAdj += SYSTEM_K.forecheck * relFc * fd + SYSTEM_K.offense * relOz * 0.35;
   const f = (x: number) => fBase(x, FIT_CENTER.ev);
   const fc = f(avg('forecheck'));
   if (t.forecheck === 'aggressive') {
@@ -331,9 +383,10 @@ export function evenStrengthEffect(t: Tactics, avg: (r: Role) => number): System
 }
 
 /** Power play: how well each slot is filled, weighted by the formation. */
-export function powerPlayEffect(formation: PpFormation, slotFit: number): SystemEffect {
+export function powerPlayEffect(formation: PpFormation, slotFit: number, rel = SYSTEM_CENTER.pp): SystemEffect {
   const x = fBase(slotFit, FIT_CENTER.pp);
   const e = { ...NEUTRAL };
+  e.offAdj += SYSTEM_K.pp * (rel - SYSTEM_CENTER.pp);
   if (formation === 'umbrella') {
     e.att *= 1.02 + 0.015 * x;
     e.shq *= 0.985 + 0.015 * x;
@@ -350,9 +403,10 @@ export function powerPlayEffect(formation: PpFormation, slotFit: number): System
 }
 
 /** Penalty kill: strategy × personnel, with a small bonus when it counters the opponent's formation. */
-export function penaltyKillEffect(strategy: PkStrategy, fit: number, vs: PpFormation): SystemEffect {
+export function penaltyKillEffect(strategy: PkStrategy, fit: number, vs: PpFormation, rel = SYSTEM_CENTER.pk): SystemEffect {
   const x = fBase(fit, FIT_CENTER.pk);
   const e = { ...NEUTRAL };
+  e.defAdj += SYSTEM_K.pk * (rel - SYSTEM_CENTER.pk);
   if (strategy === 'box') {
     e.oppAtt *= 1.015 - 0.012 * x;
     e.oppShq *= 0.98 - 0.012 * x;
@@ -370,7 +424,16 @@ export function penaltyKillEffect(strategy: PkStrategy, fit: number, vs: PpForma
 }
 
 export function combine(a: SystemEffect, b: SystemEffect): SystemEffect {
-  return { att: a.att * b.att, shq: a.shq * b.shq, rebound: a.rebound * b.rebound, dShare: a.dShare * b.dShare, oppAtt: a.oppAtt * b.oppAtt, oppShq: a.oppShq * b.oppShq };
+  return {
+    att: a.att * b.att,
+    shq: a.shq * b.shq,
+    rebound: a.rebound * b.rebound,
+    dShare: a.dShare * b.dShare,
+    oppAtt: a.oppAtt * b.oppAtt,
+    oppShq: a.oppShq * b.oppShq,
+    offAdj: a.offAdj + b.offAdj,
+    defAdj: a.defAdj + b.defAdj,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -413,6 +476,26 @@ export function fillSlots(slots: Slot[], pool: Player[], prefer?: (slot: Slot, p
   return out;
 }
 
+/** Fit of each PP formation for a unit: the unit's best skill at each of the formation's spots. */
+export function powerPlayFits(unit: Player[]): Record<PpFormation, number> {
+  return powerPlayFitsOf(unit.map(roleSkills));
+}
+
+export function powerPlayFitsOf(unit: Array<Record<Role, number>>): Record<PpFormation, number> {
+  const out = {} as Record<PpFormation, number>;
+  for (const k of Object.keys(PP_FORMATIONS) as PpFormation[]) {
+    const slots = PP_FORMATIONS[k].slots;
+    let sum = 0;
+    for (const sl of slots) {
+      let best = -Infinity;
+      for (const r of unit) if (r[sl.role] > best) best = r[sl.role];
+      sum += best;
+    }
+    out[k] = sum / slots.length;
+  }
+  return out;
+}
+
 /** Average skill of a unit in its slots. */
 export function unitFit(slots: Slot[], players: Array<Player | undefined>): number {
   let s = 0;
@@ -427,59 +510,42 @@ export function unitFit(slots: Slot[], players: Array<Player | undefined>): numb
 }
 
 /**
- * The coach's pick for a roster: the power-play formation its best players fit,
- * the offensive style it's built for, and a forecheck and PK that suit it.
+ * The coach's pick for a roster: in each group, the option its players fit
+ * best (ties go to the more conservative choice).
  */
 export function suggestTactics(skaters: Player[]): Tactics {
-  const fwd = skaters.filter((p) => p.pos !== 'D');
-  const best = (xs: Array<[string, number]>) => xs.reduce((a, b) => (b[1] > a[1] ? b : a))[0];
-  // Power-play formation follows the roster's standout asset: an elite point man
-  // (umbrella), net-front strength (overload), otherwise flank shooters and a
-  // playmaker (1-3-1). Thresholds are set so a league spreads across all three.
-  const fwdTop = (r: Role, n: number) => topAvg(fwd, r, n);
-  const flanks = (fwdTop('oneTimer', 2) + fwdTop('halfWall', 2)) / 2;
-  const pointGap = topAvg(skaters.filter((p) => p.pos === 'D'), 'point', 2) - flanks;
-  const netGap = fwdTop('netFront', 2) - flanks;
-  const pp: PpFormation = pointGap >= 0 && pointGap >= netGap ? 'umbrella' : netGap >= 1 ? 'overload' : '1-3-1';
-  const offense = best([
-    ['cycle', (topAvg(fwd, 'forecheck', 9) + topAvg(fwd, 'halfWall', 9)) / 2 + 0.5],
-    ['crash', topAvg(fwd, 'netFront', 9)],
-    ['perimeter', topAvg(skaters.filter((p) => p.pos === 'D'), 'point', 6) - 1],
-    ['rush', topAvg(fwd, 'transition', 9)],
-  ]) as OzStyle;
-  // Thresholds sit around league-typical values so teams spread across systems.
-  // Forecheck follows what the forwards do best: hunt pucks, skate, or play positionally.
-  const fc = topAvg(fwd, 'forecheck', 9);
-  const tr = topAvg(fwd, 'transition', 9);
-  const disc = topAvg(fwd, 'pkForward', 9);
-  const forecheck: Forecheck = fc >= Math.max(tr, disc) + 1 ? 'aggressive' : disc >= Math.max(tr, fc) ? 'trap' : 'balanced';
-  const pkF = topAvg(fwd, 'pkForward', 4);
-  const pkD = topAvg(skaters.filter((p) => p.pos === 'D'), 'pkDefense', 4);
-  const pk: PkStrategy = pkF >= pkD + 5 ? 'aggressive' : pkD >= pkF + 1 ? 'box' : 'diamond';
-  return { forecheck, offense, pp, pk };
+  const fits = systemFits(skaters, DEFAULT_TACTICS);
+  const best = <K extends string>(xs: Record<K, number>, order: K[]) => order.reduce((a, b) => (xs[b] > xs[a] ? b : a));
+  return {
+    forecheck: best(fits.forecheck, ['balanced', 'aggressive', 'trap']),
+    offense: best(fits.offense, ['cycle', 'rush', 'crash', 'perimeter']),
+    pp: best(fits.pp, ['umbrella', '1-3-1', 'overload']),
+    pk: best(fits.pk, ['box', 'diamond', 'aggressive']),
+  };
 }
 
 /** Fit (0–100 scale) of a roster's best players for each system choice, for the tactics screen. */
 export function systemFits(skaters: Player[], t: Tactics) {
   const fwd = skaters.filter((p) => p.pos !== 'D');
   const def = skaters.filter((p) => p.pos === 'D');
-  const pick = (r: Role, pool: Player[], n: number) => Math.round(topAvg(pool, r, n));
+  const pick = (r: Role, pool: Player[], n: number) => topAvg(pool, r, n);
+  const round1 = (x: number) => Math.round(x * 10) / 10;
   return {
     forecheck: Object.fromEntries(
-      (Object.keys(FORECHECKS) as Forecheck[]).map((k) => [k, Math.round(FORECHECKS[k].roles.reduce((s, r) => s + pick(r, fwd, 9), 0) / FORECHECKS[k].roles.length)]),
+      (Object.keys(FORECHECKS) as Forecheck[]).map((k) => [k, round1(FORECHECKS[k].roles.reduce((s, r) => s + pick(r, fwd, 9), 0) / FORECHECKS[k].roles.length)]),
     ) as Record<Forecheck, number>,
     offense: Object.fromEntries(
-      (Object.keys(OZ_STYLES) as OzStyle[]).map((k) => [k, Math.round(OZ_STYLES[k].roles.reduce((s, r) => s + pick(r, r === 'point' ? def : fwd, r === 'point' ? 6 : 9), 0) / OZ_STYLES[k].roles.length)]),
+      (Object.keys(OZ_STYLES) as OzStyle[]).map((k) => [k, round1(OZ_STYLES[k].roles.reduce((s, r) => s + pick(r, r === 'point' ? def : fwd, r === 'point' ? 6 : 9), 0) / OZ_STYLES[k].roles.length)]),
     ) as Record<OzStyle, number>,
     pp: Object.fromEntries(
       (Object.keys(PP_FORMATIONS) as PpFormation[]).map((k) => {
         const slots = PP_FORMATIONS[k].slots;
         const byId = new Map(skaters.map((p) => [p.id, p]));
-        return [k, Math.round(unitFit(slots, fillSlots(slots, skaters).map((id) => byId.get(id))))];
+        return [k, Math.round(10 * unitFit(slots, fillSlots(slots, skaters).map((id) => byId.get(id)))) / 10];
       }),
     ) as Record<PpFormation, number>,
     pk: Object.fromEntries(
-      (Object.keys(PK_STRATEGIES) as PkStrategy[]).map((k) => [k, Math.round(PK_STRATEGIES[k].roles.reduce((s, r) => s + pick(r, r === 'pkDefense' ? def : fwd, 4), 0) / PK_STRATEGIES[k].roles.length)]),
+      (Object.keys(PK_STRATEGIES) as PkStrategy[]).map((k) => [k, round1(PK_STRATEGIES[k].roles.reduce((s, r) => s + pick(r, r === 'pkDefense' ? def : fwd, 4), 0) / PK_STRATEGIES[k].roles.length)]),
     ) as Record<PkStrategy, number>,
     current: t,
   };

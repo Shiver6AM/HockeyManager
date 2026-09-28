@@ -5,6 +5,7 @@ import { EMPTY_FILTERS, matchesFilters, PlayerFilterBar, SortTh, useSort, type F
 import { Badge, Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip, TeamLink } from '../components/ui';
 import { money } from '../format';
 import { useTRPC, type Outputs } from '../trpc';
+import { dayLabel } from '../format';
 import { useLeague } from './LeagueLayout';
 
 type Asset = { kind: 'player'; id: string } | { kind: 'pick'; key: string };
@@ -172,7 +173,11 @@ export function TradesPage() {
           <h1 className="font-display text-2xl font-semibold tracking-wide text-white uppercase">Trade center</h1>
           <p className="text-sm text-ice-400">
             {status.data.open ? 'The trade window is open.' : status.data.reason}{' '}
-            {status.data.phase === 'regular-season' && `Deadline: day ${status.data.deadlineDay + 1} of the season.`}{' '}
+            {status.data.phase === 'regular-season' &&
+              status.data.daysToDeadline !== null &&
+              status.data.daysToDeadline >= 0 &&
+              `Trade deadline: ${dayLabel(L.season, status.data.deadlineDay, { month: 'short', day: 'numeric' })} (${status.data.daysToDeadline === 0 ? 'today' : `${status.data.daysToDeadline} day${status.data.daysToDeadline === 1 ? '' : 's'} away`}). After it, trades close until the season ends.`}{' '}
+            {status.data.duringDraft && 'Draft-day trading: this year’s unused picks can change hands while the draft runs.'}{' '}
             {status.data.review === 'commissioner' && 'Trades involving managers need commissioner approval.'}
           </p>
         </div>

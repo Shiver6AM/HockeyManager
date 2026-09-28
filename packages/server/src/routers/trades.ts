@@ -66,7 +66,7 @@ function requireTeam(m: Membership): string {
 }
 
 function assetView(L: League, a: TradeAsset) {
-  if (a.kind === 'pick') return { ...a, label: pickLabel(a.key) };
+  if (a.kind === 'pick') return { ...a, label: pickLabel(a.key, L) };
   const p = L.players[a.id];
   return { ...a, label: describeAsset(L, a), name: p ? `${p.firstName} ${p.lastName}` : a.id, pos: p?.pos, overall: p ? overall(p) : null };
 }
@@ -116,7 +116,7 @@ export const tradesRouter = router({
       prospects: (t.prospects ?? []).filter((id) => L.players[id]).map((id) => player(id, true)).sort((a, b) => b.overall - a.overall),
       picks: teamPicks(L, t.id).map((key) => {
         const [season, round, orig] = key.split(':');
-        return { key, label: pickLabel(key), season: Number(season), round: Number(round), original: orig, onBlock: onBlock.has(key), fits: assetFits(L, { kind: 'pick', key }, needs) };
+        return { key, label: pickLabel(key, L), season: Number(season), round: Number(round), original: orig, onBlock: onBlock.has(key), fits: assetFits(L, { kind: 'pick', key }, needs) };
       }),
     };
   }),
@@ -162,7 +162,7 @@ export const tradesRouter = router({
               .map((id) => L.players[id])
               .filter(Boolean)
               .map((p) => ({ ...publicPlayer(L, p), prospect: !p.teamId, potential: potentialView(L, my, p), fits: assetFits(L, { kind: 'player', id: p.id }, myNeeds) })),
-            picks: b.picks.map((key) => ({ key, label: pickLabel(key) })),
+            picks: b.picks.map((key) => ({ key, label: pickLabel(key, L) })),
           };
         }),
     };
@@ -171,7 +171,17 @@ export const tradesRouter = router({
   status: memberProcedure.query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
     const w = tradeWindowOpen(L);
-    return { open: w.open, reason: w.reason ?? null, deadlineDay: tradeDeadline(L), review: L.settings.tradeReview ?? 'none', phase: L.phase };
+    const deadline = tradeDeadline(L);
+    return {
+      open: w.open,
+      reason: w.reason ?? null,
+      deadlineDay: deadline,
+      /** Days until the deadline during the regular season (0 = deadline day), else null. */
+      daysToDeadline: L.phase === 'regular-season' ? deadline - L.day : null,
+      duringDraft: L.phase === 'offseason' && L.offseason?.stage === 'draft',
+      review: L.settings.tradeReview ?? 'none',
+      phase: L.phase,
+    };
   }),
 
   /** Check a deal without making it. For AI partners, includes how they feel about it. */

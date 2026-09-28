@@ -136,6 +136,11 @@ function AdvancePanel() {
             <Button variant="secondary" onClick={() => advance.mutate({ leagueId: L.id, target: { days: 7 } })} disabled={advance.isPending}>
               Sim 1 week
             </Button>
+            {L.daysToDeadline !== null && L.daysToDeadline > 0 && (
+              <Button variant="secondary" onClick={() => advance.mutate({ leagueId: L.id, target: { to: 'trade-deadline' } })} disabled={advance.isPending}>
+                Sim to trade deadline
+              </Button>
+            )}
             {L.phase === 'regular-season' && (
               <Button variant="secondary" onClick={() => advance.mutate({ leagueId: L.id, target: { to: 'playoffs' } })} disabled={advance.isPending}>
                 Sim to playoffs

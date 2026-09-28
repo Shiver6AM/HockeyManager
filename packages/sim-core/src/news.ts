@@ -6,6 +6,7 @@
  * retirements, the #1 pick) is derived from the transaction log, so no code
  * path has to remember to "also post news".
  */
+import { proSeasons } from './prospects';
 import { overall } from './ratings';
 import type { BoxScore, HallOfFamer, League, NewsItem, NewsKind, Player, RetiredPlayer, ScheduledGame, TeamId } from './types';
 
@@ -128,7 +129,7 @@ export function hallOfFameScore(league: League, r: RetiredPlayer): number {
   // Players who were already veterans when the league began: credit the seasons
   // before the league existed, estimated from how good they were at their peak.
   const pro = Math.max(0, r.retiredAfter - r.birthYear - 19);
-  const missing = Math.max(0, pro - r.career.length);
+  const missing = Math.max(0, pro - proSeasons(r.career).length);
   const perSeason = r.pos === 'G' ? Math.max(0, r.peakOverall - 65) * 3 : Math.max(0, r.peakOverall - 60) * 2.2;
   production += missing * perSeason * 0.8;
   return production + awards * 150 + cups * 40 + peak;
@@ -146,7 +147,7 @@ export function considerForHallOfFame(league: League, r: RetiredPlayer) {
     name: r.name,
     pos: r.pos,
     inducted: league.season,
-    seasons: r.career.length,
+    seasons: proSeasons(r.career).length,
     lastTeamId: r.lastTeamId,
     summary: r.pos === 'G' ? `${totals.gp} GP, ${totals.w} wins, peak ${r.peakOverall} OVR` : `${totals.gp} GP, ${totals.pts} points, peak ${r.peakOverall} OVR`,
   };

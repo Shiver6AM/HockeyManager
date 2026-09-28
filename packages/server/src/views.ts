@@ -3,7 +3,7 @@
  * injury-proneness, consistency) never leave the server; scouting will reveal
  * estimates of them in a later phase.
  */
-import { age, overall, type League, type Player, type Team } from '@hockey-gm/sim-core';
+import { age, coachability, coachabilityLabel, overall, type League, type Player, type Team } from '@hockey-gm/sim-core';
 
 export function publicPlayer(league: League, p: Player) {
   return {
@@ -23,6 +23,9 @@ export function publicPlayer(league: League, p: Player) {
     goalie: p.goalie ?? null,
     contract: p.contract,
     injury: p.injury,
+    /** How much he gets out of coaching (a visible trait). */
+    coachability: coachability(p),
+    coachabilityLabel: coachabilityLabel(coachability(p)),
   };
 }
 export type PublicPlayer = ReturnType<typeof publicPlayer>;

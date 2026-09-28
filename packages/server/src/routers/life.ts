@@ -1,5 +1,23 @@
 import {
   ARENA_CAPACITY,
+  coachability,
+  coachabilityLabel,
+  hireSkillsCoach,
+  overall,
+  projectedSeasonGain,
+  releaseSkillsCoach,
+  resolvePlan,
+  setCoachPlan,
+  SKILL_GROUP_LABEL,
+  SKILL_GROUP_OF,
+  SKILL_GROUPS,
+  SKILLS,
+  skillLabel,
+  skillsCoachPayroll,
+  skillsFor,
+  skillValue,
+  type SkillsCoach,
+  type TrainableSkill,
   expenses,
   hireStaff,
   OWNER_GOAL_LABEL,
@@ -83,7 +101,7 @@ export const lifeRouter = router({
       isMine,
       market: t.market ?? 1,
       staff: STAFF_ROLES.map((role) => ({ role, label: STAFF_LABEL[role], member: t.staff?.[role] ?? null })),
-      staffPayroll: staffPayroll(t),
+      staffPayroll: staffPayroll(t) + skillsCoachPayroll(t),
       finances: t.finances ? financeView(t.finances) : null,
       history: (t.financeHistory ?? []).map(financeView).reverse(),
       cash: t.cash ?? 0,
@@ -107,6 +125,120 @@ export const lifeRouter = router({
       }
     });
   }),
+
+  // ---- Skills coaches ----
+  skillsCoaching: memberProcedure.input(z.object({ teamId: z.string() })).query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    const t = L.teams[input.teamId];
+    if (!t) throw badRequest('No such team');
+    const isMine = ctx.membership.teamId === t.id;
+    const plan = resolvePlan(L, t);
+    const coachView = (c: SkillsCoach) => ({
+      id: c.id,
+      name: c.name,
+      ratings: c.ratings,
+      specialties: c.specialties,
+      salary: c.salary,
+      yearsLeft: c.yearsLeft,
+      auto: c.auto,
+      assignments: c.assignments,
+    });
+    const skillOptions = [...new Set(t.roster.flatMap((id) => (L.players[id] ? skillsFor(L.players[id]) : [])))].map((s) => ({
+      id: s,
+      label: skillLabel(s),
+      group: SKILL_GROUP_OF[s],
+      situational: !['skating', 'shooting', 'passing', 'handling', 'offIQ', 'defIQ', 'checking', 'faceoffs', 'discipline', 'endurance', 'reflexes', 'positioning', 'rebounds', 'mental'].includes(s),
+    }));
+    return {
+      isMine,
+      maxCoaches: SKILLS.maxCoaches,
+      maxPlayers: SKILLS.maxPlayers,
+      groups: SKILL_GROUPS.map((g) => ({ id: g, label: SKILL_GROUP_LABEL[g] })),
+      skills: skillOptions,
+      coaches: (t.skillsCoaches ?? []).map((c) => ({
+        ...coachView(c),
+        working: plan
+          .filter((x) => x.coach.id === c.id)
+          .map((x) => ({
+            playerId: x.player.id,
+            name: `${x.player.firstName} ${x.player.lastName}`,
+            pos: x.player.pos,
+            skill: x.skill,
+            label: skillLabel(x.skill),
+            value: skillValue(x.player, x.skill),
+            progress: Math.round(((x.player.trainingProgress?.[x.skill] ?? 0) % 1) * 100) / 100,
+            seasonPace: projectedSeasonGain(L, c, x.player, x.skill),
+          })),
+      })),
+      roster: t.roster
+        .map((id) => L.players[id])
+        .filter(Boolean)
+        .map((p) => ({
+          id: p.id,
+          name: `${p.firstName} ${p.lastName}`,
+          pos: p.pos,
+          age: L.season - p.birthYear,
+          overall: overall(p),
+          coachability: coachability(p),
+          coachabilityLabel: coachabilityLabel(coachability(p)),
+          skills: Object.fromEntries(skillsFor(p).map((s) => [s, skillValue(p, s)])),
+          gains: p.trainingLog?.season === L.season ? p.trainingLog.gains : {},
+          /** Pace (points per season) under each of this team's coaches for each skill, for the assignment editor. */
+          pace: Object.fromEntries(
+            (t.skillsCoaches ?? []).map((c) => [c.id, Object.fromEntries(skillsFor(p).map((s) => [s, projectedSeasonGain(L, c, p, s as TrainableSkill)]))]),
+          ),
+        }))
+        .sort((a, b) => b.overall - a.overall),
+      pool: isMine ? (L.skillsCoachPool ?? []).map(coachView).sort((a, b) => b.salary - a.salary) : [],
+      payroll: skillsCoachPayroll(t),
+    };
+  }),
+
+  hireSkillsCoach: memberProcedure.input(z.object({ coachId: z.string() })).mutation(async ({ ctx, input }) => {
+    const teamId = ctx.membership.teamId;
+    if (!teamId) throw badRequest('You do not manage a team');
+    return mutateLeague(ctx.db, input.leagueId, (L) => {
+      try {
+        const c = hireSkillsCoach(L, L.teams[teamId], input.coachId);
+        return { name: c.name };
+      } catch (e) {
+        throw badRequest((e as Error).message);
+      }
+    });
+  }),
+
+  releaseSkillsCoach: memberProcedure.input(z.object({ coachId: z.string() })).mutation(async ({ ctx, input }) => {
+    const teamId = ctx.membership.teamId;
+    if (!teamId) throw badRequest('You do not manage a team');
+    return mutateLeague(ctx.db, input.leagueId, (L) => {
+      try {
+        return releaseSkillsCoach(L, L.teams[teamId], input.coachId);
+      } catch (e) {
+        throw badRequest((e as Error).message);
+      }
+    });
+  }),
+
+  setCoachPlan: memberProcedure
+    .input(
+      z.object({
+        coachId: z.string(),
+        auto: z.boolean(),
+        assignments: z.array(z.object({ playerId: z.string(), skill: z.string() })).max(5),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const teamId = ctx.membership.teamId;
+      if (!teamId) throw badRequest('You do not manage a team');
+      await mutateLeague(ctx.db, input.leagueId, (L) => {
+        try {
+          setCoachPlan(L.teams[teamId], input.coachId, { auto: input.auto, assignments: input.assignments as SkillsCoach['assignments'] }, L);
+        } catch (e) {
+          throw badRequest((e as Error).message);
+        }
+      });
+      return { ok: true };
+    }),
 
   // ---- League history ----
   history: memberProcedure.query(async ({ ctx, input }) => {

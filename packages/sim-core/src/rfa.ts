@@ -19,6 +19,7 @@
  *
  * His own team can keep negotiating with him the whole time.
  */
+import { proSeasons } from './prospects';
 import { askingContract, BASE_CAP, capRoom, LEAGUE_MIN_SALARY, marketValue, qualifyingOffer, SUMMER_ROSTER_MAX } from './contracts';
 import { aiValuation, offerUtility } from './negotiation';
 import { applyContract } from './offseason';
@@ -97,7 +98,7 @@ export function walkAwayThreshold(league: League): number {
 
 /** Arbitration needs some professional experience: 22+ next season, or three seasons in the league. */
 export function arbitrationEligible(league: League, p: Player): boolean {
-  return age(p, league.season) + 1 >= 22 || (league.careerStats?.[p.id]?.length ?? 0) >= 3;
+  return age(p, league.season) + 1 >= 22 || proSeasons(league.careerStats?.[p.id] ?? []).length >= 3;
 }
 
 export type QoResponse = 'accept' | 'holdout' | 'arbitration';

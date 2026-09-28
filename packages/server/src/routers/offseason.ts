@@ -11,6 +11,11 @@ import {
   FA_ROUNDS,
   NEGOTIATION,
   offerExtension,
+  offersAreDeferred,
+  submitResignOffer,
+  withdrawResignOffer,
+  acceptCounter,
+  RESIGN_DAYS,
   placeBid,
   priorities,
   qualifyingOffer,
@@ -42,6 +47,7 @@ import {
   SUMMER_ROSTER_MAX,
   type League,
   type Player,
+  proSeasons,
 } from '@hockey-gm/sim-core';
 import { z } from 'zod';
 import { mutateLeague } from '../advance';
@@ -120,7 +126,7 @@ export const offseasonRouter = router({
           name: r.name,
           pos: r.pos,
           peakOverall: r.peakOverall,
-          seasons: r.career.length,
+          seasons: proSeasons(r.career).length,
           team: r.lastTeamId ? teamInfo(L.teams[r.lastTeamId]) : null,
           points: r.career.reduce((s, c) => s + (c.skater ? c.skater.g + c.skater.a : 0), 0),
         })),
@@ -205,9 +211,14 @@ export const offseasonRouter = router({
       if (os.qualified?.[id]) return s + qualifyingOffer(p, L).salary;
       return s;
     }, 0);
+    const mine = <T extends { teamId: string }>(x: T | undefined) => (x && x.teamId === my ? x : null);
     return {
       stage: os.stage,
       open: os.stage === 'draft' || os.stage === 're-sign',
+      /** Day of the re-signing week (null during the draft), and its length. */
+      resignDay: os.stage === 're-sign' ? (os.resignDay ?? RESIGN_DAYS) : null,
+      resignDays: RESIGN_DAYS,
+      deferred: offersAreDeferred(L),
       salaryCap: L.settings.salaryCap,
       committed,
       committedWithResigns: committed + kept,
@@ -223,6 +234,9 @@ export const offseasonRouter = router({
             /** After the window closes: the deal he's on now. */
             signedNow: closed ? p.contract : null,
             agreed: p.extension ?? null,
+            /** Offer waiting for his answer (tomorrow), and his latest answer. */
+            pending: mine(os.pendingOffers?.[id]),
+            response: mine(os.responses?.[id]),
             letGo: os.resign[id] === false,
             qualified: !!os.qualified?.[id],
             qualifyingOffer: status === 'RFA' ? qualifyingOffer(p, L) : null,
@@ -266,12 +280,37 @@ export const offseasonRouter = router({
         const p = L.players[input.playerId];
         if (!p) throw badRequest('No such player');
         try {
+          // During the draft and the re-signing week, his agent answers the next day.
+          if (offersAreDeferred(L) && L.offseason?.expiring[p.id]) {
+            const r = submitResignOffer(L, L.teams[teamId], p, { salary: input.salary, years: input.years });
+            return { result: 'pending' as const, message: r.message };
+          }
           return offerExtension(L, L.teams[teamId], p, { salary: input.salary, years: input.years });
         } catch (e) {
           throw badRequest((e as Error).message);
         }
       });
     }),
+
+  withdrawOffer: memberProcedure.input(z.object({ playerId: z.string() })).mutation(async ({ ctx, input }) => {
+    const teamId = requireTeam(ctx.membership);
+    await mutateLeague(ctx.db, input.leagueId, (L) => withdrawResignOffer(L, L.teams[teamId], input.playerId));
+    return { ok: true };
+  }),
+
+  acceptCounter: memberProcedure.input(z.object({ playerId: z.string() })).mutation(async ({ ctx, input }) => {
+    const teamId = requireTeam(ctx.membership);
+    return mutateLeague(ctx.db, input.leagueId, (L) => {
+      const p = L.players[input.playerId];
+      if (!p) throw badRequest('No such player');
+      try {
+        acceptCounter(L, L.teams[teamId], p);
+      } catch (e) {
+        throw badRequest((e as Error).message);
+      }
+      return { ok: true };
+    });
+  }),
 
   setQualify: memberProcedure.input(z.object({ playerId: z.string(), qualify: z.boolean() })).mutation(async ({ ctx, input }) => {
     const teamId = requireTeam(ctx.membership);
@@ -418,7 +457,7 @@ export const offseasonRouter = router({
             award: c.award ?? null,
             canWalkAway: os.stage === 'training-camp' && c.status === 'awarded' && (c.award?.salary ?? 0) >= walkAwayThreshold(L),
             sheet: c.sheet
-              ? { from: teamInfo(L.teams[c.sheet.fromTeam]), offer: c.sheet.offer, compensation: c.sheet.compensation.map(pickLabel), decision: c.sheet.decision ?? null }
+              ? { from: teamInfo(L.teams[c.sheet.fromTeam]), offer: c.sheet.offer, compensation: c.sheet.compensation.map((k) => pickLabel(k, L)), decision: c.sheet.decision ?? null }
               : null,
             attemptsLeft: attemptsLeft(L, id, my),
             deal: c.status === 'unsigned' && team ? dealTerms(L, p, team, os.expiring[id] ?? askingContract(L, p)) : null,
@@ -455,7 +494,7 @@ export const offseasonRouter = router({
         } catch (e) {
           throw badRequest((e as Error).message);
         }
-        return { ok: true, compensation: (compensationPicks(L, teamId, input.salary) ?? []).map(pickLabel) };
+        return { ok: true, compensation: (compensationPicks(L, teamId, input.salary) ?? []).map((k) => pickLabel(k, L)) };
       });
     }),
 

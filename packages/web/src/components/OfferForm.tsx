@@ -271,7 +271,13 @@ export function OfferForm({
           <div
             className={cx(
               'rounded-md px-3 py-2 text-sm',
-              result.result === 'accept' ? 'bg-win/15 text-win' : result.result === 'counter' ? 'bg-blueline/15 text-blue-200' : 'bg-goal/10 text-red-200',
+              result.result === 'accept'
+                ? 'bg-win/15 text-win'
+                : result.result === 'counter'
+                  ? 'bg-blueline/15 text-blue-200'
+                  : result.result === 'pending'
+                    ? 'bg-rink-800 text-ice-200'
+                    : 'bg-goal/10 text-red-200',
             )}
           >
             {result.message}

@@ -1,4 +1,7 @@
 import { playoffMvp, regularSeasonAwards } from './awards';
+import { recordChemistry } from './chemistry';
+import { initSkillsCoaches, trainingDay } from './skills';
+import { prospectGameDay } from './prospects';
 import { simulateGame } from './game';
 import { currentRound, HOME_PATTERN, nextRound, seedPlayoffs, WINS_NEEDED } from './playoffs';
 import { deriveSeed } from './rng';
@@ -6,7 +9,7 @@ import { prepareTeamForGame } from './roster';
 import { bookGame, initFinances, ownerReviews } from './finances';
 import { addNews, gameNews, newsFromTransactions } from './news';
 import { initStaff, refillStaffPool, trainerInjuryMultiplier } from './staff';
-import { aiTradeDay, invalidateStale } from './trades';
+import { aiTradeDay, invalidateStale, tradeDeadline } from './trades';
 import type {
   GameSummary,
   GoalieSeasonStats,
@@ -68,6 +71,14 @@ export function advanceToPlayoffs(league: League): AdvanceResult {
 }
 
 /** Play out the rest of the season, playoffs included. */
+/** Sim up to trade deadline day (trades are still allowed that day). */
+export function advanceToDeadline(league: League): AdvanceResult {
+  if (league.phase !== 'regular-season') throw new Error('The trade deadline is during the regular season');
+  const deadline = tradeDeadline(league);
+  if (league.day >= deadline) throw new Error(league.day === deadline ? 'It is already deadline day' : 'The trade deadline has passed');
+  return advanceDays(league, deadline - league.day);
+}
+
 export function advanceToEndOfSeason(league: League): AdvanceResult {
   return advanceDays(league, 10_000);
 }
@@ -120,6 +131,8 @@ function playGame(league: League, g: ScheduledGame, playoff: boolean, playedYest
     awayBackToBack: playedYesterday.has(g.away),
   });
   g.result = res;
+  recordChemistry(home);
+  recordChemistry(away);
   const before: Record<string, { g: number; pts: number }> = {};
   for (const id of Object.keys(res.box.skaters)) {
     const s = league.skaterStats[id];
@@ -161,6 +174,7 @@ export function ensureLeagueLife(league: League) {
   const teams = Object.values(league.teams);
   if (teams.some((t) => !t.staff)) initStaff(league);
   if (teams.some((t) => !t.finances)) initFinances(league);
+  if (teams.some((t) => !t.skillsCoaches)) initSkillsCoaches(league);
   refillStaffPool(league); // no-op unless the job market is thin
   league.newsState ??= { txCursor: league.transactions.length, streaks: {}, nextId: 1 };
 }
@@ -184,7 +198,13 @@ function simDayInner(league: League): ScheduledGame[] {
       playGame(league, g, false, yesterday);
       played.push(g);
     }
+    trainingDay(league);
+    prospectGameDay(league);
     league.day++;
+    const deadline = tradeDeadline(league);
+    if (league.day === deadline) addNews(league, 'trade', 'It’s trade deadline day: deals must be done before the next game day.');
+    else if (league.day === deadline - 7) addNews(league, 'trade', 'One week to the trade deadline. Contenders are shopping.');
+    else if (league.day === deadline + 1) addNews(league, 'trade', 'The trade deadline has passed. Rosters are set for the stretch run.');
     if (league.day > lastDay(league)) startPlayoffs(league);
     else if (league.trades?.length) invalidateStale(league);
     return played;
@@ -192,6 +212,7 @@ function simDayInner(league: League): ScheduledGame[] {
 
   if (league.phase === 'playoffs' && league.playoffs) {
     played.push(...playoffDay(league, yesterday));
+    trainingDay(league);
     league.day++;
   }
   return played;

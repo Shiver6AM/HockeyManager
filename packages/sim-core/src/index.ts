@@ -22,3 +22,6 @@ export * from './news';
 export * from './block';
 export * from './rfa';
 export * from './systems';
+export * from './chemistry';
+export * from './skills';
+export * from './prospects';

@@ -51,15 +51,33 @@ export function parsePickKey(key: string) {
   return { season: Number(season), round: Number(round), originalTeam: team };
 }
 
+/** The draft in progress (picks can be traded while it runs). */
+function activeDraft(league: League) {
+  return league.phase === 'offseason' && league.offseason?.stage === 'draft' ? league.offseason.draft : null;
+}
+
+/** During the draft, a pick in this year's draft (with its slot and whether it's been used). */
+export function draftSlot(league: League, key: string) {
+  const d = activeDraft(league);
+  if (!d) return null;
+  const { season, round, originalTeam } = parsePickKey(key);
+  if (season !== d.season) return null;
+  return d.picks.find((p) => p.round === round && p.originalTeamId === originalTeam) ?? null;
+}
+
 export function pickOwner(league: League, key: string): TeamId {
+  const slot = draftSlot(league, key);
+  if (slot) return slot.teamId;
   return league.pickOwners?.[key] ?? parsePickKey(key).originalTeam;
 }
 
-/** Draft years whose picks can still be traded. */
+/** Draft years whose picks can still be traded (during the draft, this year's unused picks too). */
 export function tradeablePickSeasons(league: League): number[] {
   const drafted = league.phase === 'offseason' && league.offseason?.draft ? league.offseason.draft.season : null;
   const first = drafted === league.season ? league.season + 1 : league.season;
-  return Array.from({ length: TRADE.pickSeasonsAhead + 1 }, (_, i) => first + i);
+  const years = Array.from({ length: TRADE.pickSeasonsAhead + 1 }, (_, i) => first + i);
+  const d = activeDraft(league);
+  return d ? [d.season, ...years] : years;
 }
 
 export function teamPicks(league: League, teamId: TeamId): string[] {
@@ -68,17 +86,18 @@ export function teamPicks(league: League, teamId: TeamId): string[] {
     for (let round = 1; round <= 7; round++) {
       for (const orig of Object.keys(league.teams)) {
         const key = pickKey(season, round, orig);
-        if (pickOwner(league, key) === teamId) out.push(key);
+        if (pickOwner(league, key) === teamId && !draftSlot(league, key)?.playerId) out.push(key);
       }
     }
   }
   return out;
 }
 
-export function pickLabel(key: string): string {
+export function pickLabel(key: string, league?: League): string {
   const { season, round, originalTeam } = parsePickKey(key);
   const ord = ['', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th'][round];
-  return `${season} ${ord} round (${originalTeam})`;
+  const slot = league ? draftSlot(league, key) : null;
+  return slot ? `${season} ${ord} round, #${slot.overall} overall (${originalTeam})` : `${season} ${ord} round (${originalTeam})`;
 }
 
 /** Where a team's pick is likely to land (1 = first overall), from its current points %. */
@@ -102,9 +121,10 @@ function projectedSlot(league: League, teamId: TeamId): number {
 export function pickValue(league: League, forTeam: Team, key: string): number {
   const { season, round, originalTeam } = parsePickKey(key);
   const yearsOut = Math.max(0, season - league.season);
-  // Next year's slot is uncertain: regress the projection toward the middle.
-  const slot = projectedSlot(league, originalTeam);
-  const expectedSlot = yearsOut === 0 ? slot : 16.5 + (slot - 16.5) * 0.4;
+  // During the draft the slot is known; next year's is uncertain, so regress it toward the middle.
+  const live = draftSlot(league, key);
+  const slot = live ? live.overall - (round - 1) * Object.keys(league.teams).length : projectedSlot(league, originalTeam);
+  const expectedSlot = yearsOut === 0 || live ? slot : 16.5 + (slot - 16.5) * 0.4;
   let v: number;
   if (round === 1) v = 110 + 340 * Math.pow((33 - expectedSlot) / 32, 2.2);
   else if (round === 2) v = 55;
@@ -168,15 +188,22 @@ export function tradeDeadline(league: League): number {
   return Math.round(last * 0.78);
 }
 
+/** Days until the deadline (0 = deadline day; negative = passed). Null outside the regular season. */
+export function daysToDeadline(league: League): number | null {
+  return league.phase === 'regular-season' ? tradeDeadline(league) - league.day : null;
+}
+
 export function tradeWindowOpen(league: League): { open: boolean; reason?: string } {
   if (league.phase === 'playoffs') return { open: false, reason: 'Trades are frozen during the playoffs.' };
   if (league.phase === 'regular-season' && league.day > tradeDeadline(league)) return { open: false, reason: 'The trade deadline has passed.' };
-  if (league.phase === 'offseason' && league.offseason?.stage === 'draft') return { open: false, reason: 'Trades reopen after the draft.' };
   return { open: true };
 }
 
 function owns(league: League, teamId: TeamId, a: TradeAsset): boolean {
-  if (a.kind === 'pick') return tradeablePickSeasons(league).includes(parsePickKey(a.key).season) && pickOwner(league, a.key) === teamId;
+  if (a.kind === 'pick') {
+    if (draftSlot(league, a.key)?.playerId) return false; // already used
+    return tradeablePickSeasons(league).includes(parsePickKey(a.key).season) && pickOwner(league, a.key) === teamId;
+  }
   const p = league.players[a.id];
   return !!p && (p.teamId === teamId || p.prospectOf === teamId);
 }
@@ -204,21 +231,24 @@ export function validateTrade(league: League, fromId: TeamId, toId: TeamId, give
     const delta = inn.reduce((s, a) => s + salaryOf(league, a), 0) - out.reduce((s, a) => s + salaryOf(league, a), 0);
     if (delta > 0 && capRoom(league, team) - delta < 0) return `${team.city} would be over the salary cap by $${((delta - capRoom(league, team)) / 1e6).toFixed(2)}M.`;
     const rosterAfter = team.roster.length - out.filter((a) => onRoster(league, a)).length + inn.filter((a) => onRoster(league, a)).length;
-    if (rosterAfter > maxRoster) return `${team.city} would have too many players (${rosterAfter}).`;
+    // Injuries can push a roster past the limit with call-ups; only block trades that add to it.
+    if (rosterAfter > maxRoster && rosterAfter > team.roster.length) return `${team.city} would have too many players (${rosterAfter}).`;
   }
   void cap;
   return null;
 }
 
 export function describeAsset(league: League, a: TradeAsset): string {
-  if (a.kind === 'pick') return pickLabel(a.key);
+  if (a.kind === 'pick') return pickLabel(a.key, league);
   const p = league.players[a.id];
   return p ? `${p.firstName} ${p.lastName} (${p.pos}, ${overall(p)})` : a.id;
 }
 
 function moveAsset(league: League, a: TradeAsset, from: Team, to: Team) {
   if (a.kind === 'pick') {
-    (league.pickOwners ??= {})[a.key] = to.id;
+    const slot = draftSlot(league, a.key);
+    if (slot) slot.teamId = to.id;
+    else (league.pickOwners ??= {})[a.key] = to.id;
     return;
   }
   const p = league.players[a.id];

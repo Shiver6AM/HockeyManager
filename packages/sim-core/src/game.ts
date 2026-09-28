@@ -10,6 +10,7 @@
  * All tuning constants live in TUNING so the calibration harness can adjust them.
  */
 import { clamp, Rng } from './rng';
+import { CHEMISTRY, SLOT_BASIS, slotBonusOf, unitChemistry } from './chemistry';
 import { completeLines } from './lines';
 import { defensiveDrive, goalieQuality, offensiveDrive } from './ratings';
 import {
@@ -17,6 +18,11 @@ import {
   DEFAULT_TACTICS,
   evenStrengthEffect,
   EXTRA_ATTACKER_SLOTS,
+  FOUR_SLOTS,
+  penaltyKillFits,
+  powerPlayFitsOf,
+  relativeFit,
+  THREE_SLOTS,
   NEUTRAL,
   penaltyKillEffect,
   PK3_SLOTS,
@@ -147,6 +153,9 @@ interface GP {
   on: boolean;
   drainMult: number;
   roles: Record<Role, number>;
+  /** Rating adjustments while on the ice this shift (slot fit, chemistry, system fit). */
+  oB: number;
+  dB: number;
 }
 
 interface Side {
@@ -265,6 +274,8 @@ export function simulateGame(
         on: false,
         drainMult,
         roles: roleSkills(p),
+        oB: 0,
+        dB: 0,
       };
       skaters[id] = newSkaterLine();
     }
@@ -276,6 +287,8 @@ export function simulateGame(
         gq: goalieQuality(p.goalie!) + form - (backToBack ? 1.5 : 0),
         endurance: 100, prone: p.hidden.injuryProneness, energy: 100, lastT: 0, on: false, drainMult: 1,
         roles: {} as Record<Role, number>,
+        oB: 0,
+        dB: 0,
       };
     }
   };
@@ -301,6 +314,17 @@ export function simulateGame(
   const home = makeSide('home', homeTeam, !!ctx.homeBackToBack);
   const away = makeSide('away', awayTeam, !!ctx.awayBackToBack);
   const other = (s: Side) => (s === home ? away : home);
+  // Line chemistry doesn't change during a game.
+  const chemCache = new Map<string, number>();
+  const chemOf = (s: Side, ids: PlayerId[], defense: boolean) => {
+    const k = s.key + ids.join('|');
+    let v = chemCache.get(k);
+    if (v === undefined) {
+      v = unitChemistry(s.team, ids.map((id) => league.players[id]), defense).total;
+      chemCache.set(k, v);
+    }
+    return v;
+  };
 
   const goals: GoalEvent[] = [];
   const penalties: PenaltyEvent[] = [];
@@ -359,6 +383,57 @@ export function simulateGame(
     return best;
   };
 
+  const unitCache = new Map<string, { sys: SystemEffect; oB: number[]; dB: number[] }>();
+  const unitEffect = (s: Side, sit: 'EV' | 'PP' | 'SH', base: number, chosen: PlayerId[], slots: Slot[] | null) => {
+    const L = s.lines;
+    const unit = chosen.map((id) => gp[id]);
+    const avgOf = (xs: GP[], r: Role) => xs.reduce((a, p) => a + p.roles[r], 0) / Math.max(1, xs.length);
+    const fwdU = unit.filter((p) => p.pos !== 'D');
+    const dU = unit.filter((p) => p.pos === 'D');
+    let sys: SystemEffect;
+    if (sit === 'PP') {
+      const fit = chosen.reduce((sum, id, i) => sum + (slots?.[i] ? gp[id].roles[slots[i].role] : 60), 0) / chosen.length;
+      const rel = base >= 5 ? relativeFit(powerPlayFitsOf(unit.map((p) => p.roles)), s.tactics.pp) : undefined;
+      sys = powerPlayEffect(s.tactics.pp, fit, rel);
+    } else if (sit === 'SH') {
+      const fit = chosen.reduce((sum, id, i) => sum + (slots?.[i] ? gp[id].roles[slots[i].role] : 60), 0) / chosen.length;
+      const rel = relativeFit(penaltyKillFits((r) => avgOf(r === 'pkDefense' ? (dU.length ? dU : unit) : fwdU.length ? fwdU : unit, r)), s.tactics.pk);
+      sys = penaltyKillEffect(s.tactics.pk, fit, other(s).tactics.pp, rel);
+    } else {
+      const avg = (r: Role) => {
+        const pool = r === 'point' ? dU : fwdU;
+        return avgOf(pool.length ? pool : unit, r);
+      };
+      sys = combine(evenStrengthEffect(s.tactics, avg), NEUTRAL);
+    }
+    const oB = unit.map(() => sys.offAdj);
+    const dB = unit.map(() => sys.defAdj);
+    if (slots) {
+      const which = sit === 'PP' ? 'pp' : sit === 'SH' ? 'pk' : 'ev';
+      chosen.forEach((id, i) => {
+        const slot = slots[i];
+        if (!slot) return;
+        const b = slotBonusOf(gp[id].roles, slot, which);
+        if (sit === 'SH') dB[i] += b;
+        else oB[i] += b;
+      });
+    } else if (sit === 'EV' && base >= 5 && !s.goaliePulled) {
+      for (const [ids, defense] of [
+        [L.forwards[s.fIdx], false],
+        [L.defense[s.dIdx], true],
+      ] as const) {
+        if (!ids.every((id) => chosen.includes(id))) continue;
+        const c = chemOf(s, ids, defense);
+        for (const id of ids) {
+          const i = chosen.indexOf(id);
+          oB[i] += c;
+          dB[i] += c;
+        }
+      }
+    }
+    return { sys, oB, dB };
+  };
+
   const setOnIce = (s: Side) => {
     const L = s.lines;
     const sit = situation(s);
@@ -384,8 +459,13 @@ export function simulateGame(
     } else if (base >= 5) {
       ids = s.goaliePulled ? L.extraAttacker!.slice(0, 5) : [...L.forwards[s.fIdx], ...L.defense[s.dIdx]];
       if (s.goaliePulled) slots = EXTRA_ATTACKER_SLOTS.slice(0, 5);
-    } else if (base === 4) ids = L.fourOnFour![s.fIdx % 2];
-    else ids = L.threeOnThree![s.fIdx % 3];
+    } else if (base === 4) {
+      ids = L.fourOnFour![s.fIdx % 2];
+      slots = FOUR_SLOTS;
+    } else {
+      ids = L.threeOnThree![s.fIdx % 3];
+      slots = THREE_SLOTS;
+    }
     // Anyone in the box or hurt is replaced by the next available skater of the same kind.
     const unavailable = new Set([...s.box.map((b) => b.id), ...s.out]);
     if (s.goaliePulled) {
@@ -414,32 +494,28 @@ export function simulateGame(
     s.onIce = chosen.map((id) => gp[id]);
     s.slotOf = new Map();
     if (slots) chosen.forEach((id, i) => slots![i] && s.slotOf.set(id, slots![i]));
-    // How well this unit fits the team's systems for the situation.
-    if (sit === 'PP') {
-      const fit = chosen.reduce((sum, id, i) => sum + (slots?.[i] ? gp[id].roles[slots[i].role] : 60), 0) / chosen.length;
-      s.sys = powerPlayEffect(s.tactics.pp, fit);
-    } else if (sit === 'SH') {
-      const fit = chosen.reduce((sum, id, i) => sum + (slots?.[i] ? gp[id].roles[slots[i].role] : 60), 0) / chosen.length;
-      s.sys = penaltyKillEffect(s.tactics.pk, fit, other(s).tactics.pp);
-    } else {
-      const fwd = s.onIce.filter((p) => p.pos !== 'D');
-      const dmen = s.onIce.filter((p) => p.pos === 'D');
-      const avg = (r: Role) => {
-        const pool = r === 'point' ? dmen : fwd;
-        const xs = (pool.length ? pool : s.onIce).map((p) => p.roles[r]);
-        return xs.reduce((a, b) => a + b, 0) / xs.length;
-      };
-      s.sys = combine(evenStrengthEffect(s.tactics, avg), NEUTRAL);
+    // How well this unit fits the team's systems, its players' spots and its chemistry.
+    // A unit's effect is the same every time it takes the ice, so it's computed once per game.
+    const ukey = `${s.key}|${sit}|${base}|${s.goaliePulled ? 1 : 0}|${sit === 'SH' ? other(s).tactics.pp : ''}|${chosen.join(',')}`;
+    let eff = unitCache.get(ukey);
+    if (!eff) {
+      eff = unitEffect(s, sit, base, chosen, slots);
+      unitCache.set(ukey, eff);
     }
+    s.sys = eff.sys;
+    s.onIce.forEach((p, i) => {
+      p.oB = eff!.oB[i];
+      p.dB = eff!.dB[i];
+    });
     let off = 0, def = 0, sup = 0, blk = 0;
     for (const p of s.onIce) {
       touch(p);
       p.on = true;
       const f = fat(p);
-      off += p.off - f;
-      def += p.def - f;
-      sup += p.support - f;
-      blk += p.block - f;
+      off += p.off + p.oB - f;
+      def += p.def + p.dB - f;
+      sup += p.support + p.oB - f;
+      blk += p.block + p.dB - f;
     }
     const k = s.onIce.length;
     s.off = off / k;
@@ -572,7 +648,7 @@ export function simulateGame(
     const g = gp[o.goalie];
     let pGoal =
       T.shPct[baseKey] *
-      Math.exp((T.shooterEffect * (shooter.shoot - fat(shooter) - 72)) / 10) *
+      Math.exp((T.shooterEffect * (shooter.shoot + shooter.oB - fat(shooter) - 72)) / 10) *
       Math.exp((T.supportEffect * (support - o.def)) / 10) *
       Math.exp((-T.goalieEffect * (g.gq - 76)) / 10);
     if (shooter.pos === 'D') pGoal *= T.defenseShotFactor;

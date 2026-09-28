@@ -7,7 +7,7 @@ import { useLeague } from './LeagueLayout';
 const STAGES = [
   { id: 'review', label: 'Season review' },
   { id: 'draft', label: 'Entry draft' },
-  { id: 're-sign', label: 'Re-sign players' },
+  { id: 're-sign', label: 'Re-signing week' },
   { id: 'free-agency', label: 'Free agency' },
   { id: 'training-camp', label: 'Training camp' },
 ];
@@ -18,11 +18,11 @@ const STAGE_HELP: Record<string, { what: string; link?: [string, string] }> = {
     link: ['stats', 'See final stats & awards'],
   },
   draft: {
-    what: 'Teams take turns picking from this year’s class of 18-year-olds. When you’re on the clock the draft waits for you, unless the commissioner or the schedule moves on, in which case your draft list (or your scouts’ top choice) is used.',
+    what: 'Teams take turns picking from this year’s class of 18-year-olds. When you’re on the clock the draft waits for you, unless the commissioner or the schedule moves on, in which case your draft list (or your scouts’ top choice) is used. Trades are open during the draft, including this year’s unused picks.',
     link: ['draft', 'Go to the draft room'],
   },
   're-sign': {
-    what: 'Decide which of your expiring players to keep at their asking price. Anyone you don’t re-sign becomes a free agent when this stage ends.',
+    what: 'A week to re-sign your own pending free agents (UFAs and RFAs) before anyone else can talk to them. Each day moves the week along; offers you make are answered by the player’s agent the next day. Anyone without a deal or a qualifying offer becomes a free agent when the week ends.',
     link: ['re-sign', 'Review expiring contracts'],
   },
   'free-agency': {
@@ -128,8 +128,17 @@ export function OffseasonPanel() {
                   ? 'Finish the draft'
                   : stage === 'training-camp'
                     ? 'Start the new season'
-                    : 'Next stage'}
+                    : stage === 're-sign' && L.resignDay !== null
+                      ? L.resignDay < L.resignDays
+                        ? `Next day (${L.resignDay}/${L.resignDays})`
+                        : 'Open free agency'
+                      : 'Next stage'}
             </Button>
+            {(stage === 'review' || stage === 'draft' || stage === 're-sign') && (
+              <Button variant="secondary" onClick={() => advance.mutate({ leagueId: L.id, target: { to: 'free-agency' } })} disabled={advance.isPending}>
+                Sim to free agency
+              </Button>
+            )}
             <Button variant="ghost" onClick={() => advance.mutate({ leagueId: L.id, target: { to: 'next-season' } })} disabled={advance.isPending}>
               Skip to next season
             </Button>

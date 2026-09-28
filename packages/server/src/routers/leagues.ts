@@ -1,4 +1,4 @@
-import { generateLeague, type AdvanceMode } from '@hockey-gm/sim-core';
+import { generateLeague, RESIGN_DAYS, tradeDeadline, type AdvanceMode } from '@hockey-gm/sim-core';
 import { TRPCError } from '@trpc/server';
 import { randomBytes, randomInt } from 'node:crypto';
 import { z } from 'zod';
@@ -113,6 +113,13 @@ export const leaguesRouter = router({
       lastRegularDay,
       gamesToday,
       phase: L.phase,
+      /** Offseason stage and, during the re-signing week, which day it is. */
+      offseasonStage: L.offseason?.stage ?? null,
+      resignDay: L.offseason?.stage === 're-sign' ? (L.offseason.resignDay ?? RESIGN_DAYS) : null,
+      resignDays: RESIGN_DAYS,
+      /** Trade deadline (regular season): the day, and days left (0 = deadline day). */
+      tradeDeadlineDay: L.phase === 'regular-season' ? tradeDeadline(L) : null,
+      daysToDeadline: L.phase === 'regular-season' ? tradeDeadline(L) - L.day : null,
       champion: L.playoffs?.champion ? teamInfo(L.teams[L.playoffs.champion]) : null,
       advance: meta.advance,
       nextAdvanceAt: meta.next_advance_at,

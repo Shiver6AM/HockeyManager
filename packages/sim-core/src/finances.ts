@@ -9,6 +9,7 @@
  */
 import { contenderScore } from './negotiation';
 import { overall } from './ratings';
+import { skillsCoachPayroll } from './skills';
 import { staffPayroll } from './staff';
 import type { League, OwnerGoal, StandingsRow, Team, TeamFinances } from './types';
 import { payroll } from './contracts';
@@ -96,7 +97,7 @@ export function bookGame(league: League, home: Team, away: Team, homePts: number
       f.media += FINANCE.mediaPerSeason / n;
       f.sponsorship += (FINANCE.sponsorshipBase * (t.market ?? 1)) / n;
       f.salaries += payroll(league, t) / n;
-      f.staff += staffPayroll(t) / n;
+      f.staff += (staffPayroll(t) + skillsCoachPayroll(t)) / n;
       f.operations += FINANCE.operationsPerSeason / n;
     }
   }
