@@ -1,5 +1,6 @@
 import {
   askingContract,
+  qualifyingOffer,
   autoLines,
   buyoutTerms,
   canExtend,
@@ -170,6 +171,11 @@ export const dataRouter = router({
         deal:
           ctx.membership.teamId === t.id && canExtend(L, L.players[id])
             ? dealTerms(L, L.players[id], t, L.offseason?.expiring[id] ?? askingContract(L, L.players[id]))
+            : null,
+        /** Expiring RFAs: what his qualifying offer would cost. */
+        qualifyingOffer:
+          L.players[id].contract?.expiresAs === 'RFA' && (L.players[id].contract?.yearsLeft ?? 0) <= 1 && !L.players[id].extension
+            ? qualifyingOffer(L.players[id], L)
             : null,
         attemptsLeft: L.negotiations?.[id]?.teamId === t.id && L.negotiations[id].season === L.season ? Math.max(0, 3 - L.negotiations[id].attempts) : 3,
         buyout: ctx.membership.teamId === t.id ? buyoutTerms(L, L.players[id]) : null,

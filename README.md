@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 93 tests: sim determinism, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 97 tests: sim determinism, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -160,8 +160,17 @@ anyone who hasn't acted gets sensible defaults.
 - **Negotiation:** he accepts, counters (at his preferred term, or yours if it barely
   matters to him), or, if you lowball him, gets annoyed and raises his price. You get
   three offers per player per window. The AI goes through the same function.
-- **Restricted free agents:** RFAs can be qualified. A qualified RFA without a deal stays
-  yours on a one-year qualifying offer (105% of his salary), and then:
+- **Qualifying offers:** to keep an RFA's rights, you tender a one-year qualifying offer
+  priced in NHL-style tiers that scale with the cap: 110% of a low salary, 105% of a
+  mid-range one (capped at the upper threshold), 100% above it. The Re-sign page shows
+  each RFA's QO and his likely response (accept it, hold out for more, or file for
+  arbitration with a rough award), and a **Qualify all** button. An RFA you don't qualify
+  becomes an unrestricted free agent. AI teams (and your assistant GM) qualify anyone
+  useful or young with upside, but not a player whose QO costs more than he's worth.
+  The roster's Expiry column shows each expiring RFA's QO.
+- **Restricted free agents:** a qualified RFA without a deal either accepts his QO on the
+  spot, holds out, or (if he's 22+ or has three seasons in the league and is worth clearly
+  more) files for arbitration. He stays yours on the QO meanwhile, and then:
   - **Offer sheets** (free agency): any other team can tender one. If he signs it, his team
     matches (he stays at those terms) or takes draft-pick compensation from the offering
     team's own picks, scaled by salary as a share of the cap (NHL-style tiers, from nothing

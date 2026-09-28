@@ -15,6 +15,11 @@ import {
   offseasonStep,
   overall,
   pickOwner,
+  QO_TIERS,
+  qoResponse,
+  qualifyingOffer,
+  aiWouldQualify,
+  marketValue,
   setTradeBlock,
   teamPicks,
   tenderOfferSheet,
@@ -109,7 +114,10 @@ describe('restricted free agents', () => {
       advanceToEndOfSeason(G);
       offseasonStep(G, { force: true }); // -> draft
       offseasonStep(G, { force: true }); // -> re-sign
-      const ids = Object.keys(G.offseason!.expiring).filter((id) => G.players[id]?.teamId === 'HAL' && G.players[id].contract?.expiresAs === 'RFA');
+      // RFAs who won't simply accept their qualifying offer (the interesting cases).
+      const ids = Object.keys(G.offseason!.expiring).filter(
+        (id) => G.players[id]?.teamId === 'HAL' && G.players[id].contract?.expiresAs === 'RFA' && qoResponse(G, G.players[id]) !== 'accept',
+      );
       if (ids.length >= 2) {
         L = G;
         hal = G.teams.HAL;
@@ -175,5 +183,63 @@ describe('restricted free agents', () => {
     }
     while (L.phase === 'offseason') offseasonStep(L, { force: true });
     expect(L.phase).toBe('regular-season');
+  });
+});
+
+describe('qualifying offers', () => {
+  const L = generateLeague({ seed: 91 });
+  const somePlayer = Object.values(L.players).find((p) => p.teamId && p.contract)!;
+  const withSalary = (salary: number): Player => ({ ...somePlayer, contract: { ...somePlayer.contract!, salary } });
+
+  it('prices QOs in NHL-style tiers that scale with the cap', () => {
+    expect(qualifyingOffer(withSalary(775_000), L).salary).toBe(Math.round((775_000 * QO_TIERS.lowRate) / 25_000) * 25_000);
+    const mid = qualifyingOffer(withSalary(950_000), L).salary;
+    expect(mid).toBeGreaterThan(950_000);
+    expect(mid).toBeLessThanOrEqual(QO_TIERS.midMax);
+    expect(qualifyingOffer(withSalary(4_000_000), L).salary).toBe(4_000_000); // 100% above the threshold
+    expect(qualifyingOffer(withSalary(4_000_000), L).years).toBe(1);
+    const richer = { ...L, settings: { ...L.settings, salaryCap: L.settings.salaryCap * 1.2 } } as League;
+    expect(qualifyingOffer(withSalary(1_200_000), richer).salary).toBeGreaterThan(qualifyingOffer(withSalary(1_200_000), L).salary);
+  });
+
+  it('players accept a fair QO, file for arbitration when worth clearly more, or hold out', () => {
+    const cheapStar = { ...withSalary(900_000), birthYear: L.season - 25 };
+    const worth = marketValue(cheapStar, L.season, L.settings.salaryCap);
+    if (worth > 2_000_000) expect(qoResponse(L, cheapStar)).toBe('arbitration');
+    const overpaid = withSalary(Math.round((marketValue(somePlayer, L.season, L.settings.salaryCap) * 1.3) / 25_000) * 25_000 + 1_000_000);
+    expect(qoResponse(L, overpaid)).toBe('accept');
+    const kid = { ...withSalary(900_000), birthYear: L.season - 19 };
+    delete L.careerStats?.[kid.id];
+    if (marketValue(kid, L.season, L.settings.salaryCap) > 1_100_000) expect(qoResponse(L, kid)).toBe('holdout'); // not arbitration-eligible yet
+  });
+
+  it('AI teams do not qualify players whose QO is more than they are worth', () => {
+    const team = Object.values(L.teams).find((t) => t.controller.kind === 'ai')!;
+    const overpaid = withSalary(12_000_000);
+    const cheap = withSalary(900_000);
+    expect(aiWouldQualify(L, team, overpaid)).toBe(marketValue(overpaid, L.season, L.settings.salaryCap) * 1.15 >= 12_000_000);
+    expect(aiWouldQualify(L, team, cheap)).toBe(true);
+  });
+
+  it('unqualified RFAs become UFAs, and qualified ones who accept sign on the spot', () => {
+    const G = generateLeague({ seed: 92, humans: { HAL: 'me' } });
+    advanceToEndOfSeason(G);
+    offseasonStep(G, { force: true });
+    while (G.offseason!.stage === 'draft') offseasonStep(G, { force: true });
+    const rfas = Object.keys(G.offseason!.expiring).filter((id) => G.players[id]?.teamId === 'HAL' && G.players[id].contract?.expiresAs === 'RFA');
+    expect(rfas.length).toBeGreaterThan(0);
+    const [drop, ...rest] = rfas;
+    G.offseason!.resign[drop] = false;
+    for (const id of rest) (G.offseason!.qualified ??= {})[id] = true;
+    offseasonStep(G, { force: true }); // -> free agency
+    expect(G.players[drop].teamId).toBeNull();
+    expect(G.transactions.some((t) => t.playerId === drop && /not qualified and becomes an unrestricted free agent/.test(t.note))).toBe(true);
+    for (const id of rest) {
+      const c = G.offseason!.rfa![id];
+      if (!c) continue; // re-signed by other means
+      if (c.status === 'signed') expect(G.transactions.some((t) => t.playerId === id && /accepts his qualifying offer/.test(t.note))).toBe(true);
+      else expect(c.status).toBe('unsigned');
+      expect(G.players[id].contract!.salary).toBe(c.qualifyingOffer.salary);
+    }
   });
 });
