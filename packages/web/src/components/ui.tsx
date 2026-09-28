@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { errorMessage, onColor } from '../format';
 
@@ -102,4 +102,26 @@ export function Empty({ children }: { children: ReactNode }) {
 export function Rating({ value }: { value: number }) {
   const tone = value >= 85 ? 'text-win' : value >= 75 ? 'text-ice-50' : value >= 65 ? 'text-ice-300' : 'text-ice-500';
   return <span className={cx('tabular font-semibold', tone)}>{value}</span>;
+}
+
+/** Centered dialog; closes on Escape or a click on the backdrop. */
+export function Modal({ title, onClose, children }: { title: ReactNode; onClose: () => void; children: ReactNode }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/60 p-4 pt-16" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div role="dialog" aria-modal="true" className="w-full max-w-3xl rounded-xl border border-rink-600 bg-rink-900 shadow-2xl shadow-black/60">
+        <header className="flex items-center justify-between border-b border-rink-700 px-4 py-2.5">
+          <h2 className="font-display text-sm font-semibold tracking-wider text-ice-200 uppercase">{title}</h2>
+          <button onClick={onClose} className="rounded px-2 text-lg text-ice-400 hover:text-white" aria-label="Close">
+            ×
+          </button>
+        </header>
+        <div className="p-4">{children}</div>
+      </div>
+    </div>
+  );
 }

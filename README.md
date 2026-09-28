@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 72 tests: sim determinism, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 83 tests: sim determinism, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -93,10 +93,11 @@ time produces exactly the same league as simming a week at once. The tests check
 ### Managing your team
 
 - **Roster:** ratings, season stats, contracts and injury status.
-- **Lines editor:** 4 forward lines, 3 D pairs, starter/backup goalie, 2 PP units and
-  2 PK units. It warns you when a player is listed twice or an injured player is dressed,
-  and when you swap someone out, their power-play and penalty-kill spots go to the
-  replacement.
+- **Lines editor (drag and drop):** 4 forward lines, 3 D pairs, starter/backup goalie,
+  2 PP units and 2 PK units. Drag a scratch onto a slot to dress him, drag between slots
+  to swap, or drag a dressed skater onto a PP/PK spot. On a phone, tap one player and then
+  tap where he goes. When you swap someone out, their power-play and penalty-kill spots go
+  to the replacement, and the editor flags injured or out-of-position players.
 - **Assistant coach** (on by default): rebuilds your lines before every game, taking
   injured players out and putting returning players back in. Saving your own lines hands
   control back to you. If you're managing lines yourself, the dashboard warns you when a
@@ -136,12 +137,23 @@ anyone who hasn't acted gets sensible defaults.
 
 ## Contracts
 
-- **Negotiation:** every player weighs an offer on money (weighted by his greed),
-  term against what he asked for, whether your team can win (ambition), the role he'd
-  have, and loyalty to his current team. He accepts, counters, or, if you lowball him,
-  gets annoyed and raises his price. You get three offers per player per window.
-  Players show coarse priorities ("Wants to win now", "Loyal to his team"), but
-  never the exact numbers. The AI goes through the same function.
+- **Interest in your team (0–100):** each player rates every team on whether it can win
+  (weighted by his ambition), the role he'd have, loyalty to his current or drafting team,
+  market size (greedier players like the spotlight), the head coach (young players) and
+  a recent title. You see the rating and the reasons (e.g. "▲▲ Would be a top player here",
+  "▼ Small market"), never the hidden numbers.
+- **Asks are per team:** interest sets what he asks *you* for. An interested player
+  gives up to ~20% off and commits a year longer; an uninterested one wants up to 25% more
+  and a shorter way out.
+- **Money versus term:** each player weighs the two his own way. Greed sets how much money
+  moves him; age and a personal appetite for security set how term does. Veterans pay more
+  for a short deal and take less per year for extra years (up to three); young players
+  resist being locked in long. The agent's estimate for every term from 1 to 8 years is
+  shown (with a little noise), and a live **agent's read** meter reacts as you move the
+  salary and years **sliders** (or type the numbers).
+- **Negotiation:** he accepts, counters (at his preferred term, or yours if it barely
+  matters to him), or, if you lowball him, gets annoyed and raises his price. You get
+  three offers per player per window. The AI goes through the same function.
 - **Restricted free agents:** RFAs can be qualified. If you don't reach a deal, he stays
   on a one-year qualifying offer at 105% of his salary.
 - **Blind-bid free agency:** managers in different time zones get the same shot,
@@ -149,6 +161,8 @@ anyone who hasn't acted gets sensible defaults.
   salary floor overpay to reach it.
 - **Extensions:** negotiate with players in the final year of their deal during
   the season. The new deal kicks in when the old one ends.
+- **Leftover free agents:** after the bidding rounds (training camp and in season),
+  **Sign** opens a negotiation; he signs on the spot when he accepts.
 - **Buyouts:** releasing a player under contract costs two-thirds of the remaining
   money (one-third if he's under 26), spread over twice the remaining years as dead cap.
 - **Pay scale:** salaries scale with the cap, which grows 2.5% a year. Typical
@@ -183,8 +197,9 @@ anyone who hasn't acted gets sensible defaults.
   40–95. The coach speeds up young players' development (about −8% to +10%), the scout
   narrows the fog on prospects' potential, and the trainer shortens injuries (about
   +17% to −20%). An average staffer (65) is neutral. Replace anyone from the job market
-  on your team's **Front office** tab; the outgoing staffer's settlement comes out of
-  the budget. Staff are paid outside the salary cap. AI teams upgrade weak staff each summer.
+  on your team's **Front office** tab (12 candidates per role, always including a few
+  strong ones, with each one's effect shown); the outgoing staffer's settlement comes
+  out of the budget. Staff are paid outside the salary cap. AI teams upgrade weak staff each summer.
 - **Finances:** attendance and gate follow market size, winning, star power and last
   year's title. Media and sponsorship revenue, salaries (including dead cap), staff and
   operations are booked game by game, and playoff home games are pure upside. Books close

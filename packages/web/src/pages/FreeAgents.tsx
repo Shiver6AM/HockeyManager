@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { OfferForm, Priorities } from '../components/OfferForm';
+import { InterestPill, OfferForm, Priorities } from '../components/OfferForm';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Rating, Spinner, TeamChip } from '../components/ui';
 import { money } from '../format';
 import { useTRPC } from '../trpc';
@@ -14,7 +14,6 @@ export function FreeAgentsPage() {
   const qc = useQueryClient();
   const q = useQuery(trpc.offseason.freeAgents.queryOptions({ leagueId: L.id }));
   const done = { onSuccess: () => qc.invalidateQueries() };
-  const sign = useMutation(trpc.offseason.signFreeAgent.mutationOptions(done));
   const withdraw = useMutation(trpc.offseason.withdrawBid.mutationOptions(done));
   const [pos, setPos] = useState('All');
   const [open, setOpen] = useState<string | null>(null);
@@ -32,9 +31,9 @@ export function FreeAgentsPage() {
             ? `Blind bidding, round ${Math.min(d.faRound ?? 1, d.faRounds)} of ${d.faRounds}. Place sealed offers on as many players as you like. When the league advances, every player picks the best offer he received (money, term, contender, role), so nobody wins just by being online first. Players who don't sign lower their bar and their ask for the next round.`
             : d.phase === 'offseason'
               ? d.canSign
-                ? 'Bidding is over. Leftover free agents sign immediately at their asking price.'
+                ? 'Bidding is over. Negotiate with leftover free agents directly: they sign on the spot when they accept.'
                 : 'Free agency opens after the re-signing stage.'
-              : 'In-season free agents sign one-year deals at a discount.'}
+              : 'Negotiate with in-season free agents directly: slim pickings mid-year, so they come cheaper.'}
         </p>
       </div>
       {L.myTeamId && d.capRoom !== null && (
@@ -52,7 +51,7 @@ export function FreeAgentsPage() {
           )}
         </Card>
       )}
-      <ErrorBox error={sign.error ?? withdraw.error} />
+      <ErrorBox error={withdraw.error} />
 
       {d.bidding && d.myBids.length > 0 && (
         <Card title="Your sealed bids">
@@ -101,15 +100,16 @@ export function FreeAgentsPage() {
                         {p.pos} · {p.age} · <Rating value={p.overall} />
                       </span>
                       {p.injury && <span className="ml-2 text-xs text-red-300">injured</span>}
-                      <div className="mt-1">
-                        <Priorities items={p.priorities} />
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        {p.deal ? <InterestPill interest={p.deal.interest} /> : <Priorities items={p.priorities} />}
                       </div>
                     </div>
                     <span className="text-xs text-ice-400">
                       {p.archetype} · {p.careerGp} career GP
                     </span>
                     <span className="text-sm">
-                      Asking <span className="text-white">{money(p.ask.salary)}</span> × {p.ask.years}y
+                      {p.deal ? 'Asks you for ' : 'Asking '}
+                      <span className="text-white">{money((p.deal?.ask ?? p.ask).salary)}</span> × {(p.deal?.ask ?? p.ask).years}y
                     </span>
                     {L.myTeamId && d.bidding && (
                       <Button variant={p.myBid ? 'secondary' : 'primary'} className="px-2 py-0.5 text-xs" onClick={() => setOpen(open === p.id ? null : p.id)}>
@@ -119,14 +119,26 @@ export function FreeAgentsPage() {
                     {L.myTeamId && d.canSign && (
                       <Button
                         className="px-2 py-0.5 text-xs"
-                        disabled={p.ask.salary > (d.capRoom ?? 0) || sign.isPending || d.rosterCount! >= d.rosterMax}
-                        onClick={() => sign.mutate({ leagueId: L.id, playerId: p.id })}
+                        disabled={p.attemptsLeft === 0}
+                        onClick={() => setOpen(open === p.id ? null : p.id)}
                       >
-                        Sign
+                        {p.attemptsLeft === 0 ? 'Not negotiating' : open === p.id ? 'Close' : 'Sign…'}
                       </Button>
                     )}
                   </div>
-                  {open === p.id && d.bidding && <OfferForm leagueId={L.id} playerId={p.id} ask={p.ask} mode="bid" initial={p.myBid} onClose={() => setOpen(null)} />}
+                  {open === p.id && p.deal && (d.bidding || d.canSign) && (
+                    <OfferForm
+                      leagueId={L.id}
+                      playerId={p.id}
+                      deal={p.deal}
+                      mode={d.bidding ? 'bid' : 'sign'}
+                      initial={p.myBid}
+                      attemptsLeft={d.bidding ? undefined : p.attemptsLeft}
+                      capRoom={d.capRoom}
+                      blocked={d.rosterCount! >= d.rosterMax ? `Your roster is full (${d.rosterCount}/${d.rosterMax}). Release or send down a player first.` : undefined}
+                      onClose={() => setOpen(null)}
+                    />
+                  )}
                 </li>
               ))}
             </ul>

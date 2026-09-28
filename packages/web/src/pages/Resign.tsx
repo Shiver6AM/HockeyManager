@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { OfferForm, Priorities } from '../components/OfferForm';
+import { InterestPill, OfferForm } from '../components/OfferForm';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Rating, Spinner } from '../components/ui';
 import { money } from '../format';
 import { useTRPC } from '../trpc';
@@ -26,9 +26,10 @@ export function ResignPage() {
       <div>
         <h1 className="font-display text-2xl font-semibold tracking-wide text-white uppercase">Expiring contracts</h1>
         <p className="text-sm text-ice-400">
-          Negotiate with each player. He weighs money, term, whether your team can win, his role and his loyalty, and gets annoyed by lowballs.
-          You get three offers per player. Restricted free agents (RFA) can also be qualified: if you don't reach a deal, he stays on a one-year
-          qualifying offer. Anyone without a deal or a qualifying offer leaves when this stage ends.
+          Each player has his own level of interest in your team (contender status, role, loyalty, market, your coach), which sets what he asks
+          you for. He then weighs money against term in his own way: veterans want security, young players avoid being locked in. Lowballs annoy
+          him, and you get three offers per player. Restricted free agents (RFA) can also be qualified. Players you never decide on are handled by
+          your assistant GM when this stage ends; press Let go to release someone.
         </p>
       </div>
       <Card>
@@ -52,7 +53,7 @@ export function ResignPage() {
                   ? { tone: 'info' as const, text: `Qualified at ${money(p.qualifyingOffer!.salary)} × 1y` }
                   : p.letGo
                     ? { tone: 'bad' as const, text: 'Letting him go' }
-                    : { tone: 'warn' as const, text: 'No deal yet (will leave)' };
+                    : { tone: 'warn' as const, text: 'Undecided (assistant GM decides)' };
               return (
                 <li key={p.id} className="py-3">
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -65,14 +66,14 @@ export function ResignPage() {
                       </span>{' '}
                       <Badge tone={p.status === 'RFA' ? 'info' : 'neutral'}>{p.status}</Badge>
                       <div className="mt-1">
-                        <Priorities items={p.priorities} />
+                        <InterestPill interest={p.interest} />
                       </div>
                     </div>
                     <div className="text-sm text-ice-300">
                       {p.stats ? `${p.stats.gp} GP · ${p.stats.g + p.stats.a} P` : p.goalieStats ? `${p.goalieStats.gp} GP · ${p.goalieStats.w} W` : '—'}
                     </div>
                     <div className="text-sm">
-                      Asking <span className="text-white">{money(p.ask.salary)}</span> × {p.ask.years}y
+                      Asks you for <span className="text-white">{money(p.ask.salary)}</span> × {p.ask.years}y
                     </div>
                     <Badge tone={status.tone}>{status.text}</Badge>
                     {d.open && !p.agreed && (
@@ -100,7 +101,7 @@ export function ResignPage() {
                     )}
                   </div>
                   {open === p.id && !p.agreed && (
-                    <OfferForm leagueId={L.id} playerId={p.id} ask={p.ask} mode="negotiate" attemptsLeft={p.attemptsLeft} onClose={() => setOpen(null)} />
+                    <OfferForm leagueId={L.id} playerId={p.id} deal={p} mode="negotiate" attemptsLeft={p.attemptsLeft} capRoom={room} onClose={() => setOpen(null)} />
                   )}
                 </li>
               );

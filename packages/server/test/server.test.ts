@@ -200,7 +200,7 @@ describe('multiplayer league flow', () => {
       const b2 = await cat.offseason.draftBoard({ leagueId });
       await cat.offseason.makePick({ leagueId, playerId: b2!.available[0].id });
     }
-    await expect(bob.offseason.signFreeAgent({ leagueId, playerId: 'nope' })).rejects.toThrow(/Free agency|only be done/);
+    await expect(bob.offseason.negotiateFreeAgent({ leagueId, playerId: 'nope', salary: 1_000_000, years: 1 })).rejects.toThrow(/not a free agent/);
     await comm.sim.advance({ leagueId, target: { days: 1 } }); // finish draft
     const picks = (await bob.offseason.draftBoard({ leagueId }))!.picks.filter((p) => p.teamId === 'HAL');
     if (picks[0].overall > 1) expect(picks.map((p) => p.playerId)).toContain(longShot.id);
@@ -225,7 +225,11 @@ describe('multiplayer league flow', () => {
     // Keep ~$2M free for the entry-level deal of the prospect promoted below.
     const budget = fa.capRoom! - 2_000_000;
     const target = fa.players.find((p) => p.ask.salary <= budget);
-    await expect(bob.offseason.signFreeAgent({ leagueId, playerId: fa.players[0].id })).rejects.toThrow(/Training camp/);
+    await expect(bob.offseason.negotiateFreeAgent({ leagueId, playerId: fa.players[0].id, salary: 1_000_000, years: 1 })).rejects.toThrow(/training camp or during the season/);
+    // Every free agent shows his interest in us and his ask from us.
+    expect(fa.players[0].deal!.interest.score).toBeGreaterThanOrEqual(0);
+    expect(fa.players[0].deal!.estimate).toHaveLength(8);
+    expect(JSON.stringify(fa.players[0].deal)).not.toMatch(/effect|greed|loyalty|ambition/);
     if (target) {
       // (Random leagues occasionally leave HAL capped out after re-signing.)
       const bid = Math.floor(Math.min(target.ask.salary * 1.5, budget) / 25_000) * 25_000;
@@ -260,6 +264,21 @@ describe('multiplayer league flow', () => {
     await comm.sim.advance({ leagueId, target: { days: 3 } });
     expect((await comm.leagues.overview({ leagueId })).day).toBe(3);
   }, 120_000);
+
+  it('negotiates with a free agent in season: he signs when the offer clears his bar', async () => {
+    const fa = await bob.offseason.freeAgents({ leagueId });
+    expect(fa.canSign).toBe(true);
+    if (fa.rosterCount! >= fa.rosterMax) return; // (random leagues: HAL may be full)
+    const p = fa.players.find((x) => x.deal!.estimate[x.deal!.ask.years - 1].salary * 1.3 <= fa.capRoom!)!;
+    const lowball = await bob.offseason.negotiateFreeAgent({ leagueId, playerId: p.id, salary: 775_000, years: 1 });
+    expect(['reject', 'counter', 'accept']).toContain(lowball.result);
+    if (lowball.result === 'accept') return;
+    const years = p.deal!.ask.years;
+    const salary = Math.round((p.deal!.estimate[years - 1].salary * 1.3) / 25_000) * 25_000;
+    const r = await bob.offseason.negotiateFreeAgent({ leagueId, playerId: p.id, salary, years });
+    expect(r.result).toBe('accept');
+    expect((await bob.data.team({ leagueId, teamId: 'HAL' })).players.map((x) => x.id)).toContain(p.id);
+  });
 
   it('keeps managers informed: notifications, news, front office and history', async () => {
     const n = await bob.life.notifications({ leagueId });
