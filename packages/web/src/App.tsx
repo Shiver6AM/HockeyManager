@@ -4,6 +4,8 @@ import { Spinner } from './components/ui';
 import { BoxScorePage } from './pages/BoxScore';
 import { DraftPage } from './pages/Draft';
 import { FreeAgentsPage } from './pages/FreeAgents';
+import { HistoryPage } from './pages/History';
+import { NewsPage } from './pages/News';
 import { PlayerPage } from './pages/Player';
 import { ResignPage } from './pages/Resign';
 import { Dashboard } from './pages/Dashboard';
@@ -43,6 +45,8 @@ export function App() {
         <Route path="free-agents" element={<FreeAgentsPage />} />
         <Route path="player/:playerId" element={<PlayerPage />} />
         <Route path="trades" element={<TradesPage />} />
+        <Route path="news" element={<NewsPage />} />
+        <Route path="history" element={<HistoryPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

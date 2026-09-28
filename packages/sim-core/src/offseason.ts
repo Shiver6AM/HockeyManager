@@ -39,6 +39,9 @@ import { age, overall } from './ratings';
 import { deriveSeed, Rng } from './rng';
 import { ensureBodies, freeAgents, healthyRoster, isFreeAgent } from './roster';
 import { standings } from './league';
+import { closeBooks, setOwnerGoals } from './finances';
+import { considerForHallOfFame, newsFromTransactions } from './news';
+import { offseasonStaff } from './staff';
 import { buildSchedule } from './schedule';
 import type { CareerLine, ContractOffer, FaResult, League, OffseasonStage, Player, PlayerId, StandingsRow, Team, TeamId } from './types';
 
@@ -102,7 +105,7 @@ function retire(league: League, p: Player) {
     p.prospectOf = undefined;
     return;
   }
-  (league.retired ??= {})[p.id] = {
+  const record = ((league.retired ??= {})[p.id] = {
     id: p.id,
     name: nm(p),
     pos: p.pos,
@@ -111,7 +114,8 @@ function retire(league: League, p: Player) {
     lastTeamId: teamId,
     peakOverall: Math.max(overall(p), ...career.map((c) => c.overall)),
     career,
-  };
+  });;
+  considerForHallOfFame(league, record);
   if (teamId && (overall(p) >= 68 || career.length >= 8)) {
     tx(league, 'retirement', teamId, p, `${nm(p)} retires after ${career.length} season${career.length === 1 ? '' : 's'} (age ${age(p, league.season)})`);
   }
@@ -218,6 +222,12 @@ export interface StepResult {
  * on the clock; with `force` it auto-picks for humans and finishes the draft.
  */
 export function offseasonStep(league: League, opts: { force: boolean }): StepResult {
+  const r = offseasonStepInner(league, opts);
+  newsFromTransactions(league);
+  return r;
+}
+
+function offseasonStepInner(league: League, opts: { force: boolean }): StepResult {
   if (league.phase !== 'offseason') throw new Error('Not in the offseason');
   if (!league.offseason) {
     startOffseason(league, standings(league));
@@ -315,6 +325,11 @@ function aiResign(league: League, team: Team, p: Player, room: number): Contract
   return null;
 }
 
+function negotiated(league: League, p: Player, teamId: TeamId): boolean {
+  const n = league.negotiations?.[p.id];
+  return !!n && n.teamId === teamId && n.attempts > 0;
+}
+
 function finishResigning(league: League): number {
   const os = league.offseason!;
   const byTeam = new Map<TeamId, PlayerId[]>();
@@ -341,8 +356,15 @@ function finishResigning(league: League): number {
       const isRfa = p.contract?.expiresAs === 'RFA';
       let deal: ContractOffer | null = null;
       let how: 're-sign' | 'qualifying-offer' = 're-sign';
+      let byAssistant = false;
       if (p.extension) deal = p.extension; // agreed during the season or this summer
       else if (team.controller.kind === 'ai') deal = aiResign(league, team, p, room);
+      // Human managers who never got to a player: the assistant GM handles him like
+      // an AI team would. An explicit "let go" is always respected.
+      else if (os.resign[id] === undefined && !os.qualified?.[id] && !negotiated(league, p, teamId)) {
+        deal = aiResign(league, team, p, room);
+        byAssistant = !!deal;
+      }
       if (!deal && isRfa) {
         const qualify = team.controller.kind === 'human' ? os.qualified?.[id] === true : aiWantsToResign(league, team, p);
         if (qualify) {
@@ -361,7 +383,7 @@ function finishResigning(league: League): number {
           p,
           how === 'qualifying-offer'
             ? `${nm(p)} signs his qualifying offer: 1 yr × $${(deal.salary / 1e6).toFixed(2)}M`
-            : `${nm(p)} re-signs: ${deal.years} yr × $${(deal.salary / 1e6).toFixed(2)}M`,
+            : `${nm(p)} re-signs: ${deal.years} yr × $${(deal.salary / 1e6).toFixed(2)}M${byAssistant ? ' (assistant GM; no decision was made)' : ''}`,
         );
       } else {
         team.roster = team.roster.filter((x) => x !== id);
@@ -686,6 +708,8 @@ function startNewSeason(league: League) {
   const fa = freeAgents(league).sort((a, b) => overall(b) - overall(a));
   for (const p of fa.slice(120)) delete league.players[p.id];
 
+  closeBooks(league);
+  offseasonStaff(league);
   league.season += 1;
   league.day = 0;
   league.phase = 'regular-season';
@@ -717,5 +741,7 @@ function startNewSeason(league: League) {
     if (team.controller.kind === 'ai' || team.autoLines || !valid) team.lines = autoLines(healthyRoster(league, team));
   }
   league.schedule = buildSchedule(Object.values(league.teams), new Rng(deriveSeed(league.seed, `schedule:${league.season}`)));
+  setOwnerGoals(league);
+  if (league.newsState) league.newsState.streaks = {};
 }
 

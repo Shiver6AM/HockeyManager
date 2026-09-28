@@ -74,4 +74,21 @@ create table advance_log (
 create index advance_log_league on advance_log (league_id, id desc);
 `,
   ],
+  [
+    '002_notifications',
+    `
+create table notifications (
+  id bigserial primary key,
+  user_id text not null references users(id) on delete cascade,
+  league_id text not null references leagues(id) on delete cascade,
+  kind text not null,
+  text text not null,
+  link text,
+  created_at timestamptz not null default now(),
+  read_at timestamptz
+);
+
+create index notifications_user on notifications (user_id, id desc);
+`,
+  ],
 ];

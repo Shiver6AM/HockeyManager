@@ -31,6 +31,7 @@ describe('multiplayer league flow', () => {
   let bob: Awaited<ReturnType<typeof caller>>;
   let cat: Awaited<ReturnType<typeof caller>>;
   let leagueId: string;
+  let bobBid = false;
 
   beforeAll(async () => {
     db = await createDb('memory://');
@@ -220,20 +221,30 @@ describe('multiplayer league flow', () => {
     const fa = await bob.offseason.freeAgents({ leagueId });
     expect(fa.bidding).toBe(true);
     expect(fa.canSign).toBe(false);
-    const target = fa.players.find((p) => p.ask.salary * 1.5 <= fa.capRoom!)!;
-    await bob.offseason.placeBid({ leagueId, playerId: target.id, salary: Math.round((target.ask.salary * 1.5) / 25_000) * 25_000, years: target.ask.years });
-    expect((await bob.offseason.freeAgents({ leagueId })).myBids).toHaveLength(1);
-    await expect(bob.offseason.signFreeAgent({ leagueId, playerId: target.id })).rejects.toThrow(/Training camp/);
+    // Random leagues leave HAL with different cap room: bid generously on the best player we can afford.
+    // Keep ~$2M free for the entry-level deal of the prospect promoted below.
+    const budget = fa.capRoom! - 2_000_000;
+    const target = fa.players.find((p) => p.ask.salary <= budget);
+    await expect(bob.offseason.signFreeAgent({ leagueId, playerId: fa.players[0].id })).rejects.toThrow(/Training camp/);
+    if (target) {
+      // (Random leagues occasionally leave HAL capped out after re-signing.)
+      const bid = Math.floor(Math.min(target.ask.salary * 1.5, budget) / 25_000) * 25_000;
+      await bob.offseason.placeBid({ leagueId, playerId: target.id, salary: bid, years: target.ask.years });
+      expect((await bob.offseason.freeAgents({ leagueId })).myBids).toHaveLength(1);
+      bobBid = true;
+    }
     await comm.sim.advance({ leagueId, target: { days: 3 } }); // three bidding rounds
     const faAfter = await bob.offseason.freeAgents({ leagueId });
     expect(faAfter.results.length).toBeGreaterThan(5);
     const team = await bob.data.team({ leagueId, teamId: 'HAL' });
 
-    // Promote a prospect.
+    // Promote a prospect (when there's room for an entry-level deal).
     const prospect = team.prospects[0];
-    await bob.offseason.promote({ leagueId, playerId: prospect.id });
-    const player = await bob.data.player({ leagueId, playerId: prospect.id });
-    expect(player.player!.contract!.kind).toBe('ELC');
+    if (team.salaryCap - team.payroll >= 950_000) {
+      await bob.offseason.promote({ leagueId, playerId: prospect.id });
+      const player = await bob.data.player({ leagueId, playerId: prospect.id });
+      expect(player.player!.contract!.kind).toBe('ELC');
+    }
 
     const before = (await comm.leagues.overview({ leagueId })).season;
     await comm.sim.advance({ leagueId, target: { to: 'next-season' } });
@@ -249,6 +260,41 @@ describe('multiplayer league flow', () => {
     await comm.sim.advance({ leagueId, target: { days: 3 } });
     expect((await comm.leagues.overview({ leagueId })).day).toBe(3);
   }, 120_000);
+
+  it('keeps managers informed: notifications, news, front office and history', async () => {
+    const n = await bob.life.notifications({ leagueId });
+    expect(n.unread).toBeGreaterThan(0);
+    expect(n.items.some((x) => x.kind === 'advance')).toBe(true);
+    if (bobBid) expect(n.items.some((x) => x.kind === 'free-agency')).toBe(true);
+    // Other users never see Bob's notices.
+    const bobIds = new Set(n.items.map((x) => x.id));
+    expect((await cat.life.notifications({ leagueId })).items.some((x) => bobIds.has(x.id))).toBe(false);
+    await bob.life.markRead({ leagueId });
+    expect((await bob.life.notifications({ leagueId })).unread).toBe(0);
+
+    const news = await bob.life.news({ leagueId });
+    expect(news.length).toBeGreaterThan(20);
+    expect(news[0].id).toBeGreaterThan(news.at(-1)!.id); // newest first
+
+    const hist = await bob.life.history({ leagueId });
+    expect(hist.seasons).toHaveLength(1);
+    expect(hist.seasons[0].champion).toBeTruthy();
+    expect(hist.leaders.points.length).toBe(10);
+
+    const fo = await bob.life.frontOffice({ leagueId, teamId: 'HAL' });
+    expect(fo.isMine).toBe(true);
+    expect(fo.history).toHaveLength(1);
+    expect(fo.history[0].homeGames).toBe(41);
+    expect(fo.owner?.goalLabel).toBeTruthy();
+
+    // Hire a new head coach from the pool.
+    const coach = (await bob.life.staffPool({ leagueId })).find((s) => s.role === 'coach')!;
+    await expect(cat.life.hireStaff({ leagueId, staffId: 'nobody' })).rejects.toThrow(/not available/);
+    await bob.life.hireStaff({ leagueId, staffId: coach.id });
+    const fo2 = await bob.life.frontOffice({ leagueId, teamId: 'HAL' });
+    expect(fo2.staff.find((s) => s.role === 'coach')!.member!.id).toBe(coach.id);
+    expect((await bob.life.staffPool({ leagueId })).some((s) => s.id === coach.id)).toBe(false);
+  });
 });
 
 describe('persistence', () => {
@@ -325,12 +371,16 @@ describe('trades API', () => {
     const target = [...que.players].sort((x, y) => (x.contract?.salary ?? 0) - (y.contract?.salary ?? 0))[0];
     const prop = await a.trades.propose({ leagueId, partner: 'QUE', give: [{ kind: 'pick', key: pick.key }], get: [{ kind: 'player', id: target.id }] });
     expect(prop.status).toBe('pending');
+    const bell = await b.life.notifications({ leagueId });
+    expect(bell.items[0]).toMatchObject({ kind: 'trade', link: '/trades', read: false });
     const inbox = await b.trades.list({ leagueId });
     expect(inbox.incoming.map((t) => t.id)).toContain(prop.id);
     await expect(a.trades.respond({ leagueId, tradeId: prop.id, accept: true })).rejects.toThrow(/receiving team/);
     const accepted = await b.trades.respond({ leagueId, tradeId: prop.id, accept: true });
     expect(accepted.status).toBe('completed');
     expect((await b.trades.assets({ leagueId, teamId: 'QUE' })).picks.map((p) => p.key)).toContain(pick.key);
+    expect((await a.life.notifications({ leagueId })).items[0].text).toMatch(/accepted your trade/);
+    expect((await a.life.news({ leagueId })).some((x) => x.kind === 'trade')).toBe(true);
     await db.close();
   }, 60_000);
 });

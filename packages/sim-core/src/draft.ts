@@ -4,6 +4,7 @@
  * execution that pauses whenever a human manager is on the clock.
  */
 import { archetypeForCeiling, generatePlayer } from './generate';
+import { scoutingError } from './staff';
 import { clamp, deriveSeed, Rng } from './rng';
 import { age, overall } from './ratings';
 import type { DraftPick, DraftState, League, Player, Position, StandingsRow, TeamId } from './types';
@@ -52,7 +53,8 @@ export function generateDraftClass(league: League, season: number, size = 32 * D
 export function scoutedPotential(league: League, teamId: TeamId, p: Player): number {
   const young = age(p, league.season) <= 21;
   const rng = new Rng(deriveSeed(league.seed, `scout:${teamId}:${p.id}`));
-  return Math.round(p.hidden.potential + rng.normal(0, young ? 4 : 2));
+  // Better head scouts make smaller (but still repeatable) errors.
+  return Math.round(p.hidden.potential + rng.normal(0, scoutingError(league, teamId, young)));
 }
 
 export function projectionLabel(scouted: number): string {

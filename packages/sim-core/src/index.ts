@@ -16,3 +16,6 @@ export * from './draft';
 export * from './offseason';
 export * from './negotiation';
 export * from './trades';
+export * from './staff';
+export * from './finances';
+export * from './news';

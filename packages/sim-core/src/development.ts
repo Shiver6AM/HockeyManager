@@ -6,6 +6,7 @@
  */
 import { clamp, deriveSeed, Rng } from './rng';
 import { age, goalieQuality, overall, skaterOverall } from './ratings';
+import { coachDevMultiplier } from './staff';
 import type { GoalieRatings, League, Player, SkaterRatings } from './types';
 
 export const DEV_TUNING = {
@@ -59,7 +60,7 @@ export function developPlayer(league: League, p: Player, u: Usage): [number, num
   const effAge = newAge - (p.pos === 'G' ? T.goalieAgeShift : 0);
 
   const rate = effAge <= 18 ? T.growth[18] : (T.growth[effAge] ?? 0);
-  let delta = Math.max(0, p.hidden.potential - before) * rate * usageFactor(p, u);
+  let delta = Math.max(0, p.hidden.potential - before) * rate * usageFactor(p, u) * coachDevMultiplier(league, p.teamId ?? p.prospectOf);
   if (effAge >= T.declineStart) delta -= T.declineBase + (effAge - T.declineStart) * T.declinePerYear;
   delta += rng.normal(0, T.noise);
   if (effAge <= 24 && rng.chance(T.breakoutChance)) {

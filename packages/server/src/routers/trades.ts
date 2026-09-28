@@ -20,12 +20,38 @@ import {
 } from '@hockey-gm/sim-core';
 import { z } from 'zod';
 import { mutateLeague } from '../advance';
+import type { Queryable } from '../db';
+import { deliver, type Notice } from '../notify';
 import { readLeague } from '../state';
 import { badRequest, commissionerProcedure, memberProcedure, router, type Membership } from '../trpc';
 import { publicPlayer, teamInfo } from '../views';
 
 const asset = z.union([z.object({ kind: z.literal('player'), id: z.string() }), z.object({ kind: z.literal('pick'), key: z.string() })]);
 const deal = z.object({ partner: z.string(), give: z.array(asset).max(10), get: z.array(asset).max(10) });
+
+/** Tell the people involved what happened to a trade. */
+async function tradeNotices(L: League, q: Queryable, leagueId: string, t: TradeProposal, event: 'proposed' | 'responded' | 'reviewed') {
+  const from = L.teams[t.fromTeam];
+  const to = L.teams[t.toTeam];
+  const notices: Notice[] = [];
+  const link = '/trades';
+  if (event === 'proposed' && t.status === 'pending' && to.controller.kind === 'human') {
+    notices.push({ teamId: to.id, kind: 'trade', text: `${from.city} sent you a trade proposal.`, link });
+  }
+  if (event === 'responded' && from.controller.kind === 'human') {
+    const verb = t.status === 'completed' ? 'accepted' : t.status === 'awaiting-approval' ? 'accepted (pending commissioner approval)' : t.status === 'invalid' ? 'accepted, but it was no longer valid' : 'declined';
+    notices.push({ teamId: from.id, kind: 'trade', text: `${to.city} ${verb} your trade proposal.`, link });
+  }
+  if (event === 'reviewed') {
+    const verb = t.status === 'completed' ? 'approved' : 'vetoed';
+    for (const team of [from, to]) if (team.controller.kind === 'human') notices.push({ teamId: team.id, kind: 'trade', text: `The commissioner ${verb} your trade with ${team === from ? to.city : from.city}.`, link });
+  }
+  if (t.status === 'awaiting-approval' && event !== 'reviewed') {
+    const rows = await q.query<{ commissioner_id: string }>('select commissioner_id from leagues where id = $1', [leagueId]);
+    notices.push({ userId: rows[0].commissioner_id, kind: 'commissioner', text: `A trade between ${from.city} and ${to.city} needs your approval.`, link });
+  }
+  await deliver(q, leagueId, notices);
+}
 
 function requireTeam(m: Membership): string {
   if (!m.teamId) throw badRequest('You do not manage a team');
@@ -110,23 +136,29 @@ export const tradesRouter = router({
 
   propose: memberProcedure.input(deal).mutation(async ({ ctx, input }) => {
     const teamId = requireTeam(ctx.membership);
-    return mutateLeague(ctx.db, input.leagueId, (L) => {
+    return mutateLeague(ctx.db, input.leagueId, async (L, q) => {
+      let t: TradeProposal;
       try {
-        return tradeView(L, proposeTrade(L, teamId, input.partner, input.give, input.get));
+        t = proposeTrade(L, teamId, input.partner, input.give, input.get);
       } catch (e) {
         throw badRequest((e as Error).message);
       }
+      await tradeNotices(L, q, input.leagueId, t, 'proposed');
+      return tradeView(L, t);
     });
   }),
 
   respond: memberProcedure.input(z.object({ tradeId: z.string(), accept: z.boolean() })).mutation(async ({ ctx, input }) => {
     const teamId = requireTeam(ctx.membership);
-    return mutateLeague(ctx.db, input.leagueId, (L) => {
+    return mutateLeague(ctx.db, input.leagueId, async (L, q) => {
+      let t: TradeProposal;
       try {
-        return tradeView(L, respondToTrade(L, input.tradeId, teamId, input.accept));
+        t = respondToTrade(L, input.tradeId, teamId, input.accept);
       } catch (e) {
         throw badRequest((e as Error).message);
       }
+      await tradeNotices(L, q, input.leagueId, t, 'responded');
+      return tradeView(L, t);
     });
   }),
 
@@ -143,12 +175,13 @@ export const tradesRouter = router({
   }),
 
   review: commissionerProcedure.input(z.object({ tradeId: z.string(), approve: z.boolean() })).mutation(async ({ ctx, input }) => {
-    await mutateLeague(ctx.db, input.leagueId, (L) => {
+    await mutateLeague(ctx.db, input.leagueId, async (L, q) => {
       try {
         reviewTrade(L, input.tradeId, input.approve);
       } catch (e) {
         throw badRequest((e as Error).message);
       }
+      await tradeNotices(L, q, input.leagueId, L.trades!.find((t) => t.id === input.tradeId)!, 'reviewed');
     });
     return { ok: true };
   }),

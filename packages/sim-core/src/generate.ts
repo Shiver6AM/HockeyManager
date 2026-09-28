@@ -4,6 +4,8 @@ import { clamp, deriveSeed, Rng } from './rng';
 import { overall } from './ratings';
 import { buildSchedule } from './schedule';
 import { salaryScale } from './contracts';
+import { initFinances } from './finances';
+import { initStaff } from './staff';
 import type {
   AdvanceMode,
   Contract,
@@ -344,6 +346,8 @@ export function generateLeague(opts: GenerateOptions): League {
     careerStats: {},
     retired: {},
   };
+  initStaff(league);
+  initFinances(league);
   const talent = talentStats(league);
   league.settings.talentAnchor = talent.mean;
   league.settings.talentSpread = talent.sd;

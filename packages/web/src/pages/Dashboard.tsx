@@ -5,6 +5,7 @@ import { Badge, Button, Card, cx, Empty, ErrorBox, TeamChip, TeamLink } from '..
 import { dayLabel, timeUntil } from '../format';
 import { useTRPC } from '../trpc';
 import { useLeague } from './LeagueLayout';
+import { NewsItemRow } from './News';
 import { OffseasonPanel, SummerNews } from './Offseason';
 
 export function Dashboard() {
@@ -286,27 +287,24 @@ function LeadersMini() {
 function NewsFeed() {
   const L = useLeague();
   const trpc = useTRPC();
-  const tx = useQuery(trpc.data.transactions.queryOptions({ leagueId: L.id, limit: 12 }));
-  const icon: Record<string, string> = {
-    injury: '🩹', return: '✅', 'call-up': '⬆️', 'send-down': '⬇️', trade: '🔁', signing: '✍️', 're-sign': '✍️', extension: '✍️',
-    'qualifying-offer': '✍️', buyout: '💸', release: '✂️', departure: '👋', draft: '🎓', promotion: '⬆️', retirement: '🏁',
-  };
+  const news = useQuery(trpc.life.news.queryOptions({ leagueId: L.id, limit: 10 }));
   return (
-    <Card title="League news">
-      {tx.data?.length ? (
-        <ul className="space-y-2 text-sm">
-          {tx.data.map((t, i) => (
-            <li key={i} className="flex gap-2">
-              <span aria-hidden>{icon[t.type]}</span>
-              <div className="min-w-0">
-                <TeamLink leagueId={L.id} team={t.team} />
-                <p className="text-ice-300">{t.note}</p>
-              </div>
-            </li>
+    <Card
+      title="League news"
+      action={
+        <Link to={`/league/${L.id}/news`} className="text-xs text-blue-300 hover:underline">
+          All news
+        </Link>
+      }
+    >
+      {news.data?.length ? (
+        <ul className="space-y-3">
+          {news.data.map((n) => (
+            <NewsItemRow key={n.id} n={n} leagueId={L.id} compact />
           ))}
         </ul>
       ) : (
-        <Empty>Nothing yet. Injuries and roster moves will show up here.</Empty>
+        <Empty>Nothing yet. Big games, trades, signings and injuries will show up here.</Empty>
       )}
     </Card>
   );

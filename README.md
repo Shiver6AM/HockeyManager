@@ -30,10 +30,10 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 61 tests: sim determinism, playoffs, injuries, offseason, and the full multiplayer API flow
+npm test              # 72 tests: sim determinism, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
-npm run calibrate 8   # sim 8 seasons and compare league stats to real NHL figures
+npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
 npm run dynasty 10    # one league for 10 seasons: talent, scoring and ages should stay stable
 ```
 
@@ -177,6 +177,37 @@ anyone who hasn't acted gets sensible defaults.
   with prospects and picks, more often near the deadline, and at most two deals per team
   per season so nobody guts a roster.
 
+## League life
+
+- **Front office:** every team has a head coach, head scout and head trainer, rated
+  40–95. The coach speeds up young players' development (about −8% to +10%), the scout
+  narrows the fog on prospects' potential, and the trainer shortens injuries (about
+  +17% to −20%). An average staffer (65) is neutral. Replace anyone from the job market
+  on your team's **Front office** tab; the outgoing staffer's settlement comes out of
+  the budget. Staff are paid outside the salary cap. AI teams upgrade weak staff each summer.
+- **Finances:** attendance and gate follow market size, winning, star power and last
+  year's title. Media and sponsorship revenue, salaries (including dead cap), staff and
+  operations are booked game by game, and playoff home games are pure upside. Books close
+  each summer and profit or loss rolls into the team's cash.
+- **Owners:** each owner sets a goal for the season (contend, make the playoffs, develop
+  youth or turn a profit) and reviews you after the final. Confidence rises and falls with results.
+- **News:** hat tricks, five-point nights, 50-goal and 100-point milestones, streaks,
+  playoff shutouts and OT winners, awards, series clinches and champions, plus trades,
+  big signings, long injuries to good players, notable retirements and the #1 pick,
+  all drawn from the transaction log.
+- **Notifications:** a bell in the header for things that need you: your results,
+  trade proposals and replies, commissioner approvals, being on the clock in the draft,
+  free-agency wins and losses, and offseason stage changes. They are stored per user,
+  so they're waiting when you come back.
+- **History:** champions and MVPs by season, title counts, the **Hall of Fame** (retired
+  players are scored on production, awards, titles and peak, with credit for careers that
+  began before the league existed) and all-time leaders.
+- **Assistant GM:** if a manager never decides on an expiring player, the assistant GM
+  handles him the way an AI team would, so an absent manager can't lose half a roster.
+  An explicit "let go" is always respected.
+
+<img src="docs/screenshots/front-office.png" width="49%"> <img src="docs/screenshots/history.png" width="49%">
+
 ## The simulation
 
 Each second, each team can generate a shot attempt, penalty, hit, fight, injury or
@@ -221,4 +252,7 @@ playoff OT rate. Some targets are approximate.
 
 ## Roadmap
 
-- **Phase 6, league life:** scouting fog of war, staff, finances, news, notifications.
+- **Phase 7, hosting:** Supabase for the database, sims moved to a worker thread,
+  Supabase Realtime instead of polling, email or push for notifications, and deployment.
+- **Depth:** RFA offer sheets, retained salary in trades, arena and ticket-price decisions,
+  owners who fire GMs, and a minor-league affiliate with its own games.

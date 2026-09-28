@@ -7,6 +7,7 @@ import type { Db } from './db';
 import { authRouter } from './routers/auth';
 import { dataRouter } from './routers/data';
 import { leaguesRouter } from './routers/leagues';
+import { lifeRouter } from './routers/life';
 import { offseasonRouter } from './routers/offseason';
 import { simRouter } from './routers/sim';
 import { tradesRouter } from './routers/trades';
@@ -19,6 +20,7 @@ export const appRouter = router({
   data: dataRouter,
   offseason: offseasonRouter,
   trades: tradesRouter,
+  life: lifeRouter,
 });
 export type AppRouter = typeof appRouter;
 

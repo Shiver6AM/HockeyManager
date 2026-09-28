@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { GameCard } from '../components/GameCard';
+import { FrontOffice } from '../components/FrontOffice';
 import { OfferForm } from '../components/OfferForm';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Rating, Spinner, TeamChip } from '../components/ui';
 import { gaa, money, signed, svPct, toi } from '../format';
@@ -17,7 +18,7 @@ export function TeamPage() {
   const { teamId = '' } = useParams();
   const trpc = useTRPC();
   const q = useQuery(trpc.data.team.queryOptions({ leagueId: L.id, teamId }));
-  const [tab, setTab] = useState<'roster' | 'lines' | 'prospects' | 'schedule'>('roster');
+  const [tab, setTab] = useState<'roster' | 'lines' | 'prospects' | 'schedule' | 'front office'>('roster');
   if (q.error) return <ErrorBox error={q.error} />;
   if (!q.data) return <Spinner />;
   const t = q.data;
@@ -32,7 +33,7 @@ export function TeamPage() {
       >
         <TeamChip team={t.team} size="lg" />
         <div className="min-w-0 flex-1">
-          <h1 className="font-display text-3xl font-semibold tracking-wide text-white uppercase">
+          <h1 className="font-display text-2xl font-semibold tracking-wide text-white uppercase sm:text-3xl">
             {t.team.city} {t.team.name}
           </h1>
           <p className="tabular text-sm text-ice-300">
@@ -48,7 +49,7 @@ export function TeamPage() {
             )}
           </p>
         </div>
-        <div className="w-56">
+        <div className="w-full sm:w-56">
           <div className="mb-1 flex justify-between text-xs text-ice-400">
             <span>Payroll {money(t.payroll)}</span>
             <span>Cap {money(t.salaryCap)}</span>
@@ -65,12 +66,12 @@ export function TeamPage() {
         </div>
       </div>
 
-      <div className="flex gap-1 rounded-lg bg-rink-900 p-1 text-sm sm:w-fit">
-        {(['roster', 'lines', 'prospects', 'schedule'] as const).map((k) => (
+      <div className="flex gap-1 overflow-x-auto rounded-lg bg-rink-900 p-1 text-sm sm:w-fit">
+        {(['roster', 'lines', 'prospects', 'schedule', 'front office'] as const).map((k) => (
           <button
             key={k}
             onClick={() => setTab(k)}
-            className={cx('rounded-md px-4 py-1.5 font-semibold capitalize', tab === k ? 'bg-rink-600 text-white' : 'text-ice-400 hover:text-ice-100')}
+            className={cx('rounded-md px-4 py-1.5 font-semibold whitespace-nowrap capitalize', tab === k ? 'bg-rink-600 text-white' : 'text-ice-400 hover:text-ice-100')}
           >
             {k === 'lines' && t.isMine ? 'Lines editor' : k === 'prospects' ? `Prospects (${t.prospects.length})` : k}
           </button>
@@ -79,6 +80,7 @@ export function TeamPage() {
 
       {tab === 'roster' && <Roster t={t} />}
       {tab === 'prospects' && <Prospects t={t} />}
+      {tab === 'front office' && <FrontOffice leagueId={L.id} teamId={t.team.id} />}
       {tab === 'lines' && (t.isMine ? <LinesEditor t={t} /> : <LinesView t={t} />)}
       {tab === 'schedule' && (
         <div className="grid gap-5 lg:grid-cols-2">

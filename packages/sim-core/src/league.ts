@@ -3,6 +3,9 @@ import { simulateGame } from './game';
 import { currentRound, HOME_PATTERN, nextRound, seedPlayoffs, WINS_NEEDED } from './playoffs';
 import { deriveSeed } from './rng';
 import { prepareTeamForGame } from './roster';
+import { bookGame, initFinances, ownerReviews } from './finances';
+import { addNews, gameNews, newsFromTransactions } from './news';
+import { initStaff, trainerInjuryMultiplier } from './staff';
 import { aiTradeDay, invalidateStale } from './trades';
 import type {
   GameSummary,
@@ -95,7 +98,10 @@ function healInjuries(league: League) {
 function applyInjuries(league: League, res: GameSummary) {
   for (const inj of res.box.injuries) {
     const p = league.players[inj.playerId];
-    p.injury = { type: inj.type, severity: inj.severity, daysLeft: inj.days, sinceDay: league.day };
+    // A good training staff gets players back sooner.
+    const days = Math.max(1, Math.round(inj.days * trainerInjuryMultiplier(league, inj.teamId)));
+    inj.days = days;
+    p.injury = { type: inj.type, severity: inj.severity, daysLeft: days, sinceDay: league.day };
     league.transactions.push({
       day: league.day, season: league.season, type: 'injury', teamId: inj.teamId, playerId: p.id,
       note: `${p.firstName} ${p.lastName}: ${inj.type} (${inj.severity}, ~${inj.days} days)`,
@@ -114,9 +120,17 @@ function playGame(league: League, g: ScheduledGame, playoff: boolean, playedYest
     awayBackToBack: playedYesterday.has(g.away),
   });
   g.result = res;
+  const before: Record<string, { g: number; pts: number }> = {};
+  for (const id of Object.keys(res.box.skaters)) {
+    const s = league.skaterStats[id];
+    before[id] = { g: s?.g ?? 0, pts: s ? s.g + s.a : 0 };
+  }
   if (playoff) recordStats(league, res, league.playoffSkaterStats, league.playoffGoalieStats);
   else recordStats(league, res, league.skaterStats, league.goalieStats);
   applyInjuries(league, res);
+  const homeWon = res.homeScore > res.awayScore;
+  bookGame(league, home, away, homeWon ? 2 : res.overtime ? 1 : 0, homeWon ? (res.overtime ? 1 : 0) : 2, playoff);
+  gameNews(league, g, res.box, playoff, before);
 }
 
 function teamsPlayingOn(league: League, day: number): Set<TeamId> {
@@ -142,7 +156,22 @@ function teamsPlayingOn(league: League, day: number): Set<TeamId> {
   return out;
 }
 
+/** Leagues saved before staff/finances existed get them on first use. */
+export function ensureLeagueLife(league: League) {
+  const teams = Object.values(league.teams);
+  if (teams.some((t) => !t.staff)) initStaff(league);
+  if (teams.some((t) => !t.finances)) initFinances(league);
+  league.newsState ??= { txCursor: league.transactions.length, streaks: {}, nextId: 1 };
+}
+
 function simDay(league: League): ScheduledGame[] {
+  ensureLeagueLife(league);
+  const out = simDayInner(league);
+  newsFromTransactions(league);
+  return out;
+}
+
+function simDayInner(league: League): ScheduledGame[] {
   if (league.day > 0) healInjuries(league);
   const yesterday = teamsPlayingOn(league, league.day - 1);
   const played: ScheduledGame[] = [];
@@ -174,6 +203,10 @@ function simDay(league: League): ScheduledGame[] {
 function startPlayoffs(league: League) {
   const st = standings(league);
   league.awards = regularSeasonAwards(league, st);
+  for (const [award, w] of Object.entries(league.awards)) {
+    const who = w.playerId && league.players[w.playerId] ? `${league.players[w.playerId].firstName} ${league.players[w.playerId].lastName}` : league.teams[w.teamId].city;
+    addNews(league, 'award', `${who} wins the ${award} (${w.note})`, [w.teamId], w.playerId ? [w.playerId] : []);
+  }
   // One rest day after the regular season.
   league.playoffs = seedPlayoffs(league, st, league.day + 1);
   league.phase = 'playoffs';
@@ -207,6 +240,11 @@ function playoffDay(league: League, yesterday: Set<TeamId>): ScheduledGame[] {
     else s.lowWins++;
     if (s.highWins === WINS_NEEDED) s.winner = s.high;
     if (s.lowWins === WINS_NEEDED) s.winner = s.low;
+    if (s.winner && s.round < 4) {
+      const loser = s.winner === s.high ? s.low : s.high;
+      const upset = s.winner === s.low ? ' (upset!)' : '';
+      addNews(league, 'playoffs', `${league.teams[s.winner].city} eliminate ${league.teams[loser].city} in ${s.games.length}${upset}`, [s.winner, loser]);
+    }
     played.push(g);
   });
 
@@ -230,6 +268,13 @@ function finishSeason(league: League) {
   const mvp = playoffMvp(league, final.winner!, runnerUp);
   if (mvp) league.awards['Conn Smythe Trophy'] = mvp;
   league.history.push({ season: league.season, champion: final.winner, runnerUp, awards: { ...league.awards } });
+  const champ = league.teams[final.winner!];
+  addNews(league, 'playoffs', `${champ.city} ${champ.name} win the championship, beating ${league.teams[runnerUp].city} ${final.highWins === 4 && final.lowWins === 0 ? 'in a sweep' : `in ${final.games.length} games`}`, [final.winner!, runnerUp]);
+  if (mvp) addNews(league, 'award', `Conn Smythe Trophy: ${mvp.playerId ? `${league.players[mvp.playerId]?.firstName} ${league.players[mvp.playerId]?.lastName}` : ''} (${mvp.note})`, [mvp.teamId], mvp.playerId ? [mvp.playerId] : []);
+  const reviews = ownerReviews(league, standings(league));
+  for (const t of Object.values(league.teams)) {
+    if (t.controller.kind === 'human') addNews(league, 'owner', `${t.city} owner: ${reviews[t.id]}`, [t.id]);
+  }
   // Season review: final stats stay browsable until the league moves on,
   // which runs development/retirements and opens the draft (offseasonStep).
   league.phase = 'offseason';

@@ -69,7 +69,7 @@ function callUp(league: League, team: Team, need: 'F' | 'D' | 'G'): void {
 }
 
 export function ensureBodies(league: League, team: Team) {
-  for (let guard = 0; guard < 10; guard++) {
+  for (let guard = 0; guard < 30; guard++) {
     const h = healthyRoster(league, team);
     const f = h.filter(isF).length;
     const d = h.filter((p) => p.pos === 'D').length;

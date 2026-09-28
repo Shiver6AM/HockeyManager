@@ -115,6 +115,15 @@ export interface Team {
   division: string;
   controller: TeamController;
   roster: PlayerId[];
+  /** Head coach, head scout and head trainer. */
+  staff?: Record<StaffRole, StaffMember>;
+  /** Market size: 0.7 (small) … 1.5 (big). Drives attendance, ticket prices and revenue. */
+  market?: number;
+  finances?: TeamFinances;
+  financeHistory?: TeamFinances[];
+  /** Cumulative profit since the league began. */
+  cash?: number;
+  owner?: OwnerState;
   /** Buyout charges: cap hits for players no longer on the team. Seasons inclusive. */
   deadCap?: Array<{ playerName: string; amount: number; fromSeason: number; untilSeason: number }>;
   /** Draft picks and young players developing outside the active roster (junior/minors). */
@@ -365,6 +374,12 @@ export interface League {
   history: SeasonRecord[];
   transactions: Transaction[];
   offseason?: OffseasonState | null;
+  /** Coaches, scouts and trainers looking for work. */
+  staffPool?: StaffMember[];
+  news?: NewsItem[];
+  /** Bookkeeping for news generation (streaks, processed transactions). */
+  newsState?: { txCursor: number; streaks: Record<TeamId, number>; nextId: number };
+  hallOfFame?: HallOfFamer[];
   /** Draft pick ownership by pick key "season:round:originalTeam". Missing = original team. */
   pickOwners?: Record<string, TeamId>;
   trades?: TradeProposal[];
@@ -440,6 +455,65 @@ export interface TradeProposal {
   status: 'pending' | 'awaiting-approval' | 'completed' | 'rejected' | 'withdrawn' | 'vetoed' | 'invalid';
   note?: string;
   resolvedDay?: number;
+}
+
+export type StaffRole = 'coach' | 'scout' | 'trainer';
+
+export interface StaffMember {
+  id: string;
+  name: string;
+  role: StaffRole;
+  /** 40 (poor) … 95 (elite). */
+  rating: number;
+  salary: number;
+  yearsLeft: number;
+}
+
+export interface TeamFinances {
+  season: number;
+  homeGames: number;
+  attendance: number;
+  gate: number;
+  media: number;
+  sponsorship: number;
+  playoffGate: number;
+  salaries: number;
+  staff: number;
+  operations: number;
+  /** Running record, used for fan demand. */
+  gp: number;
+  pts: number;
+}
+
+export type OwnerGoal = 'win-now' | 'make-playoffs' | 'develop-youth' | 'turn-profit';
+
+export interface OwnerState {
+  goal: OwnerGoal;
+  /** 0 … 100. */
+  confidence: number;
+  lastReview: string | null;
+}
+
+export type NewsKind = 'game' | 'milestone' | 'streak' | 'trade' | 'signing' | 'injury' | 'award' | 'playoffs' | 'draft' | 'retirement' | 'hof' | 'owner' | 'staff';
+
+export interface NewsItem {
+  id: number;
+  season: number;
+  day: number;
+  kind: NewsKind;
+  headline: string;
+  teamIds: TeamId[];
+  playerIds: PlayerId[];
+}
+
+export interface HallOfFamer {
+  playerId: PlayerId;
+  name: string;
+  pos: Position;
+  inducted: number;
+  seasons: number;
+  lastTeamId: TeamId | null;
+  summary: string;
 }
 
 export interface FaResult {
