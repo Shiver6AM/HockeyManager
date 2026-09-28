@@ -227,7 +227,10 @@ function finishSeason(league: League) {
   const mvp = playoffMvp(league, final.winner!, runnerUp);
   if (mvp) league.awards['Conn Smythe Trophy'] = mvp;
   league.history.push({ season: league.season, champion: final.winner, runnerUp, awards: { ...league.awards } });
+  // Season review: final stats stay browsable until the league moves on,
+  // which runs development/retirements and opens the draft (offseasonStep).
   league.phase = 'offseason';
+  league.offseason = null;
 }
 
 const emptySkater = (): SkaterSeasonStats => ({

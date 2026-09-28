@@ -5,6 +5,7 @@ import { Badge, Button, Card, cx, Empty, ErrorBox, TeamChip, TeamLink } from '..
 import { dayLabel, timeUntil } from '../format';
 import { useTRPC } from '../trpc';
 import { useLeague } from './LeagueLayout';
+import { OffseasonPanel, SummerNews } from './Offseason';
 
 export function Dashboard() {
   const L = useLeague();
@@ -12,8 +13,17 @@ export function Dashboard() {
     <div className="grid gap-5 lg:grid-cols-3">
       <div className="space-y-5 lg:col-span-2">
         {L.champion && <ChampionBanner />}
-        <AdvancePanel />
-        <LatestScores />
+        {L.phase === 'offseason' ? (
+          <>
+            <OffseasonPanel />
+            <SummerNews />
+          </>
+        ) : (
+          <>
+            <AdvancePanel />
+            <LatestScores />
+          </>
+        )}
       </div>
       <div className="space-y-5">
         <MyTeamCard />
@@ -66,9 +76,7 @@ function AdvancePanel() {
         <div>
           <p className="font-display text-3xl font-semibold text-white">{dayLabel(L.season, L.day, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
           <p className="mt-1 text-sm text-ice-400">
-            {over
-              ? 'The season is complete. Offseason (aging, draft, free agency) arrives in Phase 3.'
-              : L.phase === 'playoffs'
+            {L.phase === 'playoffs'
                 ? 'Playoffs are underway.'
                 : `${L.gamesToday} games today · regular season ends ${dayLabel(L.season, L.lastRegularDay, { month: 'short', day: 'numeric' })}`}
           </p>

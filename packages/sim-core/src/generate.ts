@@ -121,13 +121,22 @@ function fitToTarget(p: Player, target: number) {
   }
 }
 
+/** Pick a playing style that fits a young player's ceiling rather than his current level. */
+export function archetypeForCeiling(rng: Rng, pos: Position, ceiling: number): string | undefined {
+  if (pos === 'G') return undefined;
+  const pool = pos === 'D' ? DEFENSE_ARCHETYPES : FORWARD_ARCHETYPES;
+  const names = Object.keys(pool);
+  const weights = names.map((n) => (n === 'Grinder' ? (ceiling < 66 ? 3 : 0.2) : 1));
+  return names[rng.weighted(weights)];
+}
+
 export function generatePlayer(
   rng: Rng,
   pos: Position,
   target: number,
   season: number,
   forcedAge?: number,
-  forcedArchetype?: 'Generational',
+  forcedArchetype?: string,
 ): Player {
   const age = forcedAge ?? sampleAge(rng);
   const ovr = Math.round(clamp(target + ageAdjustment(age), 40, 97));
@@ -190,6 +199,23 @@ const DEFENSE_TIERS = [80, 77, 73, 70, 66, 63, 60];
 const GOALIE_TIERS = [77, 68];
 /** How many once-a-generation players a new league starts with. */
 const GENERATIONAL_PLAYERS = 2;
+
+/** Mean overall of the best N players in the league, where N = total roster spots. */
+export function talentLevel(league: League): number {
+  return talentStats(league).mean;
+}
+
+export function talentStats(league: League): { mean: number; sd: number } {
+  const n = Object.keys(league.teams).length * 23;
+  const ovrs = Object.values(league.players)
+    .filter((p) => !league.retired?.[p.id])
+    .map(overall)
+    .sort((a, b) => b - a)
+    .slice(0, n);
+  const mean = ovrs.reduce((s, x) => s + x, 0) / ovrs.length;
+  const sd = Math.sqrt(ovrs.reduce((s, x) => s + (x - mean) ** 2, 0) / ovrs.length);
+  return { mean, sd };
+}
 
 export function generateLeague(opts: GenerateOptions): League {
   const season = opts.season ?? 2026;
@@ -267,6 +293,28 @@ export function generateLeague(opts: GenerateOptions): League {
     players[p.id] = p;
   }
 
+  // Each team starts with a few prospects developing in junior/minors.
+  const prRng = rng.child('prospects');
+  let prN = 0;
+  for (const t of Object.values(teams)) {
+    t.prospects = [];
+    for (let i = 0; i < 4; i++) {
+      const pos = prRng.pick(['C', 'LW', 'RW', 'D', 'D', 'G'] as Position[]);
+      const a = prRng.int(18, 21);
+      const potential = Math.min(95, Math.max(55, prRng.normal(69, 6)));
+      const p = generatePlayer(prRng, pos, potential - (24 - a) * 3.2 + 4, season, a, archetypeForCeiling(prRng, pos, potential));
+      p.id = `pr${++prN}`;
+      const round = potential >= 76 ? 1 : potential >= 71 ? 2 : potential >= 66 ? prRng.int(3, 4) : prRng.int(5, 7);
+      p.draft = { season: season - Math.max(1, a - 17), round, overall: (round - 1) * 32 + prRng.int(1, 32), teamId: t.id };
+      p.hidden.potential = Math.round(Math.max(overall(p), potential));
+      p.contract = null;
+      p.teamId = null;
+      p.prospectOf = t.id;
+      players[p.id] = p;
+      t.prospects.push(p.id);
+    }
+  }
+
   const league: League = {
     id: `league-${opts.seed}`,
     name: opts.name ?? 'Continental Hockey League',
@@ -292,7 +340,13 @@ export function generateLeague(opts: GenerateOptions): League {
     awards: {},
     history: [],
     transactions: [],
+    offseason: null,
+    careerStats: {},
+    retired: {},
   };
+  const talent = talentStats(league);
+  league.settings.talentAnchor = talent.mean;
+  league.settings.talentSpread = talent.sd;
   league.schedule = buildSchedule(Object.values(teams), new Rng(deriveSeed(opts.seed, `schedule:${season}`)));
   return league;
 }

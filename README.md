@@ -2,7 +2,9 @@
 
 A multiplayer hockey management game. Each friend manages a team in a 32-team league,
 and the other teams are run by AI. The simulation is deep: a second-by-second game
-engine, fatigue, injuries, NHL-format playoffs and awards.
+engine, fatigue, injuries, NHL-format playoffs and awards. Leagues also run for
+decades: players develop and age, stars retire, and every summer brings a draft,
+re-signings and free agency.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -28,10 +30,11 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 34 tests: sim determinism, playoffs, injuries, and the full multiplayer API flow
+npm test              # 45 tests: sim determinism, playoffs, injuries, offseason, and the full multiplayer API flow
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate 8   # sim 8 seasons and compare league stats to real NHL figures
+npm run dynasty 10    # one league for 10 seasons: talent, scoring and ages should stay stable
 ```
 
 ### Moving to Supabase (or any hosted Postgres)
@@ -101,6 +104,36 @@ time produces exactly the same league as simming a week at once. The tests check
 
 ![Lines editor](docs/screenshots/lines.png)
 
+## Seasons that never end: the career loop
+
+When the final ends, the league enters the offseason. Each stage waits for managers
+unless the commissioner or the schedule moves on, and nobody can stall the league:
+anyone who hasn't acted gets sensible defaults.
+
+| Stage | What happens | What you do |
+|---|---|---|
+| **Season review** | Nothing changes yet, so final stats and awards can be browsed | Look around |
+| **Entry draft** | A new class of ~260 teenagers and an NHL-style lottery (two draws, max 10-spot jump); 7 rounds | Pick when you're on the clock, or rank a **draft list** that's used if you're away |
+| **Re-sign** | Players age and develop over the summer, veterans retire, contracts expire | Re-sign or let go each expiring player at his asking price |
+| **Free agency** | AI teams fill their rosters; unsigned players lower their asks each round | Sign free agents at their asking price, first come first served |
+| **Training camp** | AI teams promote ready prospects and cut to 23 | Promote prospects, send down, release |
+| **New season** | Career stats archived, new schedule, cap grows 2.5% | — |
+
+- **Development:** young players close part of the gap to their hidden potential each
+  year, faster with real NHL ice time. Veterans decline from about 30, speed first
+  and hockey sense last, and goalies peak later. Breakouts and busts happen.
+- **Scouting:** potential is never shown. Your scouts give draft prospects and young
+  players a grade (A+ … F) and a projection ("Top-six / top-four"). Every team's scouts
+  make different, repeatable errors.
+- **Prospects:** draft picks develop outside the 23-man roster and the cap. Promoting
+  one signs a 3-year entry-level deal. Unsigned prospects are released at 23.
+- **Careers:** every player has a career page with season-by-season stats, draft
+  info, awards and ratings. Retired players keep their pages.
+- **Long-run balance:** each summer ratings are nudged back toward the league's
+  original talent mean and spread, so there's no inflation or deflation over decades.
+  Without this, the game-sim calibration would drift. In a 10-season test, talent
+  stayed within 68.7–69.6, goals per game within 2.85–3.08, and 8 different teams won.
+
 ## The simulation
 
 Each second, each team can generate a shot attempt, penalty, hit, fight, injury or
@@ -140,13 +173,12 @@ playoff OT rate. Some targets are approximate.
 - A full-season "sim to end" takes a few seconds and blocks the API while it runs.
   It should move to a worker thread before the game is hosted.
 - Live updates use 5-second polling. Supabase Realtime can replace it later.
-- After the playoffs the league stops at the **offseason**. Aging, development,
-  retirement, the draft and rolling into a new season are Phase 3.
+- Contracts use fixed asking prices, and free agency is first come first served.
+  Real negotiation and blind bidding are Phase 4.
+- The league document grows about 0.3 MB per season of history (careers, retirees).
 
 ## Roadmap
 
-- **Phase 3, career loop:** aging and development curves, retirement, the draft,
-  and offseason rollover into a new season.
 - **Phase 4, contracts and free agency:** cap rules, RFA/UFA, AI player negotiation
   driven by personality, blind-bid free agency rounds.
 - **Phase 5, trades:** human-to-human proposals, AI trade valuation, approval/veto rules.

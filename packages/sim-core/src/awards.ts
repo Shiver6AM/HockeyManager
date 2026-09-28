@@ -95,8 +95,10 @@ export function regularSeasonAwards(league: League, st: StandingsRow[]): Record<
   );
   if (selke) awards['Selke Trophy'] = { playerId: selke[0], teamId: team(selke[0]), note: `${selke[1].pm >= 0 ? '+' : ''}${selke[1].pm}, ${selke[1].blk} BLK` };
 
-  // Rookies: until careers are tracked, a rookie is anyone 21 or younger.
-  const isRookie = (id: PlayerId) => league.season - P[id].birthYear <= 21;
+  // Rookie: no earlier season with 25+ skater games (or 10+ goalie games), age 26 or younger.
+  const isRookie = (id: PlayerId) =>
+    league.season - P[id].birthYear <= 26 &&
+    !(league.careerStats?.[id] ?? []).some((c) => c.season < league.season && ((c.skater?.gp ?? 0) >= 25 || (c.goalie?.gp ?? 0) >= 10));
   const calderSk = best(sk.filter(([id, s]) => isRookie(id) && s.gp >= 40), ([, s]) => pts(s) + 0.2 * s.pm);
   const calderG = best(gs.filter(([id, g]) => isRookie(id) && g.gp >= 25), ([, g]) => gsaa(g, lgSv) * 3 + g.w);
   const cSk = calderSk ? pts(calderSk[1]) + 0.2 * calderSk[1].pm : -Infinity;

@@ -7,6 +7,7 @@ import type { Db } from './db';
 import { authRouter } from './routers/auth';
 import { dataRouter } from './routers/data';
 import { leaguesRouter } from './routers/leagues';
+import { offseasonRouter } from './routers/offseason';
 import { simRouter } from './routers/sim';
 import { router, type Context } from './trpc';
 
@@ -15,6 +16,7 @@ export const appRouter = router({
   leagues: leaguesRouter,
   sim: simRouter,
   data: dataRouter,
+  offseason: offseasonRouter,
 });
 export type AppRouter = typeof appRouter;
 

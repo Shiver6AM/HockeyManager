@@ -190,7 +190,7 @@ export function collect(leagues: League[]): Metrics {
     m.topAssists.push(Math.max(...sk.map(([, s]) => s.a)));
     m.top100Pts.push(sk.filter(([, s]) => s.g + s.a >= 100).length);
     const toi = (pos: (p: string) => boolean) =>
-      Math.max(...sk.filter(([id, s]) => pos(L.players[id].pos) && s.gp >= 40).map(([, s]) => s.toi / s.gp / 60));
+      Math.max(...sk.filter(([id, s]) => L.players[id] && pos(L.players[id].pos) && s.gp >= 40).map(([, s]) => s.toi / s.gp / 60));
     m.topDToi.push(toi((p) => p === 'D'));
     m.topFToi.push(toi((p) => p !== 'D'));
     m.topFoPct.push(Math.max(...sk.filter(([, s]) => s.fow + s.fol >= 500).map(([, s]) => s.fow / (s.fow + s.fol))));

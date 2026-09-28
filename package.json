@@ -11,7 +11,8 @@
     "calibrate": "tsx tools/calibrate.ts",
     "demo": "tsx tools/demo.ts",
     "dev": "concurrently -k -n api,web -c blue,magenta \"npm run dev -w @hockey-gm/server\" \"npm run dev -w @hockey-gm/web\"",
-    "build": "npm run build -w @hockey-gm/web"
+    "build": "npm run build -w @hockey-gm/web",
+    "dynasty": "tsx tools/dynasty.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

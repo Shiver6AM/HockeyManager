@@ -27,10 +27,17 @@ export function LeagueLayout() {
   const tabs: Array<[string, string]> = [
     ['', 'Home'],
     ...(L.myTeamId ? ([[`team/${L.myTeamId}`, 'My Team']] as Array<[string, string]>) : []),
+    ...(L.phase === 'offseason'
+      ? ([
+          ['draft', 'Draft'],
+          ['re-sign', 'Re-sign'],
+        ] as Array<[string, string]>)
+      : []),
     ['standings', 'Standings'],
     ['scores', 'Scores'],
     ['stats', 'Stats'],
     ...(L.phase !== 'regular-season' ? ([['playoffs', 'Playoffs']] as Array<[string, string]>) : []),
+    ['free-agents', 'Free agents'],
     ['teams', 'Teams'],
     ['settings', 'League'],
   ];

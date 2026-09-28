@@ -1,18 +1,15 @@
 import { z } from 'zod';
 import { advanceLeague, allHumansReady, type AdvanceSummary } from '../advance';
-import { readLeague } from '../state';
 import { badRequest, commissionerProcedure, memberProcedure, router } from '../trpc';
 
 const target = z.union([
   z.object({ days: z.number().int().min(1).max(400) }),
-  z.object({ to: z.enum(['playoffs', 'end-of-season']) }),
+  z.object({ to: z.enum(['playoffs', 'end-of-season', 'next-season']) }),
 ]);
 
 export const simRouter = router({
   /** Commissioner-driven advance. Works in both modes (a manual override for scheduled leagues). */
   advance: commissionerProcedure.input(z.object({ target })).mutation(async ({ ctx, input }) => {
-    const L = await readLeague(ctx.db, input.leagueId);
-    if (L.phase === 'offseason') throw badRequest('The season is over');
     const summary = await advanceLeague(ctx.db, input.leagueId, input.target, `commissioner:${ctx.user.id}`);
     await ctx.scheduler.sync(input.leagueId).catch(() => undefined);
     return summary;
@@ -36,8 +33,7 @@ export const simRouter = router({
         [input.leagueId],
       );
       const adv = rows[0].advance;
-      const L = await readLeague(ctx.db, input.leagueId);
-      if (adv.mode === 'scheduled' && adv.advanceEarlyWhenAllReady && L.phase !== 'offseason' && (await allHumansReady(ctx.db, input.leagueId))) {
+      if (adv.mode === 'scheduled' && adv.advanceEarlyWhenAllReady && (await allHumansReady(ctx.db, input.leagueId))) {
         advanced = await advanceLeague(ctx.db, input.leagueId, { days: adv.daysPerTick ?? 1 }, 'all-ready');
         await ctx.scheduler.sync(input.leagueId);
       }

@@ -23,13 +23,25 @@ export const ACTIVE_ROSTER_MAX = 23;
 
 const isF = (p: Player) => p.pos === 'C' || p.pos === 'LW' || p.pos === 'RW';
 
+/** Unsigned, not a prospect, not retired, not in a class that hasn't been drafted yet. */
+export function isFreeAgent(league: League, p: Player): boolean {
+  if (p.teamId !== null || p.prospectOf || league.retired?.[p.id]) return false;
+  const d = league.offseason?.draft;
+  if (d && d.current < d.picks.length && d.classIds.includes(p.id)) return false;
+  return true;
+}
+
+export function freeAgents(league: League): Player[] {
+  return Object.values(league.players).filter((p) => isFreeAgent(league, p));
+}
+
 export function healthyRoster(league: League, team: Team): Player[] {
   return team.roster.map((id) => league.players[id]).filter((p) => !p.injury);
 }
 
 function callUp(league: League, team: Team, need: 'F' | 'D' | 'G'): void {
   const pool = Object.values(league.players).filter(
-    (p) => p.teamId === null && !p.injury && (need === 'F' ? isF(p) : p.pos === need),
+    (p) => isFreeAgent(league, p) && !p.injury && (need === 'F' ? isF(p) : p.pos === need),
   );
   let best: Player;
   if (pool.length) {
@@ -44,7 +56,7 @@ function callUp(league: League, team: Team, need: 'F' | 'D' | 'G'): void {
     league.players[best.id] = best;
   }
   best.teamId = team.id;
-  best.contract = { salary: LEAGUE_MINIMUM, yearsLeft: 1, kind: 'standard', expiresAs: 'UFA' };
+  best.contract = { salary: LEAGUE_MINIMUM, yearsLeft: 1, kind: 'standard', expiresAs: league.season - best.birthYear + 1 >= 27 ? 'UFA' : 'RFA' };
   team.roster.push(best.id);
   league.transactions.push({
     day: league.day,
@@ -56,7 +68,7 @@ function callUp(league: League, team: Team, need: 'F' | 'D' | 'G'): void {
   });
 }
 
-function ensureBodies(league: League, team: Team) {
+export function ensureBodies(league: League, team: Team) {
   for (let guard = 0; guard < 10; guard++) {
     const h = healthyRoster(league, team);
     const f = h.filter(isF).length;

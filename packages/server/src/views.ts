@@ -13,7 +13,8 @@ export function publicPlayer(league: League, p: Player) {
     name: `${p.firstName} ${p.lastName}`,
     pos: p.pos,
     shoots: p.shoots,
-    age: age(p, league.season),
+    // During the summer, show the age the player will be next season.
+    age: age(p, league.season + (league.phase === 'offseason' ? 1 : 0)),
     nationality: p.nationality,
     archetype: p.archetype,
     teamId: p.teamId,
@@ -42,7 +43,9 @@ export type TeamInfo = ReturnType<typeof teamInfo>;
 
 /** Average overall of the dressed lineup — a quick "team strength" number. */
 export function teamRating(league: League, t: Team): number {
-  const ids = [...t.lines.forwards.flat(), ...t.lines.defense.flat(), t.lines.goalies[0]];
+  // Lines can briefly reference departed players during the offseason; skip them.
+  const ids = [...t.lines.forwards.flat(), ...t.lines.defense.flat(), t.lines.goalies[0]].filter((id) => league.players[id]?.teamId === t.id);
+  if (!ids.length) return 0;
   const sum = ids.reduce((s, id) => s + overall(league.players[id]), 0);
   return Math.round((sum / ids.length) * 10) / 10;
 }
