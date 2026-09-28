@@ -5,7 +5,7 @@ import { deriveSeed } from './rng';
 import { prepareTeamForGame } from './roster';
 import { bookGame, initFinances, ownerReviews } from './finances';
 import { addNews, gameNews, newsFromTransactions } from './news';
-import { initStaff, trainerInjuryMultiplier } from './staff';
+import { initStaff, refillStaffPool, trainerInjuryMultiplier } from './staff';
 import { aiTradeDay, invalidateStale } from './trades';
 import type {
   GameSummary,
@@ -161,6 +161,7 @@ export function ensureLeagueLife(league: League) {
   const teams = Object.values(league.teams);
   if (teams.some((t) => !t.staff)) initStaff(league);
   if (teams.some((t) => !t.finances)) initFinances(league);
+  refillStaffPool(league); // no-op unless the job market is thin
   league.newsState ??= { txCursor: league.transactions.length, streaks: {}, nextId: 1 };
 }
 

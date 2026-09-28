@@ -38,11 +38,28 @@ export function initStaff(league: League) {
   refillStaffPool(league, rng);
 }
 
-export function refillStaffPool(league: League, rng = new Rng(deriveSeed(league.seed, `staff-pool:${league.season}`))) {
+/** Candidates per role on the job market, and how many of them are strong (72+). */
+export const STAFF_POOL = { perRole: 12, strong: 3, strongMin: 72 };
+
+/**
+ * Keep the job market stocked: a full slate per role, always including a few
+ * strong candidates (they cost more). Ids stay unique across refills.
+ */
+export function refillStaffPool(league: League, rng = new Rng(deriveSeed(league.seed, `staff-pool:${league.season}:${league.day}:${(league.staffPool ?? []).length}`))) {
   const pool = (league.staffPool ??= []);
-  let n = pool.length + league.season * 1000;
+  const used = new Set([...pool.map((s) => s.id), ...Object.values(league.teams).flatMap((t) => STAFF_ROLES.map((r) => t.staff?.[r]?.id ?? ''))]);
+  let n = 0;
+  const nextId = () => {
+    let id: string;
+    do id = `s${league.season}-${league.day}-${++n}-${rng.int(0, 1e6)}`;
+    while (used.has(id));
+    used.add(id);
+    return id;
+  };
   for (const role of STAFF_ROLES) {
-    while (pool.filter((s) => s.role === role).length < 8) pool.push(generateStaff(rng, role, rng.normal(62, 12), `s${league.season}-${++n}`));
+    const strong = pool.filter((s) => s.role === role && s.rating >= STAFF_POOL.strongMin).length;
+    for (let i = strong; i < STAFF_POOL.strong; i++) pool.push(generateStaff(rng, role, rng.int(STAFF_POOL.strongMin, 90), nextId()));
+    while (pool.filter((s) => s.role === role).length < STAFF_POOL.perRole) pool.push(generateStaff(rng, role, rng.normal(62, 11), nextId()));
   }
 }
 
@@ -84,6 +101,7 @@ export function hireStaff(league: League, team: Team, staffId: string): { settle
   if (old) league.staffPool.push({ ...old, yearsLeft: 2 });
   (team.staff ??= {} as Team['staff'] & object)[hire.role] = { ...hire, yearsLeft: Math.max(2, hire.yearsLeft) };
   if (team.finances) team.finances.staff += settlement;
+  refillStaffPool(league);
   return { settlement };
 }
 

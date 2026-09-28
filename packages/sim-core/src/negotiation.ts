@@ -11,6 +11,7 @@
  */
 import { askingContract, BASE_CAP, LEAGUE_MIN_SALARY, MAX_SALARY, marketValue } from './contracts';
 import { age, overall } from './ratings';
+import { deriveSeed, Rng } from './rng';
 import type { ContractOffer, League, NegotiationState, Player, Team, TeamId } from './types';
 
 export const NEGOTIATION = {
@@ -63,30 +64,148 @@ function roleScore(league: League, team: Team, p: Player): number {
   return -0.06;
 }
 
-export function offerUtility(league: League, p: Player, team: Team, offer: ContractOffer, ask = askingContract(league, p)): number {
+// ---------------------------------------------------------------------------
+// Interest, asks and how a player weighs money against term
+// ---------------------------------------------------------------------------
+
+/**
+ * How much he values long-term security, 0 … 1. Not stored on the player: it's
+ * derived from his id so it is stable for his whole career and old saves work.
+ */
+export function securityTrait(league: League, p: Player): number {
+  return new Rng(deriveSeed(league.seed, `security:${p.id}`)).next();
+}
+
+export interface TermProfile {
+  /** Utility per 1.0 of salary ratio (how much money moves him). */
+  moneyWeight: number;
+  /** Utility lost per year shorter than he wants. */
+  shortPenalty: number;
+  /**
+   * Utility per year longer than he wants: positive = he dislikes being locked
+   * in; negative = extra security he'd trade salary for (counts up to 3 years).
+   */
+  longEffect: number;
+  /** Coarse, player-facing summary. */
+  label: string;
+}
+
+export const MAX_SECURITY_YEARS = 3;
+
+export function termProfile(league: League, p: Player): TermProfile {
+  const a = age(p, league.season) + 1;
+  const sec = securityTrait(league, p);
+  const moneyWeight = 0.7 + 0.6 * p.hidden.personality.greed;
+  const base = a >= 33 ? 0.09 : a >= 30 ? 0.07 : a >= 27 ? 0.045 : 0.035;
+  const shortPenalty = base * (0.6 + 0.8 * sec);
+  // Veterans trade salary for years; mid-career players depend on how much they
+  // value security; young players don't want to be locked in cheap.
+  const longEffect = a >= 30 ? -shortPenalty * 0.5 : a >= 27 ? (0.5 - sec) * 0.05 : 0.04 * (1.4 - sec);
+  const label =
+    longEffect < -0.02
+      ? 'Will take less for more years'
+      : longEffect > 0.03
+        ? 'Wants a short deal'
+        : sec > 0.7
+          ? 'Values security'
+          : moneyWeight > 1.1
+            ? 'Money over term'
+            : 'Flexible on term';
+  return { moneyWeight, shortPenalty, longEffect, label };
+}
+
+export interface InterestFactor {
+  label: string;
+  /** Utility: + makes him more interested (and cheaper), − less. */
+  effect: number;
+}
+
+export interface Interest {
+  /** 0 … 100. */
+  score: number;
+  label: 'Very interested' | 'Interested' | 'Open' | 'Lukewarm' | 'Not interested';
+  /** Sum of factor effects (utility units, ~0.1 = 10% of salary). */
+  utility: number;
+  factors: InterestFactor[];
+}
+
+/** How interested a player is in signing with a team, and why. */
+export function teamInterest(league: League, p: Player, team: Team): Interest {
   const { greed, loyalty, ambition } = p.hidden.personality;
   const a = age(p, league.season) + 1;
-  const money = offer.salary / ask.salary;
-  let u = 1 + (money - 1) * (0.7 + 0.6 * greed);
-  // Term: veterans want security; young players take what they asked for.
-  const dy = offer.years - ask.years;
-  u -= a >= 31 ? Math.max(0, -dy) * 0.05 : Math.abs(dy) * 0.03;
-  u += (contenderScore(league, team.id) - 0.5) * 0.24 * ambition;
-  u += roleScore(league, team, p) * (0.5 + ambition);
-  if (p.teamId === team.id) u += 0.1 * loyalty;
-  return u;
+  const factors: InterestFactor[] = [];
+  const add = (label: string, effect: number) => {
+    if (Math.abs(effect) >= 0.01) factors.push({ label, effect: Math.round(effect * 1000) / 1000 });
+  };
+  const c = contenderScore(league, team.id);
+  add(c >= 0.7 ? 'Wants to win: you’re a contender' : c <= 0.3 ? 'Wants to win: you’re rebuilding' : 'Mid-pack team', (c - 0.5) * 0.3 * (0.3 + ambition));
+  const role = roleScore(league, team, p);
+  add(role > 0 ? 'Would be a top player here' : role < 0 ? 'Would be buried on the depth chart' : 'Regular role', role * (0.6 + ambition));
+  if (p.teamId === team.id) add('Loyal to his current team', 0.12 * loyalty);
+  else if (p.draft?.teamId === team.id || p.prospectOf === team.id) add('Drafted by your team', 0.05 * loyalty);
+  const m = team.market ?? 1;
+  add(m >= 1.15 ? 'Big market, bigger spotlight' : m <= 0.85 ? 'Small market' : 'Average market', (m - 1) * 0.12 * (0.4 + greed));
+  if (a <= 25) {
+    const coach = team.staff?.coach?.rating ?? 65;
+    add(coach >= 75 ? 'Rates your coach for development' : coach <= 55 ? 'Unsure about your coach' : 'Neutral on your coach', ((coach - 65) / 30) * 0.05);
+  }
+  const lastChamp = league.history.at(-1)?.champion === team.id;
+  if (lastChamp) add('Defending champions', 0.03 * (0.5 + ambition));
+  const utility = factors.reduce((s, f) => s + f.effect, 0);
+  const score = Math.round(Math.max(0, Math.min(100, 50 + utility * 250)));
+  const label = score >= 75 ? 'Very interested' : score >= 60 ? 'Interested' : score >= 40 ? 'Open' : score >= 25 ? 'Lukewarm' : 'Not interested';
+  return { score, label, utility, factors: factors.sort((x, y) => Math.abs(y.effect) - Math.abs(x.effect)) };
+}
+
+/**
+ * What he asks a specific team for. Interested players give a discount and
+ * commit longer; uninterested ones want a premium and a shorter way out.
+ */
+export function askFromTeam(league: League, p: Player, team: Team, base = askingContract(league, p)): ContractOffer {
+  const interest = teamInterest(league, p, team);
+  const { moneyWeight } = termProfile(league, p);
+  const factor = Math.max(0.78, Math.min(1.25, 1 - interest.utility / moneyWeight));
+  const max = MAX_SALARY * (league.settings.salaryCap / BASE_CAP);
+  const salary = Math.min(max, Math.max(LEAGUE_MIN_SALARY, round25k(base.salary * factor)));
+  const a = age(p, league.season) + 1;
+  let years = base.years;
+  if (interest.score >= 70 && a >= 25 && a <= 31) years = Math.min(8, years + 1);
+  if (interest.score < 35 && years > 1) years -= 1;
+  return { salary, years };
+}
+
+function termPenalty(tp: TermProfile, years: number, wanted: number): number {
+  const d = years - wanted;
+  if (d < 0) return -d * tp.shortPenalty;
+  return tp.longEffect < 0 ? Math.min(d, MAX_SECURITY_YEARS) * tp.longEffect : d * tp.longEffect;
+}
+
+/**
+ * How good an offer looks to him: 1.0 = exactly his ask from this team.
+ * Money counts by his greed; term by his age and appetite for security.
+ */
+export function offerUtility(league: League, p: Player, team: Team, offer: ContractOffer, base = askingContract(league, p)): number {
+  const ask = askFromTeam(league, p, team, base);
+  const tp = termProfile(league, p);
+  return 1 + (offer.salary / ask.salary - 1) * tp.moneyWeight - termPenalty(tp, offer.years, ask.years);
 }
 
 function threshold(neg: NegotiationState | undefined, faRound = 0): number {
   return 1 - faRound * NEGOTIATION.faRoundDrop + (neg?.annoyance ?? 0);
 }
 
-/** Salary (at his preferred term) that would get him to yes. */
-export function salaryNeeded(league: League, p: Player, team: Team, years: number, thr: number, ask = askingContract(league, p)): number {
-  const base = offerUtility(league, p, team, { salary: ask.salary, years }, ask);
-  const w = 0.7 + 0.6 * p.hidden.personality.greed;
-  const money = 1 + (thr - base) / w;
-  return Math.min(MAX_SALARY * (league.settings.salaryCap / BASE_CAP), Math.max(LEAGUE_MIN_SALARY, round25k(money * ask.salary + 12_500)));
+/** Salary at a given term that would get him to yes. */
+export function salaryNeeded(league: League, p: Player, team: Team, years: number, thr: number, base = askingContract(league, p)): number {
+  const ask = askFromTeam(league, p, team, base);
+  const tp = termProfile(league, p);
+  const ratio = 1 + (thr - 1 + termPenalty(tp, years, ask.years)) / tp.moneyWeight;
+  return Math.min(MAX_SALARY * (league.settings.salaryCap / BASE_CAP), Math.max(LEAGUE_MIN_SALARY, round25k(ratio * ask.salary + 12_500)));
+}
+
+/** Price per term for the UI: what each length of deal would take right now. */
+export function priceByTerm(league: League, p: Player, team: Team, base = askingContract(league, p), faRound = 0): Array<{ years: number; salary: number }> {
+  const thr = threshold(league.negotiations?.[p.id]?.teamId === team.id ? league.negotiations[p.id] : undefined, faRound);
+  return [1, 2, 3, 4, 5, 6, 7, 8].map((years) => ({ years, salary: salaryNeeded(league, p, team, years, thr, base) }));
 }
 
 /**
@@ -112,7 +231,9 @@ export function respondToOffer(league: League, p: Player, team: Team, offer: Con
   const left = NEGOTIATION.maxAttempts - neg.attempts;
   if (u >= thr) return { result: 'accept', message: `${p.lastName} accepts: ${offer.years} yr × $${(offer.salary / 1e6).toFixed(2)}M.` };
   if (u >= thr - NEGOTIATION.counterWindow) {
-    const years = ask.years;
+    // Counter at his preferred term, unless the offered term costs him little.
+    const preferred = askFromTeam(league, p, team, ask).years;
+    const years = salaryNeeded(league, p, team, offer.years, thr, ask) <= salaryNeeded(league, p, team, preferred, thr, ask) * 1.03 ? offer.years : preferred;
     const counter = { salary: salaryNeeded(league, p, team, years, thr, ask), years };
     return {
       result: 'counter',

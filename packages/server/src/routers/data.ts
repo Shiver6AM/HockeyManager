@@ -20,6 +20,7 @@ import {
 } from '@hockey-gm/sim-core';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
+import { dealTerms } from '../deal';
 import { mutateLeague } from '../advance';
 import { readBoxScore, readLeague } from '../state';
 import { badRequest, memberProcedure, router } from '../trpc';
@@ -166,8 +167,11 @@ export const dataRouter = router({
         ...publicPlayer(L, L.players[id]),
         extension: L.players[id].extension ?? null,
         canExtend: ctx.membership.teamId === t.id && canExtend(L, L.players[id]) && !L.players[id].extension,
-        ask: ctx.membership.teamId === t.id && canExtend(L, L.players[id]) ? (L.offseason?.expiring[id] ?? askingContract(L, L.players[id])) : null,
-        priorities: ctx.membership.teamId === t.id ? priorities(L.players[id]) : null,
+        deal:
+          ctx.membership.teamId === t.id && canExtend(L, L.players[id])
+            ? dealTerms(L, L.players[id], t, L.offseason?.expiring[id] ?? askingContract(L, L.players[id]))
+            : null,
+        attemptsLeft: L.negotiations?.[id]?.teamId === t.id && L.negotiations[id].season === L.season ? Math.max(0, 3 - L.negotiations[id].attempts) : 3,
         buyout: ctx.membership.teamId === t.id ? buyoutTerms(L, L.players[id]) : null,
         stats: L.skaterStats[id] ?? null,
         goalieStats: L.goalieStats[id] ?? null,

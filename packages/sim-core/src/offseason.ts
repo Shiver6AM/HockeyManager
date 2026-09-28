@@ -30,7 +30,7 @@ import {
   ROSTER_MAX,
   SUMMER_ROSTER_MAX,
 } from './contracts';
-import { aiValuation, offerUtility, respondToOffer, type OfferResult } from './negotiation';
+import { aiValuation, askFromTeam, offerUtility, respondToOffer, type OfferResult } from './negotiation';
 import { developPlayer, retirementChance } from './development';
 import { createDraft, runDraft } from './draft';
 import { generatePlayer, talentStats } from './generate';
@@ -312,9 +312,10 @@ function applyContract(league: League, p: Player, offer: ContractOffer) {
 function aiResign(league: League, team: Team, p: Player, room: number): ContractOffer | null {
   if (!aiWantsToResign(league, team, p)) return null;
   const ask = league.offseason!.expiring[p.id];
+  const mine = askFromTeam(league, p, team, ask);
   const budget = Math.min(aiValuation(league, team, p) * 1.1, room);
-  // Open at the lower of value and ask, then take one counter if it's affordable.
-  const first = { salary: Math.min(ask.salary, aiValuation(league, team, p)), years: ask.years };
+  // Open at the lower of value and his ask from us, then take one counter if it's affordable.
+  const first = { salary: Math.min(mine.salary, aiValuation(league, team, p)), years: mine.years };
   if (first.salary > room) return null;
   const r = respondToOffer(league, p, team, first, { ask });
   if (r.result === 'accept') return first;
@@ -490,9 +491,10 @@ function aiBids(league: League, rng: Rng) {
     let made = 0;
     for (const p of pool) {
       if (made >= maxBids) break;
-      const ask = os.freeAgentAsks[p.id];
-      if (!ask) continue;
-      // Teams bid around the ask, up to what they think he's worth (a bit more for a real need).
+      const base = os.freeAgentAsks[p.id];
+      if (!base) continue;
+      const ask = askFromTeam(league, p, team, base);
+      // Teams bid around his ask from them, up to what they think he's worth (a bit more for a real need).
       const value = aiValuation(league, team, p) * 1.1 * floorBoost;
       const salary = Math.min(value, Math.max(ask.salary * rng.normal(1.03, 0.06) * floorBoost, LEAGUE_MIN_SALARY));
       const offer = { salary: Math.round(salary / 25_000) * 25_000, years: ask.years };
@@ -618,6 +620,21 @@ export function offerExtension(league: League, team: Team, p: Player, offer: Con
     p.extension = offer;
     tx(league, 'extension', team.id, p, `${nm(p)} agrees to a new deal: ${offer.years} yr × $${(offer.salary / 1e6).toFixed(2)}M`);
   }
+  return r;
+}
+
+/**
+ * Negotiate with an unsigned free agent in training camp or during the season
+ * (after the bidding rounds). `base` is his current asking price. On acceptance
+ * he signs immediately; the caller checks cap room and roster size first.
+ */
+export function negotiateFreeAgent(league: League, team: Team, p: Player, offer: ContractOffer, base: ContractOffer): OfferResult {
+  if (!isFreeAgent(league, p)) throw new Error('That player is not a free agent');
+  if (league.phase === 'offseason' && league.offseason?.stage !== 'training-camp') throw new Error('Free agents can be signed directly in training camp or during the season');
+  if (offer.salary > capRoom(league, team)) throw new Error('Not enough cap room for that offer');
+  // Leftover free agents are running out of options, so they're a bit easier to sign.
+  const r = respondToOffer(league, p, team, offer, { ask: base, faRound: 2 });
+  if (r.result === 'accept') signFreeAgent(league, team, p, offer);
   return r;
 }
 

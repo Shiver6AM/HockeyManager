@@ -3,8 +3,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { GameCard } from '../components/GameCard';
 import { FrontOffice } from '../components/FrontOffice';
+import { LinesBoard } from '../components/LinesBoard';
 import { OfferForm } from '../components/OfferForm';
-import { Badge, Button, Card, cx, Empty, ErrorBox, Rating, Spinner, TeamChip } from '../components/ui';
+import { Badge, Button, Card, cx, Empty, ErrorBox, Modal, Rating, Spinner, TeamChip } from '../components/ui';
 import { gaa, money, signed, svPct, toi } from '../format';
 import { useTRPC, type Outputs } from '../trpc';
 import { useLeague } from './LeagueLayout';
@@ -232,15 +233,15 @@ function RosterActions({ t, p }: { t: TeamData; p: P }) {
   const done = { onSuccess: () => qc.invalidateQueries() };
   const release = useMutation(trpc.offseason.release.mutationOptions(done));
   const down = useMutation(trpc.offseason.sendDown.mutationOptions(done));
+  const [extending, setExtending] = useState(false);
   if (!t.isMine) return null;
   const canSendDown = p.contract?.kind === 'ELC' || p.age <= 22;
-  const [extending, setExtending] = useState(false);
   const buyoutNote = p.buyout
     ? `He'll be bought out: ${money(p.buyout.perSeason)} of dead cap per season for ${p.buyout.seasons} seasons.`
     : 'His contract comes off your cap and he becomes a free agent.';
   return (
     <span className="flex flex-wrap gap-1">
-      {p.canExtend && p.ask && (
+      {p.canExtend && p.deal && (
         <Button variant="ghost" className="px-1.5 py-0 text-[11px] text-blue-300" onClick={() => setExtending(!extending)}>
           Extend
         </Button>
@@ -261,10 +262,10 @@ function RosterActions({ t, p }: { t: TeamData; p: P }) {
         Release
       </Button>
       {(release.error || down.error) && <span className="text-[11px] text-red-300">{String((release.error ?? down.error)?.message)}</span>}
-      {extending && p.ask && (
-        <span className="block w-full">
-          <OfferForm leagueId={L.id} playerId={p.id} ask={p.ask} mode="negotiate" onClose={() => setExtending(false)} />
-        </span>
+      {extending && p.deal && (
+        <Modal title={`Extend ${p.name}`} onClose={() => setExtending(false)}>
+          <OfferForm leagueId={L.id} playerId={p.id} deal={p.deal} mode="negotiate" attemptsLeft={p.attemptsLeft} />
+        </Modal>
       )}
     </span>
   );
@@ -433,7 +434,6 @@ function SkaterTable({ title, players, t }: { title: string; players: P[]; t: Te
 // Lines
 // ---------------------------------------------------------------------------
 
-const FWD_LABELS = ['LW', 'C', 'RW'];
 
 function LinesView({ t }: { t: TeamData }) {
   const byId = new Map(t.players.map((p) => [p.id, p]));
@@ -475,8 +475,6 @@ function LinesEditor({ t }: { t: TeamData }) {
   const suggest = useQuery({ ...trpc.data.suggestLines.queryOptions({ leagueId: L.id }), enabled: false });
 
   const byId = useMemo(() => new Map(t.players.map((p) => [p.id, p])), [t.players]);
-  const skaters = t.players.filter((p) => p.pos !== 'G').sort((a, b) => b.overall - a.overall);
-  const goalies = t.players.filter((p) => p.pos === 'G').sort((a, b) => b.overall - a.overall);
   const dressed = [...draft.forwards.flat(), ...draft.defense.flat(), ...draft.goalies];
   const counts = new Map<string, number>();
   dressed.forEach((id) => counts.set(id, (counts.get(id) ?? 0) + 1));
@@ -485,35 +483,6 @@ function LinesEditor({ t }: { t: TeamData }) {
   const stUnitProblems = [...draft.pp, ...draft.pk].some((u) => u.some((id) => !dressedSkaters.has(id)) || new Set(u).size !== u.length);
   const injuredDressed = dressed.filter((id) => byId.get(id)?.injury);
   const dirty = JSON.stringify(draft) !== JSON.stringify(t.lines);
-  const scratches = t.players.filter((p) => !counts.has(p.id));
-
-  const set = (path: (d: Lines) => string[], idx: number, id: string) => {
-    const next = structuredClone(draft);
-    const old = path(next)[idx];
-    path(next)[idx] = id;
-    // If a skater just left the lineup, hand his special-teams spots to his replacement.
-    const stillDressed = new Set([...next.forwards.flat(), ...next.defense.flat()]);
-    if (!stillDressed.has(old)) {
-      for (const unit of [...next.pp, ...next.pk]) {
-        const k = unit.indexOf(old);
-        if (k >= 0 && !unit.includes(id)) unit[k] = id;
-      }
-    }
-    setDraft(next);
-  };
-  const slot = (key: string | number, value: string, options: P[], onChange: (id: string) => void, opts: { tag?: string; compact?: boolean; flag?: boolean } = {}) => (
-    <Slot
-      key={key}
-      value={value}
-      options={options}
-      byId={byId}
-      onChange={onChange}
-      tag={opts.tag}
-      compact={opts.compact}
-      invalid={dupes.has(value) || !!opts.flag}
-    />
-  );
-  const dressedList = skaters.filter((p) => dressedSkaters.has(p.id));
 
   return (
     <div className="space-y-5">
@@ -579,115 +548,8 @@ function LinesEditor({ t }: { t: TeamData }) {
         </div>
       </Card>
 
-      <div className="grid gap-5 xl:grid-cols-3">
-        <Card title="Forward lines" className="xl:col-span-2">
-          <div className="space-y-3">
-            {draft.forwards.map((line, i) => (
-              <div key={i} className="grid grid-cols-[2rem_1fr_1fr_1fr] items-end gap-2">
-                <span className="pb-2 font-display text-ice-400">L{i + 1}</span>
-                {line.map((id, j) => slot(j, id, skaters, (v) => set((d) => d.forwards[i], j, v), { tag: i === 0 ? FWD_LABELS[j] : undefined }))}
-              </div>
-            ))}
-          </div>
-        </Card>
-        <Card title="Defense & goalies">
-          <div className="space-y-3">
-            {draft.defense.map((pair, i) => (
-              <div key={i} className="grid grid-cols-[2rem_1fr_1fr] items-end gap-2">
-                <span className="pb-2 font-display text-ice-400">D{i + 1}</span>
-                {pair.map((id, j) => slot(j, id, skaters, (v) => set((d) => d.defense[i], j, v), { tag: i === 0 ? (j ? 'RD' : 'LD') : undefined }))}
-              </div>
-            ))}
-            <div className="grid grid-cols-[2rem_1fr_1fr] items-end gap-2 border-t border-rink-700 pt-3">
-              <span className="pb-2 font-display text-ice-400">G</span>
-              {draft.goalies.map((id, j) => slot(j, id, goalies, (v) => set((d) => d.goalies, j, v), { tag: j ? 'Backup' : 'Starter' }))}
-            </div>
-            <p className="text-xs text-ice-500">The backup starts about 1 in 8 games, and most second nights of back-to-backs.</p>
-          </div>
-        </Card>
-      </div>
-
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Card title="Power play">
-          {draft.pp.map((unit, i) => (
-            <div key={i} className="mb-3 grid grid-cols-[2.5rem_repeat(5,1fr)] items-end gap-1.5 last:mb-0">
-              <span className="pb-2 font-display text-ice-400">PP{i + 1}</span>
-              {unit.map((id, j) =>
-                slot(j, id, dressedList, (v) => set((d) => d.pp[i], j, v), { compact: true, flag: !dressedSkaters.has(id) || unit.indexOf(id) !== j }),
-              )}
-            </div>
-          ))}
-          <p className="text-xs text-ice-500">PP1 takes the first ~70 seconds of each power play.</p>
-        </Card>
-        <Card title="Penalty kill">
-          {draft.pk.map((unit, i) => (
-            <div key={i} className="mb-3 grid grid-cols-[2.5rem_repeat(4,1fr)] items-end gap-1.5 last:mb-0">
-              <span className="pb-2 font-display text-ice-400">PK{i + 1}</span>
-              {unit.map((id, j) =>
-                slot(j, id, dressedList, (v) => set((d) => d.pk[i], j, v), { compact: true, flag: !dressedSkaters.has(id) || unit.indexOf(id) !== j }),
-              )}
-            </div>
-          ))}
-          <p className="text-xs text-ice-500">Two forwards then two defensemen. PK1 takes the first ~60 seconds.</p>
-        </Card>
-      </div>
-
-      <Card title={`Scratches (${scratches.length})`}>
-        {scratches.length ? (
-          <div className="flex flex-wrap gap-2">
-            {scratches.map((p) => (
-              <span key={p.id} className="rounded-md border border-rink-600 px-2 py-1 text-sm">
-                {p.name} <span className="text-ice-400">{p.pos} {p.overall}</span> {p.injury && <Badge tone="bad">{p.injury.type}</Badge>}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <Empty>Everyone is dressed.</Empty>
-        )}
-      </Card>
+      <LinesBoard draft={draft} onChange={setDraft} players={t.players} />
     </div>
   );
 }
 
-function Slot({
-  value,
-  options,
-  byId,
-  onChange,
-  tag,
-  compact,
-  invalid,
-}: {
-  value: string;
-  options: P[];
-  byId: Map<string, P>;
-  onChange: (id: string) => void;
-  tag?: string;
-  compact?: boolean;
-  invalid?: boolean;
-}) {
-  const current = byId.get(value);
-  // Always show the current occupant, even if they're not in the option list
-  // (e.g. a PP unit still naming a player who was just scratched).
-  const list = current && !options.some((p) => p.id === value) ? [current, ...options] : options;
-  const label = (p: P) =>
-    compact ? `${p.lastName} · ${p.pos}` : `${p.lastName}, ${p.firstName[0]}. · ${p.pos} ${p.overall}${p.injury ? ' · INJ' : ''}`;
-  return (
-    <div className="min-w-0">
-      {tag && <p className="mb-0.5 text-[10px] font-semibold tracking-wider text-ice-500 uppercase">{tag}</p>}
-      <select
-        className={cx('slot', compact && 'px-1.5 text-xs', invalid && 'border-goal!', current?.injury && 'border-warn!')}
-        value={value}
-        title={current ? `${current.name} (${current.pos} ${current.overall})` : undefined}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        {list.map((p) => (
-          <option key={p.id} value={p.id} disabled={!!p.injury && p.id !== value}>
-            {label(p)}
-            {!options.includes(p) ? ' (not dressed)' : ''}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}

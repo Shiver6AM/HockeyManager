@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { createContext, useContext } from 'react';
-import { Link, NavLink, Outlet, useParams } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { NotificationBell } from '../components/NotificationBell';
 import { Badge, cx, ErrorBox, Spinner, TeamChip } from '../components/ui';
 import { dayLabel, PHASE_LABEL } from '../format';
@@ -84,9 +84,33 @@ export function LeagueLayout() {
           </nav>
         </header>
         <main className="mx-auto max-w-7xl min-w-0 px-4 py-6">
+          <BackButton leagueId={leagueId} />
           <Outlet />
         </main>
       </div>
     </LeagueCtx.Provider>
+  );
+}
+
+/** "← Back" (history back, or league home if this was the first page opened); "← All leagues" on the league home. */
+function BackButton({ leagueId }: { leagueId: string }) {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const home = `/league/${leagueId}`;
+  const cls = 'mb-3 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-semibold text-ice-400 hover:bg-rink-800 hover:text-white';
+  if (pathname.replace(/\/$/, '') === home)
+    return (
+      <Link to="/" className={cls}>
+        <span aria-hidden>←</span> All leagues
+      </Link>
+    );
+  const canGoBack = ((window.history.state as { idx?: number } | null)?.idx ?? 0) > 0;
+  return (
+    <button
+      onClick={() => (canGoBack ? navigate(-1) : navigate(home))}
+      className={cls}
+    >
+      <span aria-hidden>←</span> {canGoBack ? 'Back' : 'League home'}
+    </button>
   );
 }

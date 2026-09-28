@@ -26,7 +26,7 @@ import {
   releasePlayer,
   ROSTER_MAX,
   scoutedPotential,
-  signFreeAgent,
+  negotiateFreeAgent,
   STAGE_LABELS,
   SUMMER_ROSTER_MAX,
   type League,
@@ -34,6 +34,7 @@ import {
 } from '@hockey-gm/sim-core';
 import { z } from 'zod';
 import { mutateLeague } from '../advance';
+import { dealTerms } from '../deal';
 import { deliver } from '../notify';
 import { readLeague } from '../state';
 import { badRequest, memberProcedure, router, type Membership } from '../trpc';
@@ -204,9 +205,8 @@ export const offseasonRouter = router({
           const status = p.contract?.expiresAs ?? 'UFA';
           return {
             ...publicPlayer(L, p),
-            ask: os.expiring[id],
             status,
-            priorities: priorities(p),
+            ...dealTerms(L, p, team, os.expiring[id]),
             agreed: p.extension ?? null,
             letGo: os.resign[id] === false,
             qualified: !!os.qualified?.[id],
@@ -290,11 +290,13 @@ export const offseasonRouter = router({
         .map((r) => ({ ...r, name: nameOf(r.playerId), team: teamInfo(L.teams[r.teamId]), mine: r.teamId === my })),
       players: freeAgents(L)
         .map((p) => {
-          const ask = os?.freeAgentAsks[p.id] ?? inSeasonAsk(L, p);
+          const base = os?.freeAgentAsks[p.id] ?? inSeasonAsk(L, p);
           return {
             ...publicPlayer(L, p),
-            ask,
+            ask: base,
             priorities: priorities(p),
+            deal: team && (bidding || canSign) ? dealTerms(L, p, team, base, bidding ? ((os?.faRound ?? 1) - 1) * 1.2 : 2) : null,
+            attemptsLeft: attemptsLeft(L, p.id, my),
             myBid: myBids[p.id] ?? null,
             ...scouting(L, my, p),
             careerGp: (L.careerStats?.[p.id] ?? []).reduce((s, c) => s + (c.skater?.gp ?? c.goalie?.gp ?? 0), 0),
@@ -329,21 +331,25 @@ export const offseasonRouter = router({
     return { ok: true };
   }),
 
-  signFreeAgent: memberProcedure.input(z.object({ playerId: z.string() })).mutation(async ({ ctx, input }) => {
-    const teamId = requireTeam(ctx.membership);
-    await mutateLeague(ctx.db, input.leagueId, (L) => {
-      if (L.phase === 'offseason') mustBeStage(L, 'training-camp');
-      const team = L.teams[teamId];
-      const p = L.players[input.playerId];
-      if (!p || !freeAgents(L).includes(p)) throw badRequest('That player is not a free agent');
-      const ask = L.offseason?.freeAgentAsks[p.id] ?? inSeasonAsk(L, p);
-      const max = L.phase === 'offseason' ? SUMMER_ROSTER_MAX : ROSTER_MAX + team.roster.filter((id) => L.players[id].injury).length;
-      if (team.roster.length >= max) throw badRequest(`Your roster is full (${max}). Release or send down a player first.`);
-      if (ask.salary > capRoom(L, team)) throw badRequest(`Not enough cap room: he asks $${(ask.salary / 1e6).toFixed(2)}M`);
-      signFreeAgent(L, team, p, ask);
-    });
-    return { ok: true };
-  }),
+  /** Negotiate with a leftover free agent (training camp or in season). He signs on acceptance. */
+  negotiateFreeAgent: memberProcedure
+    .input(z.object({ playerId: z.string(), salary: z.number().int().min(0).max(30_000_000), years: z.number().int().min(1).max(8) }))
+    .mutation(async ({ ctx, input }) => {
+      const teamId = requireTeam(ctx.membership);
+      return mutateLeague(ctx.db, input.leagueId, (L) => {
+        const team = L.teams[teamId];
+        const p = L.players[input.playerId];
+        if (!p || !freeAgents(L).includes(p)) throw badRequest('That player is not a free agent');
+        const max = L.phase === 'offseason' ? SUMMER_ROSTER_MAX : ROSTER_MAX + team.roster.filter((id) => L.players[id].injury).length;
+        if (team.roster.length >= max) throw badRequest(`Your roster is full (${max}). Release or send down a player first.`);
+        const base = L.offseason?.freeAgentAsks[p.id] ?? inSeasonAsk(L, p);
+        try {
+          return negotiateFreeAgent(L, team, p, { salary: input.salary, years: input.years }, base);
+        } catch (e) {
+          throw badRequest((e as Error).message);
+        }
+      });
+    }),
 
   promote: memberProcedure.input(z.object({ playerId: z.string() })).mutation(async ({ ctx, input }) => {
     const teamId = requireTeam(ctx.membership);
@@ -401,3 +407,7 @@ function fixLines(L: League, teamId: string, playerId: string) {
   if (ids.includes(playerId)) t.autoLines = true;
 }
 
+function attemptsLeft(L: League, playerId: string, teamId: string | null) {
+  const neg = L.negotiations?.[playerId];
+  return neg && neg.teamId === teamId && neg.season === L.season ? Math.max(0, NEGOTIATION.maxAttempts - neg.attempts) : NEGOTIATION.maxAttempts;
+}
