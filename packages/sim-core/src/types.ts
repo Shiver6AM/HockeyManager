@@ -110,6 +110,11 @@ export interface Team {
   controller: TeamController;
   roster: PlayerId[];
   lines: Lines;
+  /**
+   * Human teams only: let the assistant coach rebuild the lines before every
+   * game (the same logic AI teams use). Turned off when the manager edits lines.
+   */
+  autoLines?: boolean;
 }
 
 /**
@@ -213,6 +218,8 @@ export interface BoxScore {
   goals: GoalEvent[];
   penalties: PenaltyEvent[];
   injuries: InjuryEvent[];
+  /** Who dressed for each side (skaters and goalies). */
+  rosters: { home: PlayerId[]; away: PlayerId[] };
   skaters: Record<PlayerId, SkaterGameLine>;
   goalies: Record<PlayerId, GoalieGameLine>;
   /** Player credited with the game-winning goal (not in shootouts). */

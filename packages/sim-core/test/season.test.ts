@@ -3,6 +3,7 @@ import {
   advanceDays,
   advanceToEndOfSeason,
   advanceToPlayoffs,
+  betterScratches,
   generateLeague,
   overall,
   prepareTeamForGame,
@@ -125,6 +126,23 @@ describe('injuries', () => {
     expect(team.lines.forwards[0][2]).toBe(before.forwards[0][2]);
     expect(team.lines.defense).toEqual(before.defense);
     expect(team.lines.goalies).toEqual(before.goalies);
+  });
+
+  it('the assistant coach puts returning players back in; a hands-on manager gets a warning instead', () => {
+    const L = generateLeague({ seed: 12, humans: { HAL: 'u1', KC: 'u2' } });
+    for (const [id, auto] of [['HAL', true], ['KC', false]] as const) {
+      const team = L.teams[id];
+      team.autoLines = auto;
+      const star = team.lines.forwards[0][1];
+      L.players[star].injury = { type: 'Upper-body', severity: 'short-term', daysLeft: 5, sinceDay: 0 };
+      prepareTeamForGame(L, team);
+      expect(team.lines.forwards.flat()).not.toContain(star);
+      L.players[star].injury = null; // healed
+      prepareTeamForGame(L, team);
+      const dressed = team.lines.forwards.flat().includes(star);
+      expect(dressed).toBe(auto);
+      if (!auto) expect(betterScratches(L, team).map((w) => w.scratched.id)).toContain(star);
+    }
   });
 
   it('makes emergency call-ups when a team runs out of healthy bodies', () => {

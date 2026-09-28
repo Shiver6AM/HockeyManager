@@ -1,0 +1,200 @@
+import { generateLeague, type AdvanceMode } from '@hockey-gm/sim-core';
+import { TRPCError } from '@trpc/server';
+import { randomBytes, randomInt } from 'node:crypto';
+import { z } from 'zod';
+import { describeCron, mutateLeague } from '../advance';
+import { newId } from '../auth';
+import { leagueMeta, readLeague } from '../state';
+import { authedProcedure, badRequest, commissionerProcedure, memberProcedure, router } from '../trpc';
+import { teamInfo, teamRating } from '../views';
+
+export const advanceModeSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('commissioner') }),
+  z.object({
+    mode: z.literal('scheduled'),
+    cron: z.string().min(9).max(100),
+    timezone: z.string().min(1).max(64),
+    daysPerTick: z.number().int().min(1).max(14),
+    advanceEarlyWhenAllReady: z.boolean(),
+  }),
+]);
+
+function validateAdvance(adv: AdvanceMode) {
+  if (adv.mode !== 'scheduled') return;
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: adv.timezone });
+  } catch {
+    throw badRequest(`Unknown timezone "${adv.timezone}"`);
+  }
+  try {
+    if (!describeCron(adv.cron, adv.timezone)) throw new Error('never fires');
+  } catch (e) {
+    throw badRequest(`Invalid schedule "${adv.cron}": ${(e as Error).message}`);
+  }
+}
+
+const inviteCode = () => randomBytes(4).toString('hex').toUpperCase();
+
+export const leaguesRouter = router({
+  mine: authedProcedure.query(async ({ ctx }) => {
+    const rows = await ctx.db.query<{ id: string; name: string; team_id: string | null; commissioner_id: string; members: string }>(
+      `select l.id, l.name, m.team_id, l.commissioner_id,
+              (select count(*) from league_members m2 where m2.league_id = l.id) as members
+       from league_members m join leagues l on l.id = m.league_id
+       where m.user_id = $1 order by l.created_at desc`,
+      [ctx.user.id],
+    );
+    return Promise.all(
+      rows.map(async (r) => {
+        const L = await readLeague(ctx.db, r.id);
+        const team = r.team_id ? teamInfo(L.teams[r.team_id]) : null;
+        return {
+          id: r.id,
+          name: r.name,
+          season: L.season,
+          day: L.day,
+          phase: L.phase,
+          myTeam: team,
+          isCommissioner: r.commissioner_id === ctx.user.id,
+          members: Number(r.members),
+        };
+      }),
+    );
+  }),
+
+  create: authedProcedure
+    .input(z.object({ name: z.string().trim().min(3).max(60), advance: advanceModeSchema.optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const advance: AdvanceMode = input.advance ?? { mode: 'commissioner' };
+      validateAdvance(advance);
+      const id = newId('lg');
+      const seed = randomInt(1, 2 ** 31 - 1);
+      const league = generateLeague({ seed, name: input.name, advance });
+      league.id = id;
+      await ctx.db.tx(async (q) => {
+        await q.query(
+          'insert into leagues (id, name, commissioner_id, invite_code, seed, advance, state) values ($1, $2, $3, $4, $5, $6, $7)',
+          [id, input.name, ctx.user.id, inviteCode(), seed, JSON.stringify(advance), JSON.stringify(league)],
+        );
+        await q.query('insert into league_members (league_id, user_id) values ($1, $2)', [id, ctx.user.id]);
+      });
+      await ctx.scheduler.sync(id);
+      return { id };
+    }),
+
+  join: authedProcedure.input(z.object({ inviteCode: z.string().trim().toUpperCase() })).mutation(async ({ ctx, input }) => {
+    const rows = await ctx.db.query<{ id: string }>('select id from leagues where invite_code = $1', [input.inviteCode]);
+    if (!rows[0]) throw new TRPCError({ code: 'NOT_FOUND', message: 'No league with that invite code' });
+    await ctx.db.query('insert into league_members (league_id, user_id) values ($1, $2) on conflict do nothing', [rows[0].id, ctx.user.id]);
+    return { id: rows[0].id };
+  }),
+
+  overview: memberProcedure.query(async ({ ctx, input }) => {
+    const meta = (await leagueMeta(ctx.db, input.leagueId))!;
+    const L = await readLeague(ctx.db, input.leagueId);
+    const members = await ctx.db.query<{ user_id: string; display_name: string; team_id: string | null; ready: boolean }>(
+      `select m.user_id, u.display_name, m.team_id, m.ready from league_members m join users u on u.id = m.user_id
+       where m.league_id = $1 order by m.joined_at`,
+      [input.leagueId],
+    );
+    const last = await ctx.db.query<{ triggered_by: string; from_day: number; to_day: number; games: number; created_at: Date }>(
+      'select triggered_by, from_day, to_day, games, created_at from advance_log where league_id = $1 order by id desc limit 1',
+      [input.leagueId],
+    );
+    const lastRegularDay = L.schedule.reduce((m, g) => Math.max(m, g.day), 0);
+    const gamesToday = L.schedule.filter((g) => g.day === L.day).length;
+    return {
+      id: meta.id,
+      name: meta.name,
+      inviteCode: meta.invite_code,
+      season: L.season,
+      day: L.day,
+      lastRegularDay,
+      gamesToday,
+      phase: L.phase,
+      champion: L.playoffs?.champion ? teamInfo(L.teams[L.playoffs.champion]) : null,
+      advance: meta.advance,
+      nextAdvanceAt: meta.next_advance_at,
+      isCommissioner: ctx.membership.isCommissioner,
+      myTeamId: ctx.membership.teamId,
+      myReady: ctx.membership.ready,
+      commissionerId: meta.commissioner_id,
+      members: members.map((m) => ({
+        userId: m.user_id,
+        displayName: m.display_name,
+        teamId: m.team_id,
+        team: m.team_id ? teamInfo(L.teams[m.team_id]) : null,
+        ready: m.ready,
+      })),
+      lastAdvance: last[0] ?? null,
+    };
+  }),
+
+  teams: memberProcedure.query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    const managers = await ctx.db.query<{ team_id: string; display_name: string }>(
+      `select m.team_id, u.display_name from league_members m join users u on u.id = m.user_id
+       where m.league_id = $1 and m.team_id is not null`,
+      [input.leagueId],
+    );
+    const byTeam = new Map(managers.map((m) => [m.team_id, m.display_name]));
+    return Object.values(L.teams)
+      .map((t) => ({ ...teamInfo(t), manager: byTeam.get(t.id) ?? null, rating: teamRating(L, t) }))
+      .sort((a, b) => a.conference.localeCompare(b.conference) || a.division.localeCompare(b.division) || a.city.localeCompare(b.city));
+  }),
+
+  claimTeam: memberProcedure.input(z.object({ teamId: z.string() })).mutation(async ({ ctx, input }) => {
+    if (ctx.membership.teamId) throw badRequest('You already manage a team. Release it first.');
+    await mutateLeague(ctx.db, input.leagueId, async (L, q) => {
+      const team = L.teams[input.teamId];
+      if (!team) throw badRequest('No such team');
+      if (team.controller.kind === 'human') throw badRequest('That team already has a manager');
+      team.controller = { kind: 'human', userId: ctx.user.id };
+      team.autoLines = true;
+      await q.query('update league_members set team_id = $1, ready = false where league_id = $2 and user_id = $3', [
+        input.teamId,
+        input.leagueId,
+        ctx.user.id,
+      ]);
+    });
+    return { ok: true };
+  }),
+
+  releaseTeam: memberProcedure
+    .input(z.object({ userId: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const target = input.userId ?? ctx.user.id;
+      if (target !== ctx.user.id && !ctx.membership.isCommissioner) throw badRequest('Only the commissioner can remove another manager');
+      const rows = await ctx.db.query<{ team_id: string | null }>(
+        'select team_id from league_members where league_id = $1 and user_id = $2',
+        [input.leagueId, target],
+      );
+      const teamId = rows[0]?.team_id;
+      if (!teamId) throw badRequest('That member does not manage a team');
+      await mutateLeague(ctx.db, input.leagueId, async (L, q) => {
+        L.teams[teamId].controller = { kind: 'ai', strategy: 'balanced' };
+        delete L.teams[teamId].autoLines;
+        await q.query('update league_members set team_id = null, ready = false where league_id = $1 and user_id = $2', [
+          input.leagueId,
+          target,
+        ]);
+      });
+      return { ok: true };
+    }),
+
+  updateAdvance: commissionerProcedure.input(z.object({ advance: advanceModeSchema })).mutation(async ({ ctx, input }) => {
+    validateAdvance(input.advance);
+    await mutateLeague(ctx.db, input.leagueId, async (L, q) => {
+      L.settings.advance = input.advance;
+      await q.query('update leagues set advance = $1 where id = $2', [JSON.stringify(input.advance), input.leagueId]);
+    });
+    await ctx.scheduler.sync(input.leagueId);
+    return { nextAdvanceAt: ctx.scheduler.nextRun(input.leagueId) };
+  }),
+
+  regenerateInvite: commissionerProcedure.mutation(async ({ ctx, input }) => {
+    const code = inviteCode();
+    await ctx.db.query('update leagues set invite_code = $1 where id = $2', [code, input.leagueId]);
+    return { inviteCode: code };
+  }),
+});
