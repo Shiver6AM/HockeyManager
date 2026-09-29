@@ -95,6 +95,9 @@ export interface Player {
   minorTeam?: { season: number; league: string; team: string };
   /** Signed but assigned to the team's AHL affiliate (farm team). */
   farm?: boolean;
+  /** Height in inches and weight in pounds (derived from his frame when missing; see body.ts). */
+  height?: number;
+  weight?: number;
   /** How much he gets out of coaching, 1–99 (derived from his id when missing; see skills.ts). */
   coachability?: number;
   /** Points added to situational skills by skills coaches. */

@@ -5,7 +5,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { gaa, money, signed, svPct, toi } from '../format';
+import { gaa, ht, money, signed, svPct, toi } from '../format';
 import { useLeague } from '../pages/LeagueLayout';
 import { useSort } from '../sort';
 import { useTRPC, type Outputs } from '../trpc';
@@ -74,6 +74,8 @@ const skaterColumns = {
   name: (p: P) => p.lastName,
   pos: (p: P) => POS_ORDER[p.pos] ?? 9,
   age: (p: P) => p.age,
+  ht: (p: P) => p.height,
+  wt: (p: P) => p.weight,
   ovr: (p: P) => p.overall,
   pot: potVal,
   value: (p: P) => p.tradeValue,
@@ -109,6 +111,8 @@ export function SkaterTable({ title, players, t, statsLabel }: { title: string; 
               <Th k="name">Player</Th>
               <Th k="pos">Pos</Th>
               <Th k="age" className="num">Age</Th>
+              <Th k="ht" className="num">Ht</Th>
+              <Th k="wt" className="num">Wt</Th>
               <Th k="ovr" className="num">OVR</Th>
               <Th k="pot" title="Scouts' read on his ceiling">Pot</Th>
               <Th k="value" title="Trade value to your front office">Value</Th>
@@ -142,6 +146,8 @@ export function SkaterTable({ title, players, t, statsLabel }: { title: string; 
                   <PlayerCell p={p} />
                   <td className="text-ice-300">{p.pos}</td>
                   <td className="num">{p.age}</td>
+                  <td className="num whitespace-nowrap">{ht(p.height)}</td>
+                  <td className="num">{p.weight}</td>
                   <td className="num">
                     <Rating value={p.overall} />
                   </td>
@@ -188,6 +194,8 @@ export function SkaterTable({ title, players, t, statsLabel }: { title: string; 
 const goalieColumns = {
   name: (p: P) => p.lastName,
   age: (p: P) => p.age,
+  ht: (p: P) => p.height,
+  wt: (p: P) => p.weight,
   ovr: (p: P) => p.overall,
   pot: potVal,
   value: (p: P) => p.tradeValue,
@@ -218,6 +226,8 @@ export function GoalieTable({ players, t, statsLabel }: { players: P[]; t: TeamD
             <tr>
               <Th k="name">Player</Th>
               <Th k="age" className="num">Age</Th>
+              <Th k="ht" className="num">Ht</Th>
+              <Th k="wt" className="num">Wt</Th>
               <Th k="ovr" className="num">OVR</Th>
               <Th k="pot">Pot</Th>
               <Th k="value">Value</Th>
@@ -246,6 +256,8 @@ export function GoalieTable({ players, t, statsLabel }: { players: P[]; t: TeamD
                 <tr key={p.id}>
                   <PlayerCell p={p} />
                   <td className="num">{p.age}</td>
+                  <td className="num whitespace-nowrap">{ht(p.height)}</td>
+                  <td className="num">{p.weight}</td>
                   <td className="num">
                     <Rating value={p.overall} />
                   </td>
@@ -289,6 +301,8 @@ const farmColumns = {
   name: (p: P) => p.lastName,
   pos: (p: P) => POS_ORDER[p.pos] ?? 9,
   age: (p: P) => p.age,
+  ht: (p: P) => p.height,
+  wt: (p: P) => p.weight,
   ovr: (p: P) => p.overall,
   pot: potVal,
   value: (p: P) => p.tradeValue,
@@ -315,6 +329,8 @@ export function FarmTable({ players, t }: { players: P[]; t: TeamData }) {
               <Th k="name">Player</Th>
               <Th k="pos">Pos</Th>
               <Th k="age" className="num">Age</Th>
+              <Th k="ht" className="num">Ht</Th>
+              <Th k="wt" className="num">Wt</Th>
               <Th k="ovr" className="num">OVR</Th>
               <Th k="pot">Pot</Th>
               <Th k="value">Value</Th>
@@ -336,6 +352,8 @@ export function FarmTable({ players, t }: { players: P[]; t: TeamData }) {
                   <PlayerCell p={p} />
                   <td className="text-ice-300">{p.pos}</td>
                   <td className="num">{p.age}</td>
+                  <td className="num whitespace-nowrap">{ht(p.height)}</td>
+                  <td className="num">{p.weight}</td>
                   <td className="num">
                     <Rating value={p.overall} />
                   </td>

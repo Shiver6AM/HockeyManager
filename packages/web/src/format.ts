@@ -55,3 +55,6 @@ export function errorMessage(e: unknown): string {
   }
   return msg;
 }
+
+/** 74 → 6'2" */
+export const ht = (inches: number) => `${Math.floor(inches / 12)}'${inches % 12}"`;

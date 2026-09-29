@@ -5,6 +5,7 @@ import { dayLabel, gaa, signed, svPct, toi } from '../format';
 import { useSort } from '../sort';
 import { useTRPC, type Outputs } from '../trpc';
 import { useLeague } from './LeagueLayout';
+import { TeamTag } from '../components/TeamTag';
 
 type Box = Outputs['data']['boxScore'];
 
@@ -102,7 +103,7 @@ export function BoxScorePage() {
                   <Link to={`/league/${L.id}/player/${s.id}`} className="text-white hover:underline">
                     {s.name}
                   </Link>{' '}
-                  <span className="text-ice-400">{s.teamId}</span>
+                  <TeamTag id={s.teamId} className="text-ice-400" />
                 </li>
               ))}
             </ol>
@@ -115,7 +116,7 @@ export function BoxScorePage() {
                     <span className="tabular text-ice-500">
                       P{p.period > 3 ? 'OT' : p.period} {clock(p.time)}
                     </span>{' '}
-                    {p.teamId} · <span className="text-ice-100">{p.playerName}</span> · {p.infraction} ({p.minutes})
+                    <TeamTag id={p.teamId} /> · <span className="text-ice-100">{p.playerName}</span> · {p.infraction} ({p.minutes})
                   </li>
                 ))}
               </ul>
@@ -128,7 +129,7 @@ export function BoxScorePage() {
               <ul className="space-y-1 text-sm">
                 {b.injuries.map((x, i) => (
                   <li key={i} className="text-ice-300">
-                    {x.teamId} · <span className="text-ice-100">{x.playerName}</span> · {x.type} ({x.severity})
+                    <TeamTag id={x.teamId} /> · <span className="text-ice-100">{x.playerName}</span> · {x.type} ({x.severity})
                   </li>
                 ))}
               </ul>

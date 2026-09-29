@@ -44,7 +44,7 @@ export function TeamsPage() {
                 .sort((a, b) => b.rating - a.rating)
                 .map((t) => (
                   <li key={t.id} className="flex items-center gap-3 py-2">
-                    <TeamChip team={t} />
+                    <TeamChip team={t} size="lg" />
                     <Link to={`/league/${L.id}/team/${t.id}`} className="flex-1 truncate text-sm hover:underline">
                       {t.city} <span className="text-ice-400">{t.name}</span>
                     </Link>

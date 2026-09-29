@@ -40,6 +40,7 @@ import {
   staffPayroll,
   type League,
   type TeamFinances,
+  cssEdition,
 } from '@hockey-gm/sim-core';
 import { z } from 'zod';
 import { mutateLeague } from '../advance';
@@ -290,6 +291,8 @@ export const lifeRouter = router({
     const my = ctx.membership.teamId;
     return {
       season: d.season,
+      /** Which Central Scouting list is out: preliminary, midterm or final. */
+      cssEdition: cssEdition(L),
       players: d.ids
         .map((id) => L.players[id])
         .filter((p) => p && p.draftClass !== undefined)

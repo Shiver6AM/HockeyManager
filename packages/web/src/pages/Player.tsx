@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Badge, Card, Empty, ErrorBox, Rating, Spinner, TeamChip, TeamLink } from '../components/ui';
-import { gaa, money, signed, svPct, toi } from '../format';
+import { gaa, ht, money, signed, svPct, toi } from '../format';
 import { useSort } from '../sort';
 import { useTRPC } from '../trpc';
 import { useLeague } from './LeagueLayout';
@@ -60,14 +60,23 @@ export function PlayerPage() {
 
   return (
     <div className="space-y-5">
-      <Card>
+      <div
+        className="rounded-xl border border-rink-700 bg-rink-900 p-5"
+        style={d.team ? { background: `linear-gradient(120deg, ${d.team.colors[0]}40, #0b1220 65%)` } : undefined}
+      >
         <div className="flex flex-wrap items-center gap-5">
-          {d.team && <TeamChip team={d.team} size="lg" />}
+          {d.team ? (
+            <Link to={`/league/${L.id}/team/${d.team.id}`} title={`${d.team.city} ${d.team.name}`}>
+              <TeamChip team={d.team} size="xl" />
+            </Link>
+          ) : (
+            d.draft?.team && <TeamChip team={d.draft.team} size="xl" />
+          )}
           <div className="min-w-0 flex-1">
             <h1 className="font-display text-3xl font-semibold tracking-wide text-white uppercase">{name}</h1>
             <p className="text-sm text-ice-300">
               {pos}
-              {p && ` · Age ${p.age} · Shoots ${p.shoots} · ${p.nationality} · ${p.archetype}`}
+              {p && ` · Age ${p.age} · ${ht(p.height)}, ${p.weight} lb · Shoots ${p.shoots} · ${p.nationality} · ${p.archetype}`}
               {d.retired && ` · Retired after ${d.retired.retiredAfter}-${String(d.retired.retiredAfter + 1).slice(2)} · Peak ${d.retired.peakOverall} OVR`}
             </p>
             <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-ice-400">
@@ -79,7 +88,8 @@ export function PlayerPage() {
                   Drafted {d.draft.season}, round {d.draft.round} (#
                   {d.draft.overall}) by{' '}
                   {d.draft.team ? (
-                    <Link to={`/league/${L.id}/team/${d.draft.team.id}`} className="hover:underline">
+                    <Link to={`/league/${L.id}/team/${d.draft.team.id}`} className="inline-flex items-center gap-1 align-middle hover:underline">
+                      <TeamChip team={d.draft.team} size="sm" />
                       {d.draft.team.city}
                     </Link>
                   ) : (
@@ -118,7 +128,7 @@ export function PlayerPage() {
             {p.contract.yearsLeft > 1 ? 's' : ''} · {p.contract.kind === 'ELC' ? 'entry-level' : 'standard'} · becomes {p.contract.expiresAs}
           </p>
         )}
-      </Card>
+      </div>
 
       <div className="grid gap-5 lg:grid-cols-3">
         {ratings && (

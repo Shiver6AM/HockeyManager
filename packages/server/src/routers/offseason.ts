@@ -64,6 +64,7 @@ import {
   ACTIVE_MAX,
   affiliateLabel,
   signProspectToFarm,
+  centralScouting,
   autoLines,
   healthyRoster,
 } from '@hockey-gm/sim-core';
@@ -122,6 +123,8 @@ export function classView(L: League, viewerTeam: string | null, p: Player, draft
     regionLabel: REGION_LABEL[region],
     stats,
     confidence: Math.round(conf * 100) / 100,
+    /** Central Scouting's consensus ranking (the same for every team). */
+    css: centralScouting(L, draftSeason).get(p.id) ?? null,
     scouted,
     grade: scouted ? grade(s) : null,
     projection: scouted ? projectionLabel(s, p.pos) : null,

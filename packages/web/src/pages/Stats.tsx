@@ -1,11 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Card, cx, Empty, Spinner } from '../components/ui';
+import { Card, cx, Empty, Spinner, TeamChip } from '../components/ui';
 import { gaa, signed, svPct, toi } from '../format';
 import { useSort } from '../sort';
 import { useTRPC, type Outputs } from '../trpc';
-import { useLeague } from './LeagueLayout';
+import { useLeague, useTeamById } from './LeagueLayout';
 
 export function StatsPage() {
   const L = useLeague();
@@ -112,6 +112,7 @@ function LeaderCard({
   fmt: (v: number) => string;
 }) {
   const L = useLeague();
+  const teamOf = useTeamById();
   return (
     <Card title={title}>
       {rows.length ? (
@@ -123,7 +124,10 @@ function LeaderCard({
                 {r.name}
               </Link>
               <span className="w-8 text-xs text-ice-500">{r.pos}</span>
-              <span className="w-9 text-xs text-ice-400">{r.teamId}</span>
+              <span className="flex w-12 items-center gap-1 text-xs text-ice-400">
+                {teamOf(r.teamId) && <TeamChip team={teamOf(r.teamId)!} size="sm" />}
+                {r.teamId}
+              </span>
               <span className="tabular w-12 text-right font-semibold">{fmt(r.value)}</span>
             </li>
           ))}
@@ -225,7 +229,7 @@ function SkaterStatsTable({ rows }: { rows: Leaders['allSkaters'] }) {
               <tr key={r.id}>
                 <td className="num text-ice-500">{i + 1}</td>
                 <NameCell r={r} />
-                <td className="text-xs text-ice-400">{r.team}</td>
+                <TeamCell abbr={r.team} />
                 <td className="text-ice-400">{r.pos}</td>
                 <td className="num">{r.gp}</td>
                 <td className="num">{r.g}</td>
@@ -304,7 +308,7 @@ function GoalieStatsTable({ rows }: { rows: Leaders['allGoalies'] }) {
             {sorted.map((r) => (
               <tr key={r.id}>
                 <NameCell r={r} />
-                <td className="text-xs text-ice-400">{r.team}</td>
+                <TeamCell abbr={r.team} />
                 <td className="num">{r.gp}</td>
                 <td className="num">{r.gs}</td>
                 <td className="num font-semibold text-white">{r.w}</td>
@@ -322,5 +326,17 @@ function GoalieStatsTable({ rows }: { rows: Leaders['allGoalies'] }) {
         </table>
       </div>
     </Card>
+  );
+}
+
+function TeamCell({ abbr }: { abbr: string }) {
+  const t = useTeamById()(abbr);
+  return (
+    <td className="text-xs whitespace-nowrap text-ice-400">
+      <span className="inline-flex items-center gap-1.5">
+        {t && <TeamChip team={t} size="sm" />}
+        {abbr}
+      </span>
+    </td>
   );
 }

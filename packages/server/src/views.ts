@@ -3,7 +3,7 @@
  * injury-proneness, consistency) never leave the server; scouting will reveal
  * estimates of them in a later phase.
  */
-import { age, coachability, coachabilityLabel, overall, type League, type Player, type Team } from '@hockey-gm/sim-core';
+import { age, bodyOf, coachability, coachabilityLabel, overall, type League, type Player, type Team } from '@hockey-gm/sim-core';
 
 export function publicPlayer(league: League, p: Player) {
   return {
@@ -17,6 +17,8 @@ export function publicPlayer(league: League, p: Player) {
     age: age(p, league.season + (league.phase === 'offseason' ? 1 : 0)),
     nationality: p.nationality,
     archetype: p.archetype,
+    /** Inches and pounds. */
+    ...bodyOf(p, league.season + (league.phase === 'offseason' ? 1 : 0)),
     teamId: p.teamId,
     overall: overall(p),
     skater: p.skater ?? null,
