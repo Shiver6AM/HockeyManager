@@ -37,7 +37,7 @@ describe('phase 12: background sims, contracts, farm, scouting', () => {
   });
 
   it('runs a sim in the background, reports progress to everyone, blocks changes and can be cancelled', async () => {
-    const r = await comm.sim.advance({ leagueId, target: { days: 60 }, background: true });
+    const r = await comm.sim.advance({ leagueId, target: { days: 150 }, background: true });
     expect(r.running).toBe(true);
     // Everyone in the league sees it.
     let s = await bob.sim.status({ leagueId });
@@ -62,7 +62,7 @@ describe('phase 12: background sims, contracts, farm, scouting', () => {
     // Days already simmed are kept.
     const ov = await bob.leagues.overview({ leagueId });
     expect(ov.day).toBeGreaterThan(0);
-    expect(ov.day).toBeLessThan(60);
+    expect(ov.day).toBeLessThan(150);
     // And the league is editable again.
     await bob.data.setAutoLines({ leagueId, enabled: true });
   });

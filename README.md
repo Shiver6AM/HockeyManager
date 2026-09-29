@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 150 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 154 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -139,7 +139,9 @@ the header ("Simming to the trade deadline · Jan 14 · 412 games · by Jon"), t
 buttons are disabled for everyone while it runs (so co-commissioners can't start a
 second one), and changes to the league are refused until it finishes. Every open page
 refreshes itself whenever the league changes (a sim, a trade, a signing), so nobody has
-to reload the playoffs or standings while a co-commissioner sims. Advancers can
+to reload the playoffs or standings while a co-commissioner sims. The playoffs page is a
+bracket: the West on the left and the East on the right, working in to the Final in the
+middle. Advancers can
 **cancel**: the days already simmed are kept. Progress is saved every few seconds.
 
 ### Managing your team
@@ -284,11 +286,19 @@ anyone who hasn't acted gets sensible defaults.
   Signing one gives him a 3-year entry-level deal. Unsigned prospects are released at 23.
 - **Goalie coaches:** every team has a goalie coach who trains up to four goalies'
   reflexes, positioning, rebound control or mental game, alongside the skills coaches.
-- **Central Scouting:** the league publishes consensus rankings of the draft class
-  (preliminary in the fall, midterm at mid-season, final after the season), split into
-  North American and international skaters and goalies, the same for every team. It sees
-  every league but carries some error, less in each edition. The CSS rank shows on the
-  draft board and the Scouting page, where the four lists sit side by side.
+- **Central Scouting:** the league publishes consensus rankings of the draft class, the
+  same for every team, split into North American and international skaters and goalies:
+  a preliminary list in the fall, an update every two weeks through the season, and a
+  final list after it. Each update reflects how prospects are producing, opinions drift
+  rather than jump, and the guesswork shrinks as the season goes on. Arrows show each
+  prospect's movement since the previous update, on the draft board and the Scouting page.
+- **Following specific prospects:** instead of a region, a scout can follow up to 10
+  prospects in one league. He learns about each of them much faster than regional
+  coverage would (the fewer he follows, the faster), and they're marked in the class list.
+- **Sleepers:** every draft class hides a few late bloomers with modest numbers and
+  modest reports but a real ceiling. Scouts and Central Scouting miss most of it while
+  they're teenagers; they tend to go in the middle rounds, grow quickly from 19 to 23, and
+  make the news when they break out.
 - **Team logos:** every franchise has its own emblem in its colors, shown wherever the
   team appears (headers, standings, scores, stats, trades, player pages).
 - **Height and weight:** every player has a frame that fits his style (enforcers and

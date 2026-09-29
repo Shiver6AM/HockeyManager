@@ -62,6 +62,8 @@ export function developPlayer(league: League, p: Player, u: Usage): [number, num
 
   const rate = effAge <= 18 ? T.growth[18] : (T.growth[effAge] ?? 0);
   let delta = Math.max(0, p.hidden.potential - before) * rate * usageFactor(p, u) * coachDevMultiplier(league, p.teamId ?? p.prospectOf) * slider(league, 'development');
+  // Late bloomers (sleepers) grow fast once they get going.
+  if (p.hidden.sleeper && newAge <= 23) delta *= 1.8;
   if (effAge >= T.declineStart) delta -= (T.declineBase + (effAge - T.declineStart) * T.declinePerYear) * slider(league, 'aging');
   delta += rng.normal(0, T.noise);
   if (effAge <= 24 && rng.chance(T.breakoutChance)) {

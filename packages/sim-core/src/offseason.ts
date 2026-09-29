@@ -43,7 +43,7 @@ import { aiRosterMoves, ensureBodies, freeAgents, healthyRoster, isFreeAgent } f
 import { standings } from './league';
 import { closeBooks, newFinances, setOwnerGoals } from './finances';
 import { fantasyOnClock, finishFantasy, runFantasy } from './start';
-import { considerForHallOfFame, newsFromTransactions } from './news';
+import { addNews, considerForHallOfFame, newsFromTransactions } from './news';
 import { offseasonSkillsCoaches } from './skills';
 import { affiliateLabel, capHit, CONTRACT_MAX, contractCount, FARM_TARGET, farmRoster, nhlRoster, sendDown, trimContracts } from './farm';
 import { offseasonStaff } from './staff';
@@ -162,6 +162,20 @@ export function startOffseason(league: League, st: StandingsRow[]) {
 
   // Keep league-wide talent anchored (see LeagueSettings.talentAnchor).
   anchorTalent(league);
+
+  // Sleepers who've broken out: late picks nobody saw coming.
+  for (const p of Object.values(league.players)) {
+    if (!p.hidden.sleeper || p.hidden.sleeper < 0 || !p.draft || p.draft.round < 2 || overall(p) < 70) continue;
+    const team = p.teamId ?? p.prospectOf;
+    addNews(
+      league,
+      'milestone',
+      `Sleeper alert: ${nm(p)}, a round-${p.draft.round} pick (#${p.draft.overall}) in ${p.draft.season}, has broken out (${overall(p)} OVR at ${age(p, league.season + 1)})`,
+      team ? [team] : [],
+      [p.id],
+    );
+    p.hidden.sleeper = -p.hidden.sleeper; // announced once (a negative value masks nothing)
+  }
 
   // Retirements.
   const rng = new Rng(deriveSeed(league.seed, `retire:${league.season}`));

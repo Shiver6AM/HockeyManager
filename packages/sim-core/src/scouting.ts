@@ -14,9 +14,9 @@
  * AI teams draft on what their scouts saw too.
  */
 import { NAME_POOLS } from './names';
-import { leagueRegion, minorLeagueOf, REGIONS, type Region } from './leagues';
+import { leagueRegion, MINOR_LEAGUES, minorLeagueOf, REGIONS, type Region } from './leagues';
 import { clamp, deriveSeed, Rng } from './rng';
-import type { League, Player, Team, TeamId } from './types';
+import type { League, Player, PlayerId, Team, TeamId } from './types';
 
 export interface Scout {
   id: string;
@@ -27,14 +27,18 @@ export interface Scout {
   familiarity: Record<Region, number>;
   salary: number;
   yearsLeft: number;
-  /** Where he's scouting ('auto' lets the head scout decide). */
-  assignment: Region | 'auto';
+  /** Where he's scouting ('auto' lets the head scout decide; 'players' = a list of specific prospects). */
+  assignment: Region | 'auto' | 'players';
+  /** With 'players': the prospects he's following (up to 10, all in one league). */
+  targets?: { league: string; ids: PlayerId[] };
 }
 
 export interface TeamScouting {
   season: number;
   /** Scouting days (weighted by quality) spent in each region this season. */
   points: Partial<Record<Region, number>>;
+  /** Extra knowledge of specific prospects from scouts assigned to follow them. */
+  playerPoints?: Record<PlayerId, number>;
 }
 
 export const SCOUTING = {
@@ -47,6 +51,10 @@ export const SCOUTING = {
   /** Below this confidence, no projection is shown. */
   showAt: 0.08,
   poolSize: 12,
+  /** A scout following specific prospects: at most this many, all in one league. */
+  maxTargets: 10,
+  /** His daily knowledge split across them, times this (1 target: 15× a region day; 10: 1.5× each). */
+  targetFocus: 15,
 };
 
 export function scoutSalary(skill: number): number {
@@ -115,6 +123,30 @@ export function assignScout(team: Team, scoutId: string, region: Region | 'auto'
   const s = team.scouts?.find((x) => x.id === scoutId);
   if (!s) throw new Error('Not one of your scouts');
   s.assignment = region;
+  s.targets = undefined;
+}
+
+/** Send a scout to follow specific draft-eligible prospects (up to 10, all in one league). */
+export function assignScoutTargets(league: League, team: Team, scoutId: string, leagueName: string, ids: PlayerId[]) {
+  const s = team.scouts?.find((x) => x.id === scoutId);
+  if (!s) throw new Error('Not one of your scouts');
+  const unique = [...new Set(ids)];
+  if (!unique.length) throw new Error('Pick at least one prospect');
+  if (unique.length > SCOUTING.maxTargets) throw new Error(`A scout can follow at most ${SCOUTING.maxTargets} prospects`);
+  for (const id of unique) {
+    const p = league.players[id];
+    if (!p || !isDraftClass(league, p)) throw new Error('Scouts can only follow draft-eligible prospects');
+    const lg = minorLeagueOf(league, p).league;
+    if (lg !== leagueName && MINOR_LEAGUES[lg]?.name !== leagueName) throw new Error(`All of them have to play in the ${leagueName}`);
+  }
+  s.assignment = 'players';
+  s.targets = { league: leagueName, ids: unique };
+}
+
+/** The prospects a scout is following (still draft-eligible). */
+export function scoutTargets(league: League, s: Scout): Player[] {
+  if (s.assignment !== 'players' || !s.targets) return [];
+  return s.targets.ids.map((id) => league.players[id]).filter((p): p is Player => !!p && isDraftClass(league, p));
 }
 
 /**
@@ -125,8 +157,9 @@ export function assignScout(team: Team, scoutId: string, region: Region | 'auto'
 export function scoutRegions(league: League, team: Team): Array<{ scout: Scout; region: Region }> {
   const out: Array<{ scout: Scout; region: Region }> = [];
   const covered = new Set<Region>();
-  for (const s of team.scouts ?? []) if (s.assignment !== 'auto') covered.add(s.assignment);
+  for (const s of team.scouts ?? []) if (s.assignment !== 'auto' && s.assignment !== 'players') covered.add(s.assignment);
   for (const s of team.scouts ?? []) {
+    if (s.assignment === 'players') continue; // following specific prospects (see scoutingDay)
     if (s.assignment !== 'auto') {
       out.push({ scout: s, region: s.assignment });
       continue;
@@ -167,6 +200,12 @@ export function scoutingDay(league: League) {
   for (const t of Object.values(league.teams)) {
     const st = state(league, t.id);
     for (const { scout, region } of scoutRegions(league, t)) st.points[region] = (st.points[region] ?? 0) + scoutRate(t, scout, region);
+    for (const scout of t.scouts ?? []) {
+      const targets = scoutTargets(league, scout);
+      if (!targets.length) continue;
+      const pp = (st.playerPoints ??= {});
+      for (const p of targets) pp[p.id] = (pp[p.id] ?? 0) + (scoutRate(t, scout, playerRegion(league, p)) * SCOUTING.targetFocus) / targets.length;
+    }
   }
 }
 
@@ -195,7 +234,7 @@ export function scoutConfidence(league: League, teamId: TeamId, p: Player): numb
   const st = league.scouting?.[teamId];
   if (!st) return 0;
   const r = playerRegion(league, p);
-  return 1 - Math.exp(-(st.points[r] ?? 0) / SCOUTING.K);
+  return 1 - Math.exp(-((st.points[r] ?? 0) + (st.playerPoints?.[p.id] ?? 0)) / SCOUTING.K);
 }
 
 /** Error sd of a team's projection for a draft-eligible player. */
@@ -212,6 +251,11 @@ export function offseasonScouts(league: League) {
     for (const s of t.scouts ?? []) {
       s.yearsLeft -= 1;
       if (s.yearsLeft <= 0) s.yearsLeft = rng.int(1, 3);
+      // Last year's prospects have been drafted: back on the road.
+      if (s.assignment === 'players') {
+        s.assignment = 'auto';
+        s.targets = undefined;
+      }
     }
     if (t.controller.kind === 'ai' && (t.scouts?.length ?? 0) < 3) {
       const pick = [...(league.scoutPool ?? [])].sort((a, b) => b.skill - a.skill)[rng.int(0, 5)];
