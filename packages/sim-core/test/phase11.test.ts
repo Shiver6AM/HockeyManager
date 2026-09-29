@@ -33,9 +33,9 @@ import {
 
 describe('skills coaches', () => {
   it('cost more with more specialties', () => {
-    const one = skillsCoachSalary({ ratings: { offense: 80, defense: 45, skating: 45 }, specialties: ['offense'] });
-    const two = skillsCoachSalary({ ratings: { offense: 80, defense: 80, skating: 45 }, specialties: ['offense', 'defense'] });
-    const three = skillsCoachSalary({ ratings: { offense: 80, defense: 80, skating: 80 }, specialties: ['offense', 'defense', 'skating'] });
+    const one = skillsCoachSalary({ ratings: { offense: 80, defense: 45, skating: 45, goaltending: 40 }, specialties: ['offense'] });
+    const two = skillsCoachSalary({ ratings: { offense: 80, defense: 80, skating: 45, goaltending: 40 }, specialties: ['offense', 'defense'] });
+    const three = skillsCoachSalary({ ratings: { offense: 80, defense: 80, skating: 80, goaltending: 40 }, specialties: ['offense', 'defense', 'skating'] });
     expect(two).toBeGreaterThan(one * 2);
     expect(three).toBeGreaterThan(two * 1.4);
   });
@@ -79,7 +79,7 @@ describe('skills coaches', () => {
     advanceDays(L, 1);
     const hal = L.teams.HAL;
     const c = hal.skillsCoaches![0];
-    c.ratings = { offense: 90, defense: 90, skating: 90 };
+    c.ratings = { offense: 90, defense: 90, skating: 90, goaltending: 40 };
     const young = hal.roster.map((id) => L.players[id]).filter((p) => p.pos !== 'G').sort((a, b) => a.birthYear - b.birthYear).at(-1)!;
     young.coachability = 95;
     const before = young.skater!.shooting;
@@ -96,7 +96,7 @@ describe('skills coaches', () => {
     expect(young.trainingLog!.gains.shooting).toBe(gained);
     // A stubborn veteran with an average coach learns far less.
     const vet = { ...young, id: 'vet-test', birthYear: L.season - 34, coachability: 15 };
-    c.ratings = { offense: 60, defense: 60, skating: 60 };
+    c.ratings = { offense: 60, defense: 60, skating: 60, goaltending: 40 };
     expect(trainingRate(L, c, vet, 'shooting')).toBeLessThan(trainingRate(L, c, young, 'shooting') / 3);
   });
 

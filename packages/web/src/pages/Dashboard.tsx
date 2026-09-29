@@ -5,6 +5,7 @@ import { Badge, Button, Card, cx, Empty, ErrorBox, TeamChip, TeamLink } from '..
 import { dayLabel, timeUntil } from '../format';
 import { useTRPC } from '../trpc';
 import { useLeague } from './LeagueLayout';
+import { useSim } from '../sim';
 import { NewsItemRow } from './News';
 import { OffseasonPanel, SummerNews } from './Offseason';
 
@@ -61,7 +62,7 @@ function AdvancePanel() {
   const trpc = useTRPC();
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries();
-  const advance = useMutation(trpc.sim.advance.mutationOptions({ onSuccess: refresh }));
+  const sim = useSim();
   const ready = useMutation(trpc.sim.setReady.mutationOptions({ onSuccess: refresh }));
   const managers = L.members.filter((m) => m.teamId);
   const readyCount = managers.filter((m) => m.ready).length;
@@ -130,46 +131,35 @@ function AdvancePanel() {
             {L.isCommissioner ? 'Commissioner' : 'Co-commissioner'}: advance the league
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => advance.mutate({ leagueId: L.id, target: { days: 1 } })} disabled={advance.isPending}>
+            <Button onClick={() => sim.start({ days: 1 })} disabled={sim.running || sim.starting}>
               Sim 1 day
             </Button>
-            <Button variant="secondary" onClick={() => advance.mutate({ leagueId: L.id, target: { days: 7 } })} disabled={advance.isPending}>
+            <Button variant="secondary" onClick={() => sim.start({ days: 7 })} disabled={sim.running || sim.starting}>
               Sim 1 week
             </Button>
             {L.daysToDeadline !== null && L.daysToDeadline > 0 && (
-              <Button variant="secondary" onClick={() => advance.mutate({ leagueId: L.id, target: { to: 'trade-deadline' } })} disabled={advance.isPending}>
+              <Button variant="secondary" onClick={() => sim.start({ to: 'trade-deadline' })} disabled={sim.running || sim.starting}>
                 Sim to trade deadline
               </Button>
             )}
             {L.phase === 'regular-season' && (
-              <Button variant="secondary" onClick={() => advance.mutate({ leagueId: L.id, target: { to: 'playoffs' } })} disabled={advance.isPending}>
+              <Button variant="secondary" onClick={() => sim.start({ to: 'playoffs' })} disabled={sim.running || sim.starting}>
                 Sim to playoffs
               </Button>
             )}
-            <Button variant="ghost" onClick={() => advance.mutate({ leagueId: L.id, target: { to: 'end-of-season' } })} disabled={advance.isPending}>
+            <Button variant="ghost" onClick={() => sim.start({ to: 'end-of-season' })} disabled={sim.running || sim.starting}>
               Sim to end of season
             </Button>
           </div>
-          {advance.isPending && <p className="mt-2 text-sm text-ice-400">Simulating… long advances can take a few seconds.</p>}
-          {advance.data && !advance.isPending && (
+          {sim.running && <p className="mt-2 text-sm text-ice-400">Simming… follow along in the top bar, or cancel there.</p>}
+          {sim.job && !sim.running && (
             <p className="mt-2 text-sm text-ice-300">
-              Played {advance.data.games} games (
-              {dayLabel(L.season, advance.data.fromDay, {
-                month: 'short',
-                day: 'numeric',
-              })}{' '}
-              →{' '}
-              {dayLabel(L.season, advance.data.toDay, {
-                month: 'short',
-                day: 'numeric',
-              })}
-              ).
-              {advance.data.phaseChanges.includes('playoffs') && ' The playoffs are set!'}
-              {advance.data.phaseChanges.includes('offseason') && ' The season is over!'}
+              {sim.job.status === 'cancelled' ? 'Stopped early: ' : sim.job.status === 'failed' ? `The sim failed: ${sim.job.error}. ` : ''}
+              {sim.job.games} games simmed{sim.job.startedBy ? ` (started by ${sim.job.startedBy})` : ''}.
             </p>
           )}
           <div className="mt-2">
-            <ErrorBox error={advance.error ?? ready.error} />
+            <ErrorBox error={sim.startError ?? ready.error} />
           </div>
         </div>
       )}

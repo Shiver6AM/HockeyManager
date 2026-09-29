@@ -3,6 +3,7 @@
  * lottery for non-playoff teams, team-specific scouting, and pick-by-pick
  * execution that pauses whenever a human manager is on the clock.
  */
+import { draftScoutSd, isDraftClass } from './scouting';
 import { archetypeForCeiling, generatePlayer } from './generate';
 import { scoutingError } from './staff';
 import { clamp, deriveSeed, Rng } from './rng';
@@ -48,6 +49,7 @@ export function generateDraftClass(league: League, season: number, size = 32 * D
     p.hidden.potential = Math.round(Math.max(overall(p), potential));
     p.contract = null;
     p.teamId = null;
+    p.draftClass = season;
     out.push(p);
   }
   return out;
@@ -57,6 +59,8 @@ export function generateDraftClass(league: League, season: number, size = 32 * D
 export function scoutedPotential(league: League, teamId: TeamId, p: Player): number {
   const young = age(p, league.season) <= 21;
   const rng = new Rng(deriveSeed(league.seed, `scout:${teamId}:${p.id}`));
+  // Draft-eligible players: the error shrinks as the team's scouts get to know his region.
+  if (isDraftClass(league, p)) return Math.round(p.hidden.potential + rng.normal(0, 1) * draftScoutSd(league, teamId, p));
   // Better head scouts make smaller (but still repeatable) errors.
   return Math.round(p.hidden.potential + rng.normal(0, scoutingError(league, teamId, young)));
 }
@@ -117,8 +121,18 @@ export function buildDraftOrder(league: League, st: StandingsRow[], season: numb
   return { order: [...order, ...playoffOrder], lottery };
 }
 
+/** Make sure this season's draft class exists (it plays all season so scouts can watch it). */
+export function ensureDraftClass(league: League) {
+  if (league.phase === 'offseason') return;
+  if (league.draftClass?.season === league.season) return;
+  const prospects = generateDraftClass(league, league.season);
+  for (const p of prospects) league.players[p.id] = p;
+  league.draftClass = { season: league.season, ids: prospects.map((p) => p.id) };
+}
+
 export function createDraft(league: League, st: StandingsRow[], season: number): { state: DraftState; prospects: Player[] } {
-  const prospects = generateDraftClass(league, season);
+  const existing = league.draftClass?.season === season ? league.draftClass.ids.map((id) => league.players[id]).filter(Boolean) : null;
+  const prospects = existing?.length ? existing : generateDraftClass(league, season);
   const { order, lottery } = buildDraftOrder(league, st, season);
   const picks: DraftPick[] = [];
   for (let round = 1; round <= DRAFT_ROUNDS; round++) {
@@ -166,6 +180,7 @@ export function makePick(league: League, teamId: TeamId, playerId: string) {
   const team = league.teams[teamId];
   pick.playerId = playerId;
   p.prospectOf = teamId;
+  p.draftClass = undefined;
   p.draft = { season: league.offseason!.draft.season, round: pick.round, overall: pick.overall, teamId };
   (team.prospects ??= []).push(playerId);
   league.offseason!.draft.current++;

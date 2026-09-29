@@ -1,5 +1,6 @@
 import type { Role, Tactics } from './systems';
 import type { SkillsCoach } from './skills';
+import type { Scout, TeamScouting } from './scouting';
 
 /**
  * Core data model. Everything here is plain JSON-serializable data so the
@@ -88,6 +89,12 @@ export interface Player {
   extension?: ContractOffer;
   /** How the player entered the league, if through the draft. */
   draft?: { season: number; round: number; overall: number; teamId: TeamId };
+  /** Draft year while he's an eligible, undrafted prospect. */
+  draftClass?: number;
+  /** Where he plays outside the NHL this season (junior, college, Europe, AHL). */
+  minorTeam?: { season: number; league: string; team: string };
+  /** Signed but assigned to the team's AHL affiliate (farm team). */
+  farm?: boolean;
   /** How much he gets out of coaching, 1–99 (derived from his id when missing; see skills.ts). */
   coachability?: number;
   /** Points added to situational skills by skills coaches. */
@@ -161,8 +168,16 @@ export interface Team {
   tradeBlock?: TradeBlock;
   /** Coaching systems (AI teams pick theirs to suit the roster). */
   tactics?: Tactics;
+  /** The AHL affiliate's name. */
+  affiliate?: { city: string; name: string };
+  /** The farm team has been stocked with its first players. */
+  farmStocked?: boolean;
+  /** Area scouts (up to four). */
+  scouts?: Scout[];
   /** Skills coaches (up to three). */
   skillsCoaches?: SkillsCoach[];
+  /** The goalie coach. */
+  goalieCoach?: SkillsCoach;
   /** Games each forward line / defense pair (sorted ids joined by "|") has played together recently. */
   chemistry?: Record<string, number>;
 }
@@ -199,6 +214,13 @@ export interface LeagueSettings {
   talentAnchor?: number;
   /** Standard deviation of that same group at creation (keeps the star/depth spread stable). */
   talentSpread?: number;
+  /**
+   * The same anchors for skaters and goalies separately (the best 21 skaters and
+   * 2 goalies per team). Goalies are anchored on their own so the size of the
+   * goalie pool (AHL depth) can't push goaltending up or scoring down.
+   */
+  skaterAnchor?: { mean: number; sd: number };
+  goalieAnchor?: { mean: number; sd: number };
   /** 'commissioner' = trades involving a human team wait for commissioner approval. */
   tradeReview?: 'none' | 'commissioner';
   /** Last regular-season day on which trades are allowed (default: ~78% of the season). */
@@ -410,6 +432,13 @@ export interface League {
   /** Coaches, scouts and trainers looking for work. */
   staffPool?: StaffMember[];
   skillsCoachPool?: SkillsCoach[];
+  goalieCoachPool?: SkillsCoach[];
+  /** Next draft's class, generated when the season starts so scouts can watch it. */
+  draftClass?: { season: number; ids: PlayerId[] };
+  /** Scouting knowledge by team (see scouting.ts). */
+  scouting?: Record<TeamId, TeamScouting>;
+  /** Area scouts on the job market. */
+  scoutPool?: Scout[];
   /** This season's junior/AHL stats for prospects. */
   prospectStats?: Record<PlayerId, MinorLine>;
   news?: NewsItem[];
@@ -638,6 +667,8 @@ export interface CareerLine {
 /** A prospect's season in junior or the AHL. Goalie fields only for goalies. */
 export interface MinorLine {
   league: string;
+  /** Club within that league (e.g. "Kingston" in the OHL, or the AHL affiliate). */
+  team?: string;
   gp: number;
   g: number;
   a: number;

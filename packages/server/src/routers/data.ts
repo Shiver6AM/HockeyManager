@@ -39,6 +39,18 @@ import {
   type Lines,
   type ScheduledGame,
   unitChemistry,
+  age,
+  BURY_EXEMPT,
+  capHit,
+  expiresAsFor,
+  affiliateLabel,
+  activeRoster,
+  ACTIVE_MAX,
+  CONTRACT_MAX,
+  nhlRoster,
+  playerValue,
+  type SkaterSeasonStats,
+  type GoalieSeasonStats,
   SYSTEM_K,
   SYSTEM_CENTER,
   CHEMISTRY,
@@ -51,6 +63,9 @@ import {
   skillLabel,
   projectedSeasonGain,
   type TrainableSkill,
+  minorLeagueOf,
+  leagueRegion,
+  REGION_LABEL,
 } from '@hockey-gm/sim-core';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
@@ -75,6 +90,61 @@ function systemImpact(fits: ReturnType<typeof systemFits>) {
     out[g] = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, Math.round(SYSTEM_K[g] * w * (v - mean - SYSTEM_CENTER[g]) * 10) / 10]));
   }
   return out;
+}
+
+/** A player's stats for a past season, all time (NHL totals, this season included), or this season. */
+function pickStats(L: League, id: string, which: number | 'all' | undefined) {
+  const now = { skater: L.skaterStats[id] ?? null, goalie: L.goalieStats[id] ?? null };
+  if (which === undefined || which === L.season) return now;
+  const lines = L.careerStats?.[id] ?? [];
+  if (which !== 'all') {
+    const line = lines.find((c) => c.season === which);
+    return { skater: line?.skater ?? null, goalie: line?.goalie ?? null };
+  }
+  const sk = [...lines.map((c) => c.skater), now.skater].filter(Boolean) as SkaterSeasonStats[];
+  const gl = [...lines.map((c) => c.goalie), now.goalie].filter(Boolean) as GoalieSeasonStats[];
+  const sum = <T extends object>(xs: T[]): T | null =>
+    xs.length ? (xs.reduce((a, b) => Object.fromEntries(Object.keys(b).map((k) => [k, ((a as Record<string, number>)[k] ?? 0) + (b as Record<string, number>)[k]])) as T, {} as T) as T) : null;
+  return { skater: sum(sk), goalie: sum(gl) };
+}
+
+/** Seasons the team's current players have stats for (newest first). */
+function statsSeasons(L: League, t: League['teams'][string]): number[] {
+  const set = new Set<number>([L.season]);
+  for (const id of t.roster) for (const c of L.careerStats?.[id] ?? []) if (c.skater || c.goalie) set.add(c.season);
+  return [...set].sort((a, b) => b - a);
+}
+
+/**
+ * Stat lines to rank: this season, a past season (from career records, retired
+ * players included), or all-time totals.
+ */
+function leaderPool(L: League, playoffs: boolean, season: number | 'all' | undefined) {
+  const current = { sk: playoffs ? L.playoffSkaterStats : L.skaterStats, gs: playoffs ? L.playoffGoalieStats : L.goalieStats };
+  if (season === undefined || season === L.season) return { sk: Object.entries(current.sk), gs: Object.entries(current.gs) };
+  const careers: Array<[string, League['careerStats'] extends Record<string, infer C> | undefined ? C : never]> = [
+    ...Object.entries(L.careerStats ?? {}),
+    ...Object.values(L.retired ?? {}).map((r) => [r.id, r.career] as [string, typeof r.career]),
+  ];
+  const skOut: Record<string, SkaterSeasonStats> = {};
+  const gsOut: Record<string, GoalieSeasonStats> = {};
+  const add = <T extends object>(out: Record<string, T>, id: string, line: T | null | undefined) => {
+    if (!line) return;
+    const prev = out[id] as Record<string, number> | undefined;
+    out[id] = (prev ? Object.fromEntries(Object.entries(line).map(([k, v]) => [k, (prev[k] ?? 0) + (v as number)])) : { ...line }) as T;
+  };
+  for (const [id, lines] of careers) {
+    for (const c of lines) {
+      if (season !== 'all' && c.season !== season) continue;
+      add(skOut, id, playoffs ? c.playoffSkater : c.skater);
+      add(gsOut, id, playoffs ? c.playoffGoalie : c.goalie);
+    }
+  }
+  if (season === 'all' && (L.phase !== 'offseason' || !L.offseason)) {
+    for (const [id, line] of Object.entries(current.sk)) add(skOut, id, line);
+    for (const [id, line] of Object.entries(current.gs)) add(gsOut, id, line);
+  }
+  return { sk: Object.entries(skOut), gs: Object.entries(gsOut) };
 }
 
 const chemView = (c: ReturnType<typeof unitChemistry>) => ({
@@ -213,7 +283,35 @@ export const dataRouter = router({
     const L = await readLeague(ctx.db, input.leagueId);
     const st = standings(L);
     const spots = playoffSpots(L, st);
-    return st.map((r, i) => ({ ...r, rank: i + 1, team: teamInfo(L.teams[r.teamId]), inPlayoffSpot: spots.has(r.teamId) }));
+    // Playoff format: top three in each division, plus two wild cards per conference.
+    const seed = new Map<string, { label: string; wildCard: number | null; divRank: number | null }>();
+    for (const conf of [...new Set(Object.values(L.teams).map((t) => t.conference))]) {
+      const rows = st.filter((r) => L.teams[r.teamId].conference === conf);
+      const top = new Set<string>();
+      for (const div of [...new Set(rows.map((r) => L.teams[r.teamId].division))]) {
+        rows
+          .filter((r) => L.teams[r.teamId].division === div)
+          .forEach((r, i) => {
+            if (i < 3) {
+              top.add(r.teamId);
+              seed.set(r.teamId, { label: `${div[0]}${i + 1}`, wildCard: null, divRank: i + 1 });
+            }
+          });
+      }
+      rows
+        .filter((r) => !top.has(r.teamId))
+        .forEach((r, i) => seed.set(r.teamId, { label: i < 2 ? `WC${i + 1}` : '', wildCard: i + 1, divRank: null }));
+    }
+    return st.map((r, i) => ({
+      ...r,
+      rank: i + 1,
+      team: teamInfo(L.teams[r.teamId]),
+      inPlayoffSpot: spots.has(r.teamId),
+      /** "M1" (first in the Metro-style division), "WC1"/"WC2" for wild cards. */
+      seed: seed.get(r.teamId)?.label ?? '',
+      /** Place in the conference wild-card race (teams outside their division's top three). */
+      wildCard: seed.get(r.teamId)?.wildCard ?? null,
+    }));
   }),
 
   day: memberProcedure.input(z.object({ day: z.number().int().optional() })).query(async ({ ctx, input }) => {
@@ -263,10 +361,13 @@ export const dataRouter = router({
     };
   }),
 
-  team: memberProcedure.input(z.object({ teamId: z.string() })).query(async ({ ctx, input }) => {
+  team: memberProcedure.input(z.object({ teamId: z.string(), statsSeason: z.union([z.number().int(), z.literal('all')]).optional() })).query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
     const t = L.teams[input.teamId];
     if (!t) throw new TRPCError({ code: 'NOT_FOUND', message: 'No such team' });
+    // Stats shown in the roster: this season (default), a past season, or career totals.
+    const statsFor = (id: string) => pickStats(L, id, input.statsSeason);
+    const viewer = L.teams[ctx.membership.teamId ?? ''] ?? t;
     const st = standings(L);
     const record = st.find((r) => r.teamId === t.id)!;
     const games = allGames(L).filter((g) => g.home === t.id || g.away === t.id).sort((a, b) => a.day - b.day);
@@ -296,8 +397,13 @@ export const dataRouter = router({
             : null,
         attemptsLeft: L.negotiations?.[id]?.teamId === t.id && L.negotiations[id].season === L.season ? Math.max(0, 3 - L.negotiations[id].attempts) : 3,
         buyout: ctx.membership.teamId === t.id ? buyoutTerms(L, L.players[id]) : null,
-        stats: L.skaterStats[id] ?? null,
-        goalieStats: L.goalieStats[id] ?? null,
+        stats: statsFor(id).skater,
+        goalieStats: statsFor(id).goalie,
+        /** With the AHL affiliate. */
+        farm: !!L.players[id].farm,
+        minor: L.players[id].farm ? (L.prospectStats?.[id] ?? null) : null,
+        /** Trade value from your front office's point of view (0–1 scale, like the trade screen's meter). */
+        tradeValue: Math.round(Math.min(1, Math.sqrt(Math.max(0, playerValue(L, viewer, L.players[id]))) / 30) * 100) / 100,
         playoffStats: L.playoffSkaterStats[id] ?? null,
         playoffGoalieStats: L.playoffGoalieStats[id] ?? null,
       })),
@@ -306,11 +412,28 @@ export const dataRouter = router({
         .filter(Boolean)
         .map((p) => {
           const s = scoutedPotential(L, ctx.membership.teamId ?? 'league', p);
-          return { ...publicPlayer(L, p), grade: grade(s), projection: projectionLabel(s, p.pos), draft: p.draft ?? null, minor: L.prospectStats?.[p.id] ?? null };
+          const m = minorLeagueOf(L, p);
+          return {
+            ...publicPlayer(L, p),
+            grade: grade(s),
+            projection: projectionLabel(s, p.pos),
+            potentialValue: s,
+            draft: p.draft ?? null,
+            minor: L.prospectStats?.[p.id] ?? null,
+            league: m.league,
+            club: m.team,
+            region: REGION_LABEL[leagueRegion(m.league) as keyof typeof REGION_LABEL] ?? 'North American pro',
+          };
         })
         .sort((a, b) => b.overall - a.overall),
       phase: L.phase,
-      lines: completeLines(t.lines, t.roster.map((id) => L.players[id]), t.tactics ?? DEFAULT_TACTICS),
+      lines: completeLines(t.lines, nhlRoster(L, t), t.tactics ?? DEFAULT_TACTICS),
+      affiliate: affiliateLabel(L, t),
+      contracts: t.roster.length,
+      contractMax: CONTRACT_MAX,
+      active: activeRoster(L, t).length,
+      activeMax: ACTIVE_MAX,
+      statsSeasons: statsSeasons(L, t),
       /** Games each line/pair has played together recently (for live chemistry in the editor). */
       chemistryGames: t.chemistry ?? {},
       /** Chemistry of each forward line and defense pair: style fit + familiarity, in rating points. */
@@ -335,6 +458,71 @@ export const dataRouter = router({
       recent: games.filter((g) => g.result).slice(-5).map((g) => gameView(L, g)),
       upcoming: games.filter((g) => !g.result).slice(0, 5).map((g) => gameView(L, g)),
     };
+  }),
+
+  /**
+   * The contracts tab: every signed player's deal season by season (with any
+   * agreed extension and when he becomes a free agent), the cap picture for
+   * the next several seasons, and how keen each player is to stay.
+   */
+  contracts: memberProcedure.input(z.object({ teamId: z.string() })).query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    const t = L.teams[input.teamId];
+    if (!t) throw new TRPCError({ code: 'NOT_FOUND', message: 'No such team' });
+    const isMine = ctx.membership.teamId === t.id;
+    const first = capSeason(L);
+    const beforeRollover = L.phase === 'offseason' && (!L.offseason || L.offseason.stage === 'draft' || L.offseason.stage === 're-sign');
+    const seasons = Array.from({ length: 7 }, (_, i) => first + i);
+    const players = t.roster
+      .map((id) => L.players[id])
+      .filter(Boolean)
+      .map((p) => {
+        const c = p.contract;
+        const remaining = c ? Math.max(0, c.yearsLeft - (beforeRollover ? 1 : 0)) : 0;
+        const ext = p.extension ?? null;
+        const grid = seasons.map((season) => {
+          const i = season - first;
+          if (i < remaining) return { season, salary: c!.salary, kind: 'contract' as const };
+          if (ext && i < remaining + ext.years) return { season, salary: ext.salary, kind: 'extension' as const };
+          if (i === remaining + (ext?.years ?? 0)) {
+            const status = ext ? expiresAsFor(age(p, first + remaining + ext.years), 99) : (c?.expiresAs ?? 'UFA');
+            return { season, salary: null, kind: status === 'RFA' ? ('rfa' as const) : ('ufa' as const) };
+          }
+          return { season, salary: null, kind: null };
+        });
+        const expiringSoon = remaining <= 1 && !ext;
+        const terms = isMine ? dealTerms(L, p, t, L.offseason?.expiring[p.id] ?? askingContract(L, p)) : null;
+        return {
+          ...publicPlayer(L, p),
+          farm: !!p.farm,
+          potential: potentialView(L, ctx.membership.teamId, p),
+          capHit: capHit(p),
+          remaining,
+          grid,
+          extension: ext,
+          expiringSoon,
+          /** How keen he is to stay (contender status, role, loyalty, ambition, market, age). */
+          interest: terms?.interest ?? null,
+          priorities: terms?.priorities ?? null,
+          canExtend: isMine && canExtend(L, p) && !p.extension,
+          deal: isMine && canExtend(L, p) ? terms : null,
+          attemptsLeft: L.negotiations?.[p.id]?.teamId === t.id && L.negotiations[p.id].season === L.season ? Math.max(0, 3 - L.negotiations[p.id].attempts) : 3,
+          buyout: isMine ? buyoutTerms(L, p) : null,
+        };
+      })
+      .sort((a, b) => Number(a.farm) - Number(b.farm) || b.capHit - a.capHit);
+    const cap = seasons.map((season, i) => {
+      const projectedCap = Math.round((L.settings.salaryCap * Math.pow(1.025, i + (L.phase === 'offseason' ? 0 : 0))) / 100_000) * 100_000;
+      const committed = players.reduce((sum, p) => {
+        const g = p.grid[i];
+        if (!g.salary) return sum;
+        return sum + (p.farm ? Math.max(0, g.salary - BURY_EXEMPT) : g.salary);
+      }, 0);
+      const dead = deadCapFor(L, t, season);
+      const signed = players.filter((p) => p.grid[i].salary).length;
+      return { season, cap: projectedCap, committed: committed + dead, dead, space: projectedCap - committed - dead, signed };
+    });
+    return { team: teamInfo(t), isMine, seasons, players, cap, contractMax: CONTRACT_MAX, affiliate: affiliateLabel(L, t) };
   }),
 
   player: memberProcedure.input(z.object({ playerId: z.string() })).query(async ({ ctx, input }) => {
@@ -430,11 +618,16 @@ export const dataRouter = router({
     return { ok: true };
   }),
 
-  leaders: memberProcedure.input(z.object({ playoffs: z.boolean().default(false) })).query(async ({ ctx, input }) => {
+  leaders: memberProcedure
+    .input(z.object({ playoffs: z.boolean().default(false), season: z.union([z.number().int(), z.literal('all')]).optional() }))
+    .query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
-    const sk = Object.entries(input.playoffs ? L.playoffSkaterStats : L.skaterStats);
-    const gs = Object.entries(input.playoffs ? L.playoffGoalieStats : L.goalieStats);
-    const who = (id: string) => ({ id, name: playerName(L, id), pos: L.players[id].pos, teamId: L.players[id].teamId });
+    const { sk, gs } = leaderPool(L, input.playoffs, input.season);
+    const who = (id: string) => {
+      const p = L.players[id];
+      const r = L.retired?.[id];
+      return { id, name: p ? `${p.firstName} ${p.lastName}` : (r?.name ?? id), pos: p?.pos ?? r?.pos ?? '', teamId: p?.teamId ?? null };
+    };
     const maxGp = Math.max(1, ...sk.map(([, s]) => s.gp));
     const minGoalieGp = Math.max(1, Math.round(maxGp * 0.3));
     const top = <T,>(rows: T[], key: (r: T) => number, asc = false, n = 10) =>
@@ -469,6 +662,47 @@ export const dataRouter = router({
         goalie('Shutouts', (g) => g.so),
       ],
       minGoalieGp,
+      /** Every player's line for the full sortable tables. */
+      allSkaters: sk
+        .filter(([, s]) => s.gp > 0)
+        .map(([id, s]) => ({
+          ...who(id),
+          team: L.teams[who(id).teamId ?? '']?.abbr ?? (L.players[id] ? 'FA' : 'RET'),
+          gp: s.gp,
+          g: s.g,
+          a: s.a,
+          p: s.g + s.a,
+          pm: s.pm,
+          pim: s.pim,
+          ppg: s.ppg,
+          ppp: s.ppg + s.ppa,
+          shg: s.shg,
+          gwg: s.gwg ?? 0,
+          sog: s.sog,
+          hits: s.hits,
+          blk: s.blk,
+          fow: s.fow,
+          fol: s.fol,
+          toi: s.toi,
+        })),
+      allGoalies: gs
+        .filter(([, g]) => g.gp > 0)
+        .map(([id, g]) => ({
+          ...who(id),
+          team: L.teams[who(id).teamId ?? '']?.abbr ?? (L.players[id] ? 'FA' : 'RET'),
+          gp: g.gp,
+          gs: g.gs,
+          w: g.w,
+          l: g.l,
+          otl: g.otl,
+          sa: g.sa,
+          ga: g.ga,
+          so: g.so,
+          toi: g.toi,
+        })),
+      season: input.season ?? L.season,
+      /** Seasons with stats to browse (newest first). */
+      seasons: [...new Set([L.season, ...L.history.map((h) => h.season)])].sort((x, y) => y - x),
     };
   }),
 

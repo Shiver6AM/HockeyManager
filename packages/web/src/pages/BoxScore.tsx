@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { Badge, Card, Empty, ErrorBox, Spinner, TeamChip, TeamLink } from '../components/ui';
 import { dayLabel, gaa, signed, svPct, toi } from '../format';
+import { useSort } from '../sort';
 import { useTRPC, type Outputs } from '../trpc';
 import { useLeague } from './LeagueLayout';
 
@@ -163,25 +164,58 @@ function PlayerTables({ box, side }: { box: Box; side: 'home' | 'away' }) {
   const L = useLeague();
   const t = box[side];
   const team = box.game[side];
+  const { sorted: skaters, Th } = useSort(
+    t?.skaters ?? [],
+    {
+      name: (s) => s.name.split(' ').slice(-1)[0],
+      // Forwards first, then defense, each by ice time.
+      pos: (s) => (s.pos === 'D' ? 100000 : 0) - s.toi,
+      g: (s) => s.g,
+      a: (s) => s.a,
+      pts: (s) => s.g + s.a,
+      pm: (s) => s.pm,
+      sog: (s) => s.sog,
+      hits: (s) => s.hits,
+      blk: (s) => s.blk,
+      pim: (s) => s.pim,
+      fo: (s) => (s.fow + s.fol ? s.fow / (s.fow + s.fol) : null),
+      toi: (s) => s.toi,
+    },
+    { key: 'pos', dir: 'asc' },
+  );
+  const goalieSort = useSort(
+    t?.goalies ?? [],
+    {
+      name: (g) => g.name.split(' ').slice(-1)[0],
+      sa: (g) => g.sa,
+      ga: (g) => g.ga,
+      sv: (g) => (g.sa ? 1 - g.ga / g.sa : null),
+      gaa: (g) => (g.toi ? -g.ga / g.toi : null),
+      toi: (g) => g.toi,
+      dec: (g) => g.decision ?? '',
+    },
+    { key: 'toi' },
+  );
+  const GTh = goalieSort.Th;
   if (!t) return null;
-  const skaters = [...(t.skaters ?? [])].sort((a, b) => (a.pos === 'D' ? 1 : 0) - (b.pos === 'D' ? 1 : 0) || b.toi - a.toi);
   return (
     <Card title={`${team.city} ${team.name}`}>
       <div className="-m-4 overflow-x-auto">
         <table className="table">
           <thead>
             <tr>
-              <th>Skater</th>
-              <th>Pos</th>
-              <th className="num">G</th>
-              <th className="num">A</th>
-              <th className="num">+/-</th>
-              <th className="num">SOG</th>
-              <th className="num">HIT</th>
-              <th className="num">BLK</th>
-              <th className="num">PIM</th>
-              <th className="num">FO</th>
-              <th className="num">TOI</th>
+              <Th k="name">Skater</Th>
+              <Th k="pos" title="Forwards then defense, by ice time">Pos</Th>
+              <Th k="g" className="num">G</Th>
+              <Th k="a" className="num">A</Th>
+              <Th k="pts" className="num">P</Th>
+              <Th k="pm" className="num">+/-</Th>
+              <Th k="sog" className="num">SOG</Th>
+              <Th k="hits" className="num">HIT</Th>
+              <Th k="blk" className="num">BLK</Th>
+              <Th k="pim" className="num">PIM</Th>
+              <Th k="fo" className="num">FO</Th>
+              <Th k="toi" className="num">TOI</Th>
             </tr>
           </thead>
           <tbody>
@@ -195,6 +229,7 @@ function PlayerTables({ box, side }: { box: Box; side: 'home' | 'away' }) {
                 <td className="text-ice-400">{s.pos}</td>
                 <td className="num">{s.g}</td>
                 <td className="num">{s.a}</td>
+                <td className="num font-semibold text-white">{s.g + s.a}</td>
                 <td className="num">{signed(s.pm)}</td>
                 <td className="num">{s.sog}</td>
                 <td className="num">{s.hits}</td>
@@ -209,17 +244,17 @@ function PlayerTables({ box, side }: { box: Box; side: 'home' | 'away' }) {
         <table className="table mt-2">
           <thead>
             <tr>
-              <th>Goalie</th>
-              <th className="num">SA</th>
-              <th className="num">GA</th>
-              <th className="num">SV%</th>
-              <th className="num">GAA</th>
-              <th className="num">TOI</th>
-              <th>Dec</th>
+              <GTh k="name">Goalie</GTh>
+              <GTh k="sa" className="num">SA</GTh>
+              <GTh k="ga" className="num">GA</GTh>
+              <GTh k="sv" className="num">SV%</GTh>
+              <GTh k="gaa" className="num">GAA</GTh>
+              <GTh k="toi" className="num">TOI</GTh>
+              <GTh k="dec">Dec</GTh>
             </tr>
           </thead>
           <tbody>
-            {(t.goalies ?? []).map((g) => (
+            {goalieSort.sorted.map((g) => (
               <tr key={g.id}>
                 <td>
                   <Link to={`/league/${L.id}/player/${g.id}`} className="text-ice-50 hover:underline">

@@ -20,9 +20,10 @@ import { clamp, deriveSeed, Rng } from './rng';
 import { ROLE_LABEL, ROLES, roleSkill, type Role } from './systems';
 import type { GoalieRatings, League, Player, PlayerId, SkaterRatings, Team } from './types';
 
-export type SkillGroup = 'offense' | 'defense' | 'skating';
+export type SkillGroup = 'offense' | 'defense' | 'skating' | 'goaltending';
+/** Groups skills coaches specialize in (goaltending is the goalie coach's job). */
 export const SKILL_GROUPS: SkillGroup[] = ['offense', 'defense', 'skating'];
-export const SKILL_GROUP_LABEL: Record<SkillGroup, string> = { offense: 'Offense', defense: 'Defense', skating: 'Skating' };
+export const SKILL_GROUP_LABEL: Record<SkillGroup, string> = { offense: 'Offense', defense: 'Defense', skating: 'Skating', goaltending: 'Goaltending' };
 
 type SkaterKey = keyof SkaterRatings;
 type GoalieKey = keyof GoalieRatings;
@@ -59,11 +60,11 @@ export const SKILL_GROUP_OF: Record<TrainableSkill, SkillGroup> = {
   discipline: 'defense',
   skating: 'skating',
   endurance: 'skating',
-  // Goaltending is taught by the defensive coaches.
-  reflexes: 'defense',
-  positioning: 'defense',
-  rebounds: 'defense',
-  mental: 'defense',
+  // Goaltending is the goalie coach's.
+  reflexes: 'goaltending',
+  positioning: 'goaltending',
+  rebounds: 'goaltending',
+  mental: 'goaltending',
   // Situational skills
   netFront: 'offense',
   bumper: 'offense',
@@ -101,13 +102,17 @@ export interface SkillsCoach {
   yearsLeft: number;
   /** Pick players and skills automatically. */
   auto: boolean;
-  /** Up to five players, each on one skill ('auto' = the coach decides). */
+  /** Up to five players (four goalies for a goalie coach), each on one skill ('auto' = the coach decides). */
   assignments: Array<{ playerId: PlayerId; skill: TrainableSkill | 'auto' }>;
+  /** A goalie coach works only with goalies. */
+  kind?: 'goalie';
 }
 
 export const SKILLS = {
   maxCoaches: 3,
   maxPlayers: 5,
+  maxGoalies: 4,
+  goaliePoolSize: 6,
   /** Rating points per day for an average coach, player and age, far from the ceiling. */
   basePerDay: 0.025,
   /** Situational skills are narrower, so focused work moves them a bit faster. */
@@ -141,6 +146,7 @@ export function generateSkillsCoach(rng: Rng, id: string, quality = rng.normal(0
       ? Math.round(clamp(72 + 7 * quality + rng.normal(0, 5), 58, 95))
       : Math.round(clamp(rng.normal(47, 6), 35, 57));
   }
+  ratings.goaltending = Math.round(clamp(rng.normal(38, 5), 30, 50));
   const c: SkillsCoach = {
     id,
     name: `${rng.pick(pool.first)} ${rng.pick(pool.last)}`,
@@ -155,8 +161,31 @@ export function generateSkillsCoach(rng: Rng, id: string, quality = rng.normal(0
   return c;
 }
 
+/** A goalie coach: rated in goaltending, works with up to four goalies. */
+export function generateGoalieCoach(rng: Rng, id: string, quality = rng.normal(0, 1)): SkillsCoach {
+  const pool = NAME_POOLS[rng.weighted(NAME_POOLS.map((p) => p.weight))];
+  const c: SkillsCoach = {
+    id,
+    name: `${rng.pick(pool.first)} ${rng.pick(pool.last)}`,
+    ratings: { offense: 35, defense: 40, skating: 35, goaltending: Math.round(clamp(70 + 8 * quality + rng.normal(0, 4), 52, 96)) },
+    specialties: ['goaltending'],
+    salary: 0,
+    yearsLeft: rng.int(1, 3),
+    auto: true,
+    assignments: [],
+    kind: 'goalie',
+  };
+  c.salary = skillsCoachSalary(c);
+  return c;
+}
+
+/** Every coach on staff: skills coaches and the goalie coach. */
+export const coachesOf = (team: Team): SkillsCoach[] => [...(team.skillsCoaches ?? []), ...(team.goalieCoach ? [team.goalieCoach] : [])];
+
 function nextCoachId(league: League, rng: Rng): string {
-  const used = new Set([...(league.skillsCoachPool ?? []), ...Object.values(league.teams).flatMap((t) => t.skillsCoaches ?? [])].map((c) => c.id));
+  const used = new Set(
+    [...(league.skillsCoachPool ?? []), ...(league.goalieCoachPool ?? []), ...Object.values(league.teams).flatMap((t) => coachesOf(t))].map((c) => c.id),
+  );
   let id: string;
   do id = `sc${league.season}-${rng.int(0, 1e7)}`;
   while (used.has(id));
@@ -169,24 +198,39 @@ export function refillSkillsCoachPool(league: League, rng = new Rng(deriveSeed(l
   const strong = pool.filter((c) => c.specialties.some((g) => c.ratings[g] >= 80)).length;
   for (let i = strong; i < 4; i++) pool.push(generateSkillsCoach(rng, nextCoachId(league, rng), rng.normal(1.3, 0.4)));
   while (pool.length < SKILLS.poolSize) pool.push(generateSkillsCoach(rng, nextCoachId(league, rng)));
+  const gpool = (league.goalieCoachPool ??= []);
+  if (!gpool.some((c) => c.ratings.goaltending >= 80)) gpool.push(generateGoalieCoach(rng, nextCoachId(league, rng), 1.4));
+  while (gpool.length < SKILLS.goaliePoolSize) gpool.push(generateGoalieCoach(rng, nextCoachId(league, rng)));
 }
 
 /** Leagues without skills coaches get them: each team starts with one to three, on auto. */
 export function initSkillsCoaches(league: League) {
   const rng = new Rng(deriveSeed(league.seed, 'skills-coaches'));
   for (const t of Object.values(league.teams)) {
-    if (t.skillsCoaches) continue;
-    const n = 1 + rng.weighted([0.3, 0.45, 0.25]);
-    t.skillsCoaches = Array.from({ length: n }, () => generateSkillsCoach(rng, nextCoachId(league, rng)));
+    if (!t.skillsCoaches) {
+      const n = 1 + rng.weighted([0.3, 0.45, 0.25]);
+      t.skillsCoaches = Array.from({ length: n }, () => generateSkillsCoach(rng, nextCoachId(league, rng)));
+    }
   }
+  const grng = new Rng(deriveSeed(league.seed, 'goalie-coaches'));
+  for (const t of Object.values(league.teams)) if (!t.goalieCoach) t.goalieCoach = generateGoalieCoach(grng, nextCoachId(league, grng));
   refillSkillsCoachPool(league, rng);
 }
 
 export function skillsCoachPayroll(team: Team): number {
-  return (team.skillsCoaches ?? []).reduce((s, c) => s + c.salary, 0);
+  return coachesOf(team).reduce((s, c) => s + c.salary, 0);
 }
 
 export function hireSkillsCoach(league: League, team: Team, coachId: string): SkillsCoach {
+  // A goalie coach replaces the current one (who's paid a settlement).
+  const gc = (league.goalieCoachPool ?? []).find((x) => x.id === coachId);
+  if (gc) {
+    if (team.goalieCoach) releaseSkillsCoach(league, team, team.goalieCoach.id);
+    league.goalieCoachPool = league.goalieCoachPool!.filter((x) => x.id !== coachId);
+    team.goalieCoach = { ...gc, yearsLeft: Math.max(2, gc.yearsLeft), auto: true, assignments: [] };
+    refillSkillsCoachPool(league);
+    return team.goalieCoach;
+  }
   const coaches = (team.skillsCoaches ??= []);
   if (coaches.length >= SKILLS.maxCoaches) throw new Error(`You already have ${SKILLS.maxCoaches} skills coaches. Let one go first.`);
   const pool = league.skillsCoachPool ?? [];
@@ -201,26 +245,29 @@ export function hireSkillsCoach(league: League, team: Team, coachId: string): Sk
 
 /** Let a coach go: half his remaining salary is paid as a settlement. */
 export function releaseSkillsCoach(league: League, team: Team, coachId: string): { settlement: number } {
-  const c = team.skillsCoaches?.find((x) => x.id === coachId);
+  const c = coachesOf(team).find((x) => x.id === coachId);
   if (!c) throw new Error('Not one of your coaches');
-  team.skillsCoaches = team.skillsCoaches!.filter((x) => x.id !== coachId);
+  if (c.kind === 'goalie') team.goalieCoach = undefined;
+  else team.skillsCoaches = team.skillsCoaches!.filter((x) => x.id !== coachId);
   const settlement = Math.round((c.salary * Math.max(0, c.yearsLeft - 1)) / 2);
   if (team.finances) team.finances.staff += settlement;
-  (league.skillsCoachPool ??= []).push({ ...c, auto: true, assignments: [], yearsLeft: 2 });
+  (c.kind === 'goalie' ? (league.goalieCoachPool ??= []) : (league.skillsCoachPool ??= [])).push({ ...c, auto: true, assignments: [], yearsLeft: 2 });
   return { settlement };
 }
 
 export function setCoachPlan(team: Team, coachId: string, plan: { auto: boolean; assignments: SkillsCoach['assignments'] }, league: League) {
-  const c = team.skillsCoaches?.find((x) => x.id === coachId);
+  const c = coachesOf(team).find((x) => x.id === coachId);
   if (!c) throw new Error('Not one of your coaches');
-  if (plan.assignments.length > SKILLS.maxPlayers) throw new Error(`A coach can work with at most ${SKILLS.maxPlayers} players`);
+  const max = c.kind === 'goalie' ? SKILLS.maxGoalies : SKILLS.maxPlayers;
+  if (plan.assignments.length > max) throw new Error(`A coach can work with at most ${max} players`);
   const ids = plan.assignments.map((a) => a.playerId);
   if (new Set(ids).size !== ids.length) throw new Error('A player is listed twice for this coach');
   for (const a of plan.assignments) {
     const p = league.players[a.playerId];
     if (!p || p.teamId !== team.id) throw new Error('Coaches can only work with players on your roster');
+    if (c.kind === 'goalie' && p.pos !== 'G') throw new Error('A goalie coach works with goalies');
     if (a.skill !== 'auto' && !skillsFor(p).includes(a.skill)) throw new Error(`${p.lastName} can't work on that skill`);
-    const other = team.skillsCoaches!.find((x) => x.id !== coachId && x.assignments.some((y) => y.playerId === a.playerId));
+    const other = coachesOf(team).find((x) => x.id !== coachId && !x.auto && x.assignments.some((y) => y.playerId === a.playerId));
     if (other) throw new Error(`${p.firstName} ${p.lastName} is already working with ${other.name}`);
   }
   c.auto = plan.auto;
@@ -232,7 +279,7 @@ export function offseasonSkillsCoaches(league: League) {
   const rng = new Rng(deriveSeed(league.seed, `skills-summer:${league.season}`));
   refillSkillsCoachPool(league, rng);
   for (const t of Object.values(league.teams)) {
-    for (const c of t.skillsCoaches ?? []) {
+    for (const c of coachesOf(t)) {
       c.yearsLeft -= 1;
       if (c.yearsLeft <= 0) c.yearsLeft = rng.int(1, 3);
     }
@@ -277,7 +324,7 @@ export function skillValue(p: Player, s: TrainableSkill): number {
 /** Rating points per day this coach adds to this player's skill. */
 export function trainingRate(league: League, coach: SkillsCoach, p: Player, s: TrainableSkill): number {
   const group = SKILL_GROUP_OF[s];
-  const cr = coach.ratings[group];
+  const cr = coach.ratings[group] ?? 35;
   const coachF = 0.55 + 0.9 * clamp((cr - 35) / 60, 0, 1);
   const learnF = 0.5 + 0.9 * (coachability(p) / 100);
   const a = age(p, league.season);
@@ -317,9 +364,10 @@ export function autoSkill(league: League, coach: SkillsCoach, p: Player): Traina
 
 /** On auto: the five players who'd gain the most (young, coachable, with obvious weaknesses). */
 export function autoPlayers(league: League, team: Team, coach: SkillsCoach, taken: Set<PlayerId>): PlayerId[] {
+  const goalieCoach = coach.kind === 'goalie';
   const scored = team.roster
     .map((id) => league.players[id])
-    .filter((p) => p && !taken.has(p.id) && !p.injury)
+    .filter((p) => p && !taken.has(p.id) && !p.injury && (p.pos === 'G') === goalieCoach)
     .map((p) => {
       const s = autoSkill(league, coach, p);
       const score = s ? trainingRate(league, coach, p, s) * (1 + Math.max(0, overall(p) - 60) / 40) : 0;
@@ -327,7 +375,7 @@ export function autoPlayers(league: League, team: Team, coach: SkillsCoach, take
     })
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score);
-  return scored.slice(0, SKILLS.maxPlayers).map((x) => x.id);
+  return scored.slice(0, goalieCoach ? SKILLS.maxGoalies : SKILLS.maxPlayers).map((x) => x.id);
 }
 
 type Plan = Array<{ coach: SkillsCoach; player: Player; skill: TrainableSkill }>;
@@ -336,7 +384,7 @@ const planCache = new WeakMap<Team, { key: string; plan: Plan }>();
 
 /** The effective plan for today: auto coaches pick their own players; 'auto' skills are resolved. */
 export function resolvePlan(league: League, team: Team): Plan {
-  const key = `${league.season}:${Math.floor(league.day / 7)}:${team.roster.join(',')}:${(team.skillsCoaches ?? []).map((c) => `${c.id}${c.auto ? 'a' : 'm'}${c.assignments.map((a) => a.playerId + a.skill).join('')}`).join('|')}`;
+  const key = `${league.season}:${Math.floor(league.day / 7)}:${team.roster.join(',')}:${coachesOf(team).map((c) => `${c.id}${c.auto ? 'a' : 'm'}${c.assignments.map((a) => a.playerId + a.skill).join('')}`).join('|')}`;
   const hit = planCache.get(team);
   if (hit && hit.key === key && hit.plan.every((x) => league.players[x.player.id] === x.player)) return hit.plan;
   const plan = computePlan(league, team);
@@ -347,7 +395,7 @@ export function resolvePlan(league: League, team: Team): Plan {
 function computePlan(league: League, team: Team): Plan {
   const out: Array<{ coach: SkillsCoach; player: Player; skill: TrainableSkill }> = [];
   const taken = new Set<PlayerId>();
-  const coaches = team.skillsCoaches ?? [];
+  const coaches = coachesOf(team);
   // Manual assignments claim their players first.
   for (const c of coaches) {
     if (c.auto) continue;

@@ -16,6 +16,7 @@
  * favor it by a small margin, and never one that breaks its cap or leaves it
  * without enough players at a position.
  */
+import { CONTRACT_MAX } from './farm';
 import { capRoom, capSeason, marketValue, ROSTER_MAX, SUMMER_ROSTER_MAX } from './contracts';
 import { scoutedPotential } from './draft';
 import { autoLines } from './lines';
@@ -222,7 +223,7 @@ export function validateTrade(league: League, fromId: TeamId, toId: TeamId, give
   for (const a of give) if (!owns(league, fromId, a)) return `${fromId} doesn't own ${describeAsset(league, a)}.`;
   for (const a of get) if (!owns(league, toId, a)) return `${toId} doesn't own ${describeAsset(league, a)}.`;
   const cap = league.settings.salaryCap;
-  const maxRoster = league.phase === 'offseason' ? SUMMER_ROSTER_MAX : ROSTER_MAX + 3;
+  const maxRoster = CONTRACT_MAX;
   for (const [teamId, out, inn] of [
     [fromId, give, get],
     [toId, get, give],
@@ -231,8 +232,8 @@ export function validateTrade(league: League, fromId: TeamId, toId: TeamId, give
     const delta = inn.reduce((s, a) => s + salaryOf(league, a), 0) - out.reduce((s, a) => s + salaryOf(league, a), 0);
     if (delta > 0 && capRoom(league, team) - delta < 0) return `${team.city} would be over the salary cap by $${((delta - capRoom(league, team)) / 1e6).toFixed(2)}M.`;
     const rosterAfter = team.roster.length - out.filter((a) => onRoster(league, a)).length + inn.filter((a) => onRoster(league, a)).length;
-    // Injuries can push a roster past the limit with call-ups; only block trades that add to it.
-    if (rosterAfter > maxRoster && rosterAfter > team.roster.length) return `${team.city} would have too many players (${rosterAfter}).`;
+    // Only block trades that add contracts past the limit.
+    if (rosterAfter > maxRoster && rosterAfter > team.roster.length) return `${team.city} would be over the ${CONTRACT_MAX}-contract limit (${rosterAfter}).`;
   }
   void cap;
   return null;

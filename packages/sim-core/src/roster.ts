@@ -12,6 +12,8 @@
  *    the free-agent pool on a one-year league-minimum deal. AI teams send
  *    call-ups back down once they have more than 23 healthy players again.
  */
+import { activeRoster, balanceRoster, bestOnFarm, callUp as callUpFromFarm, farmRoster, nhlRoster, sendDown } from './farm';
+import { capRoom } from './contracts';
 import { generatePlayer } from './generate';
 import { autoLines, completeLines } from './lines';
 import { suggestTactics } from './systems';
@@ -26,7 +28,7 @@ const isF = (p: Player) => p.pos === 'C' || p.pos === 'LW' || p.pos === 'RW';
 
 /** Unsigned, not a prospect, not retired, not in a class that hasn't been drafted yet. */
 export function isFreeAgent(league: League, p: Player): boolean {
-  if (p.teamId !== null || p.prospectOf || league.retired?.[p.id]) return false;
+  if (p.teamId !== null || p.prospectOf || p.draftClass !== undefined || league.retired?.[p.id]) return false;
   const d = league.offseason?.draft;
   if (d && d.current < d.picks.length && d.classIds.includes(p.id)) return false;
   return true;
@@ -36,11 +38,18 @@ export function freeAgents(league: League): Player[] {
   return Object.values(league.players).filter((p) => isFreeAgent(league, p));
 }
 
+/** Healthy players on the NHL roster (not injured, not with the farm team). */
 export function healthyRoster(league: League, team: Team): Player[] {
-  return team.roster.map((id) => league.players[id]).filter((p) => !p.injury);
+  return activeRoster(league, team);
 }
 
 function callUp(league: League, team: Team, need: 'F' | 'D' | 'G'): void {
+  // The farm team first.
+  const farmer = bestOnFarm(league, team, need);
+  if (farmer) {
+    callUpFromFarm(league, team, farmer, ' to cover for injuries');
+    return;
+  }
   const pool = Object.values(league.players).filter(
     (p) => isFreeAgent(league, p) && !p.injury && (need === 'F' ? isF(p) : p.pos === need),
   );
@@ -127,13 +136,13 @@ function repairLines(league: League, team: Team, lines: Lines): Lines | null {
 }
 
 function linesValid(league: League, team: Team, lines: Lines): boolean {
-  const onTeam = new Set(team.roster);
+  const onTeam = new Set(healthyRoster(league, team).map((p) => p.id));
   const ids = [...lines.forwards.flat(), ...lines.defense.flat(), ...lines.goalies, ...lines.pp.flat(), ...lines.pk.flat()];
   return ids.every((id) => onTeam.has(id) && !league.players[id].injury);
 }
 
-/** AI teams return emergency call-ups to the free-agent pool when they're no longer needed. */
-function sendDownCallUps(league: League, team: Team) {
+/** Old behavior (kept for reference): emergency call-ups used to go back to the free-agent pool. */
+export function sendDownCallUps(league: League, team: Team) {
   const calledUp = new Set(
     league.transactions.filter((t) => t.type === 'call-up' && t.teamId === team.id).map((t) => t.playerId),
   );
@@ -165,13 +174,15 @@ function sendDownCallUps(league: League, team: Team) {
 /** Call before simulating a team's game. */
 export function prepareTeamForGame(league: League, team: Team) {
   ensureBodies(league, team);
+  // Back to 23 healthy: when injured players return, the extra bodies go to the farm.
+  const sent = balanceRoster(league, team);
   if (team.controller.kind === 'ai') {
     // The AI coach revisits its systems every few weeks as the roster changes.
     if (!team.tactics || league.day % 20 === 0) team.tactics = suggestTactics(healthyRoster(league, team).filter((p) => p.pos !== 'G'));
     team.lines = autoLines(healthyRoster(league, team), team.tactics);
-    sendDownCallUps(league, team);
     return;
   }
+  void sent;
   if (team.autoLines) {
     team.lines = autoLines(healthyRoster(league, team), team.tactics);
     return;
@@ -179,4 +190,39 @@ export function prepareTeamForGame(league: League, team: Team) {
   if (!linesValid(league, team, team.lines)) team.lines = repairLines(league, team, team.lines) ?? autoLines(healthyRoster(league, team), team.tactics);
   // Special units that are missing (older saves) or list someone not dressed are refilled.
   team.lines = completeLines(team.lines, healthyRoster(league, team), team.tactics);
+}
+
+/**
+ * AI front offices promote farm players who've outgrown the AHL: while the best
+ * healthy farm player at a position is clearly better than the weakest healthy
+ * NHL player there, they swap (if the cap allows). Run at training camp and
+ * weekly during the season, so talent doesn't get stuck in the minors.
+ */
+export function aiRosterMoves(league: League, team: Team, margin = 2) {
+  if (team.controller.kind !== 'ai') return;
+  const grp = (p: Player): 'F' | 'D' | 'G' => (p.pos === 'G' ? 'G' : p.pos === 'D' ? 'D' : 'F');
+  for (let guard = 0; guard < 8; guard++) {
+    let swapped = false;
+    for (const g of ['F', 'D', 'G'] as const) {
+      const up = farmRoster(league, team)
+        .filter((p) => !p.injury && grp(p) === g)
+        .sort((a, b) => overall(b) - overall(a))[0];
+      const down = nhlRoster(league, team)
+        .filter((p) => !p.injury && grp(p) === g)
+        .sort((a, b) => overall(a) - overall(b))[0];
+      if (!up || !down || overall(up) < overall(down) + margin) continue;
+      sendDown(league, team, down);
+      up.farm = false;
+      if (capRoom(league, team) < 0) {
+        // Can't afford him up top: undo.
+        up.farm = true;
+        down.farm = false;
+        league.transactions.pop();
+        continue;
+      }
+      league.transactions.push({ day: league.day, season: league.season, type: 'call-up', teamId: team.id, playerId: up.id, note: `${up.firstName} ${up.lastName} earns a call-up (${down.firstName} ${down.lastName} goes down)` });
+      swapped = true;
+    }
+    if (!swapped) break;
+  }
 }

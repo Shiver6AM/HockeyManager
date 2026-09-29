@@ -8,6 +8,8 @@
  */
 import { age, goalieQuality, overall } from './ratings';
 import { clamp, deriveSeed, Rng } from './rng';
+import { affiliateLabel } from './farm';
+import { MINOR_LEAGUES, minorLeagueOf } from './leagues';
 import type { CareerLine, League, MinorLine, Player } from './types';
 
 /** NHL seasons only (minor-league seasons don't count toward service time or career totals). */
@@ -40,40 +42,56 @@ function poisson(rng: Rng, lambda: number): number {
 const empty = (league: string, goalie: boolean): MinorLine =>
   goalie ? { league, gp: 0, g: 0, a: 0, pim: 0, pm: 0, w: 0, l: 0, sa: 0, ga: 0, so: 0 } : { league, gp: 0, g: 0, a: 0, pim: 0, pm: 0 };
 
-/** One day of minor-league games for every prospect (regular season only). */
+/** Everyone playing outside the NHL today: teams' prospects and farm players, and next draft's class. */
+function minorPlayers(league: League): Array<{ p: Player; farm?: string }> {
+  const out: Array<{ p: Player; farm?: string }> = [];
+  for (const t of Object.values(league.teams)) {
+    for (const id of t.prospects ?? []) if (league.players[id]) out.push({ p: league.players[id] });
+    const farmLabel = affiliateLabel(league, t);
+    for (const id of t.roster) {
+      const p = league.players[id];
+      if (p?.farm) out.push({ p, farm: farmLabel });
+    }
+  }
+  for (const id of league.draftClass?.ids ?? []) if (league.players[id]) out.push({ p: league.players[id] });
+  return out;
+}
+
+/** One day of minor-league games (regular season only). */
 export function prospectGameDay(league: League) {
   const rng = new Rng(deriveSeed(league.seed, `minors:${league.season}:${league.day}`));
   const stats = (league.prospectStats ??= {});
-  for (const t of Object.values(league.teams)) {
-    for (const id of t.prospects ?? []) {
-      const p = league.players[id];
-      if (!p || p.injury) continue;
-      if (!rng.chance(MINORS.gameChance)) continue;
-      const lvl = minorLeagueFor(p, league.season);
-      const line = (stats[id] ??= empty(lvl, p.pos === 'G'));
-      line.league = lvl;
-      const rel = overall(p) - MINORS.levelOverall[lvl];
-      if (p.goalie) {
-        if (!rng.chance(0.72)) continue; // backup nights
-        line.gp++;
-        const sa = Math.round(clamp(rng.normal(30, 5), 15, 48));
-        const sv = clamp(0.897 + (goalieQuality(p.goalie) - MINORS.levelOverall[lvl] - 4) * 0.0022 + rng.normal(0, 0.035), 0.8, 1);
-        const ga = Math.max(0, Math.round(sa * (1 - sv)));
-        line.sa! += sa;
-        line.ga! += ga;
-        if (ga === 0) line.so!++;
-        if (rng.chance(clamp(0.52 + rel * 0.012 - (ga - 2.8) * 0.1, 0.1, 0.9))) line.w!++;
-        else line.l!++;
-        continue;
-      }
+  for (const { p, farm } of minorPlayers(league)) {
+    if (p.injury) continue;
+    const mt = minorLeagueOf(league, p, farm);
+    const lg = MINOR_LEAGUES[mt.league];
+    if (!rng.chance(lg.games / 185)) continue;
+    const id = p.id;
+    const line = (stats[id] ??= empty(lg.name, p.pos === 'G'));
+    line.league = lg.name;
+    line.team = mt.team;
+    const rel = overall(p) - lg.level;
+    if (p.goalie) {
+      if (!rng.chance(0.72)) continue; // backup nights
       line.gp++;
-      const s = p.skater!;
-      const ppg = clamp(MINORS.basePpg * Math.exp(rel / 9) * (p.pos === 'D' ? 0.5 : 1), 0.04, 2.4);
-      const goalShare = clamp(0.28 + (s.shooting - s.passing) / 100 + (p.pos === 'D' ? -0.1 : 0.08), 0.12, 0.62);
-      line.g += poisson(rng, ppg * goalShare);
-      line.a += poisson(rng, ppg * (1 - goalShare));
-      line.pim += rng.chance(0.18 + s.checking / 400) ? 2 : 0;
-      line.pm += Math.round(clamp(rng.normal(rel * 0.02, 1.1), -3, 3));
+      const sa = Math.round(clamp(rng.normal(30, 5), 15, 48));
+      const sv = clamp(0.897 + (goalieQuality(p.goalie) - lg.level - 4) * 0.0022 + rng.normal(0, 0.035), 0.8, 1);
+      const ga = Math.max(0, Math.round(sa * (1 - sv)));
+      line.sa! += sa;
+      line.ga! += ga;
+      if (ga === 0) line.so!++;
+      if (rng.chance(clamp(0.52 + rel * 0.012 - (ga - 2.8) * 0.1, 0.1, 0.9))) line.w!++;
+      else line.l!++;
+      continue;
     }
+    line.gp++;
+    const s = p.skater!;
+    // Elite juniors put up ~1.5–1.9 points a game; depth players a fraction of that.
+    const ppg = clamp(MINORS.basePpg * Math.exp(rel / 11) * (p.pos === 'D' ? 0.5 : 1), 0.04, p.pos === 'D' ? 1.1 : 1.9);
+    const goalShare = clamp(0.4 + (s.shooting - s.passing) / 150 + (p.pos === 'D' ? -0.12 : 0), 0.22, 0.6);
+    line.g += poisson(rng, ppg * goalShare);
+    line.a += poisson(rng, ppg * (1 - goalShare));
+    line.pim += rng.chance(0.18 + s.checking / 400) ? 2 : 0;
+    line.pm += Math.round(clamp(rng.normal(rel * 0.02, 1.1), -3, 3));
   }
 }

@@ -2,9 +2,46 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useLeague } from '../pages/LeagueLayout';
 import { useTRPC } from '../trpc';
+import { useSim, type Target } from '../sim';
+import { dayLabel } from '../format';
 import { cx } from './ui';
 
-type Target = { days: number } | { to: 'playoffs' | 'end-of-season' | 'next-season' | 'trade-deadline' | 'free-agency' };
+const STAGE: Record<string, string> = { draft: 'Entry draft', 're-sign': 'Re-signing week', 'free-agency': 'Free agency', 'training-camp': 'Training camp' };
+
+/** Live progress of the league's sim, shown to everyone. */
+export function SimProgress() {
+  const L = useLeague();
+  const sim = useSim();
+  const j = sim.job;
+  if (!j || j.status !== 'running') return null;
+  const where = j.phase === 'offseason' ? (j.stage ? STAGE[j.stage] : 'Season review') : dayLabel(j.season, j.day);
+  return (
+    <div className="mx-auto max-w-7xl px-4 pb-2">
+    <div className="flex min-w-0 items-center gap-2 rounded-lg border border-blueline/50 bg-blueline/10 px-2.5 py-1 text-xs text-blue-100" role="status" aria-live="polite">
+      <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-blue-300 border-t-transparent" />
+      <span className="min-w-0 truncate">
+        <span className="font-semibold text-white">Simming to {j.label}</span>
+        <span className="tabular"> · {where}</span>
+        {j.games > 0 && <span className="tabular text-blue-200"> · {j.games} games</span>}
+        {j.startedBy && <span className="text-blue-300"> · by {j.startedBy}</span>}
+      </span>
+      <span className="ml-auto h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-rink-700" title={`${Math.round(j.progress * 100)}%`}>
+        <span className="block h-1.5 rounded-full bg-blueline transition-all" style={{ width: `${Math.round(j.progress * 100)}%` }} />
+      </span>
+      {L.canAdvance && (
+        <button
+          onClick={sim.cancel}
+          disabled={sim.cancelling}
+          className="shrink-0 rounded px-1.5 py-0.5 font-semibold text-blue-100 hover:bg-white/10 disabled:opacity-60"
+          title="Stop after the current day; everything simmed so far is kept"
+        >
+          {sim.cancelling ? 'Stopping…' : 'Cancel'}
+        </button>
+      )}
+    </div>
+    </div>
+  );
+}
 
 /**
  * Always-visible controls in the top bar: your Ready toggle, and for the
@@ -16,7 +53,7 @@ export function HeaderActions() {
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries();
   const ready = useMutation(trpc.sim.setReady.mutationOptions({ onSuccess: refresh }));
-  const advance = useMutation(trpc.sim.advance.mutationOptions({ onSuccess: refresh }));
+  const sim = useSim();
   const [menu, setMenu] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -31,8 +68,9 @@ export function HeaderActions() {
   const offseason = L.phase === 'offseason';
   const go = (target: Target) => {
     setMenu(false);
-    advance.mutate({ leagueId: L.id, target });
+    sim.start(target);
   };
+  const busy = sim.running || sim.starting;
   const resignWeek = offseason && L.offseasonStage === 're-sign' && L.resignDay !== null;
   const beforeFa = offseason && (!L.offseasonStage || L.offseasonStage === 'draft' || L.offseasonStage === 're-sign');
   const primary: { label: string; target: Target } = offseason
@@ -50,7 +88,7 @@ export function HeaderActions() {
         ...(L.phase === 'regular-season' ? [{ label: 'Sim to playoffs', target: { to: 'playoffs' } as Target }] : []),
         { label: 'Sim to end of season', target: { to: 'end-of-season' } },
       ];
-  const err = (advance.error ?? ready.error)?.message;
+  const err = (sim.startError ?? ready.error)?.message;
 
   const deadlineChip =
     L.daysToDeadline !== null && L.daysToDeadline >= 0 && L.daysToDeadline <= 21 ? (
@@ -86,15 +124,15 @@ export function HeaderActions() {
         <div className="relative flex" ref={ref}>
           <button
             onClick={() => go(primary.target)}
-            disabled={advance.isPending}
+            disabled={busy}
             className="rounded-l-lg bg-blueline px-3 py-1.5 text-sm font-bold whitespace-nowrap text-white shadow hover:bg-blue-500 disabled:opacity-60"
-            title={L.isCoCommissioner ? 'Co-commissioner: advance the league' : 'Advance the league'}
+            title={sim.running ? 'The league is simming' : L.isCoCommissioner ? 'Co-commissioner: advance the league' : 'Advance the league'}
           >
-            {advance.isPending ? 'Simulating…' : `▶ ${primary.label}`}
+            {sim.running ? 'Simming…' : `▶ ${primary.label}`}
           </button>
           <button
             onClick={() => setMenu((m) => !m)}
-            disabled={advance.isPending}
+            disabled={busy}
             aria-label="More advance options"
             className="rounded-r-lg border-l border-white/20 bg-blueline px-2 py-1.5 text-sm text-white shadow hover:bg-blue-500 disabled:opacity-60"
           >

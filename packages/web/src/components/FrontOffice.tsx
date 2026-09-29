@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { useSort } from '../sort';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Spinner } from './ui';
 import { money } from '../format';
 import { useTRPC } from '../trpc';
@@ -98,30 +99,7 @@ export function FrontOffice({ leagueId, teamId }: { leagueId: string; teamId: st
         </Card>
         {d.history.length > 0 && (
           <Card title="Past seasons">
-            <div className="overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Season</th>
-                    <th className="text-right">Revenue</th>
-                    <th className="text-right">Expenses</th>
-                    <th className="text-right">Profit</th>
-                    <th className="text-right">Attendance</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {d.history.map((h) => (
-                    <tr key={h.season}>
-                      <td className="tabular">{h.season}</td>
-                      <td className="tabular text-right">{money(h.revenue)}</td>
-                      <td className="tabular text-right">{money(h.expenses)}</td>
-                      <td className={cx('tabular text-right', h.profit >= 0 ? 'text-win' : 'text-red-300')}>{money(h.profit)}</td>
-                      <td className="tabular text-right">{h.avgAttendance.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <PastSeasons rows={d.history} />
           </Card>
         )}
       </div>
@@ -225,6 +203,41 @@ function HirePanel({
       ) : (
         <Empty>No one available.</Empty>
       )}
+    </div>
+  );
+}
+
+function PastSeasons({ rows }: { rows: Array<{ season: number; revenue: number; expenses: number; profit: number; avgAttendance: number }> }) {
+  const { sorted, Th } = useSort(
+    rows,
+    { season: (h) => h.season, revenue: (h) => h.revenue, expenses: (h) => h.expenses, profit: (h) => h.profit, att: (h) => h.avgAttendance },
+    { key: 'season' },
+    'finance-history',
+  );
+  return (
+    <div className="overflow-x-auto">
+      <table className="table">
+        <thead>
+          <tr>
+            <Th k="season">Season</Th>
+            <Th k="revenue" className="text-right">Revenue</Th>
+            <Th k="expenses" className="text-right">Expenses</Th>
+            <Th k="profit" className="text-right">Profit</Th>
+            <Th k="att" className="text-right">Attendance</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((h) => (
+            <tr key={h.season}>
+              <td className="tabular">{h.season}</td>
+              <td className="tabular text-right">{money(h.revenue)}</td>
+              <td className="tabular text-right">{money(h.expenses)}</td>
+              <td className={cx('tabular text-right', h.profit >= 0 ? 'text-win' : 'text-red-300')}>{money(h.profit)}</td>
+              <td className="tabular text-right">{h.avgAttendance.toLocaleString()}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

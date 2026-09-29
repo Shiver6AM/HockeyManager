@@ -16,6 +16,7 @@
  * Every random choice is seeded from the league seed, so results depend only on
  * the seed and on what the human managers decided.
  */
+import { offseasonScouts } from './scouting';
 import { proSeasons } from './prospects';
 import {
   askingContract,
@@ -38,11 +39,12 @@ import { generatePlayer, talentStats } from './generate';
 import { autoLines } from './lines';
 import { age, overall } from './ratings';
 import { deriveSeed, Rng } from './rng';
-import { ensureBodies, freeAgents, healthyRoster, isFreeAgent } from './roster';
+import { aiRosterMoves, ensureBodies, freeAgents, healthyRoster, isFreeAgent } from './roster';
 import { standings } from './league';
 import { closeBooks, setOwnerGoals } from './finances';
 import { considerForHallOfFame, newsFromTransactions } from './news';
 import { offseasonSkillsCoaches } from './skills';
+import { affiliateLabel, capHit, CONTRACT_MAX, contractCount, FARM_TARGET, farmRoster, nhlRoster, sendDown, trimContracts } from './farm';
 import { offseasonStaff } from './staff';
 import { buildSchedule } from './schedule';
 import type { CareerLine, ContractOffer, FaResult, League, OffseasonStage, Player, PlayerId, StandingsRow, Team, TeamId } from './types';
@@ -148,11 +150,11 @@ export function startOffseason(league: League, st: StandingsRow[]) {
   const development: Record<PlayerId, [number, number]> = {};
   const rostered = new Set(Object.values(league.teams).flatMap((t) => t.roster));
   for (const p of Object.values(league.players)) {
-    if (league.retired?.[p.id]) continue;
+    if (league.retired?.[p.id] || p.draftClass !== undefined) continue;
     const s = league.skaterStats[p.id];
     const g = league.goalieStats[p.id];
     const gp = s?.gp ?? g?.gp ?? 0;
-    development[p.id] = developPlayer(league, p, { gp, toi: s && s.gp ? s.toi / s.gp / 60 : 0, onRoster: rostered.has(p.id) });
+    development[p.id] = developPlayer(league, p, { gp, toi: s && s.gp ? s.toi / s.gp / 60 : 0, onRoster: rostered.has(p.id) && !p.farm });
   }
 
   // Keep league-wide talent anchored (see LeagueSettings.talentAnchor).
@@ -161,7 +163,7 @@ export function startOffseason(league: League, st: StandingsRow[]) {
   // Retirements.
   const rng = new Rng(deriveSeed(league.seed, `retire:${league.season}`));
   for (const p of Object.values(league.players)) {
-    if (league.retired?.[p.id]) continue;
+    if (league.retired?.[p.id] || p.draftClass !== undefined) continue;
     const signed = !!p.contract || !!p.prospectOf;
     const contractLeft = p.contract && p.contract.yearsLeft > 1;
     const chance = retirementChance(p, age(p, league.season) + 1, signed) * (contractLeft ? 0.5 : 1);
@@ -201,14 +203,25 @@ export function startOffseason(league: League, st: StandingsRow[]) {
  * everyone's relative standing intact.
  */
 export function anchorTalent(league: League, strength = 0.6) {
-  const { talentAnchor: anchorMean, talentSpread: anchorSd } = league.settings;
-  if (!anchorMean || !anchorSd) return;
-  const { mean, sd } = talentStats(league);
-  const newMean = mean + (anchorMean - mean) * strength;
-  const newSd = sd + (anchorSd - sd) * strength;
-  const scale = newSd / sd;
-  const map = (x: number) => newMean + (x - mean) * scale;
+  const set = league.settings;
+  if (!set.talentAnchor || !set.talentSpread) return;
+  // Older leagues: take today's talent as the per-position anchors from now on.
+  if (!set.skaterAnchor || !set.goalieAnchor) {
+    set.skaterAnchor = talentStats(league, 'skaters');
+    set.goalieAnchor = talentStats(league, 'goalies');
+    return;
+  }
+  const mapper = (which: 'skaters' | 'goalies', target: { mean: number; sd: number }) => {
+    const { mean, sd } = talentStats(league, which);
+    const newMean = mean + (target.mean - mean) * strength;
+    const newSd = sd + (target.sd - sd) * strength;
+    const scale = sd > 0 ? newSd / sd : 1;
+    return (x: number) => newMean + (x - mean) * scale;
+  };
+  const skaterMap = mapper('skaters', set.skaterAnchor);
+  const goalieMap = mapper('goalies', set.goalieAnchor);
   for (const p of Object.values(league.players)) {
+    const map = p.pos === 'G' ? goalieMap : skaterMap;
     const r = (p.skater ?? p.goalie) as unknown as Record<string, number>;
     for (const k in r) if (k !== 'discipline') r[k] = Math.round(Math.min(99, Math.max(20, map(r[k]))));
     p.hidden.potential = Math.round(Math.min(99, Math.max(overall(p), map(p.hidden.potential))));
@@ -298,7 +311,12 @@ export function advanceToNextSeason(league: League): StepResult[] {
 function finishDraft(league: League) {
   // Undrafted players go back to junior and out of the league's world.
   const drafted = new Set(league.offseason!.draft.picks.map((p) => p.playerId));
-  for (const id of league.offseason!.draft.classIds) if (!drafted.has(id)) delete league.players[id];
+  for (const id of league.offseason!.draft.classIds) {
+    if (drafted.has(id)) continue;
+    delete league.players[id];
+    delete league.careerStats?.[id];
+  }
+  league.draftClass = undefined;
 }
 
 // ---- Re-signing ----
@@ -347,6 +365,9 @@ function aiResign(league: League, team: Team, p: Player, room: number): Contract
   }
   return null;
 }
+
+/** A player's cap hit next season (farm players count only above the burying exemption). */
+const nextSeasonHit = (x: Player) => capHit(x.extension ? { ...x, contract: { ...x.contract!, salary: x.extension.salary } } : x);
 
 // ---- The re-signing week: offers are answered the next day ----
 
@@ -398,7 +419,7 @@ function checkNextSeasonCap(league: League, team: Team, p: Player, offer: Contra
     .filter((id) => id !== p.id)
     .map((id) => league.players[id])
     .filter((x) => x.contract && (x.contract.yearsLeft > 1 || x.extension))
-    .reduce((s, x) => s + (x.extension?.salary ?? x.contract!.salary), 0);
+    .reduce((s, x) => s + nextSeasonHit(x), 0);
   if (nextYear + offer.salary > league.settings.salaryCap) throw new Error('That deal would put you over next season’s cap');
 }
 
@@ -597,7 +618,7 @@ const DRESSED = { F: 12, D: 6, G: 1 };
 
 /** Position groups where a team is short of bodies or has a weak link a free agent could replace. */
 function aiNeeds(league: League, team: Team): Array<'F' | 'D' | 'G'> {
-  const roster = team.roster.map((id) => league.players[id]);
+  const roster = nhlRoster(league, team);
   const pool = freeAgents(league);
   return (['G', 'D', 'F'] as const).filter((g) => {
     const mine = roster.filter((p) => group(p) === g).map(overall).sort((a, b) => b - a);
@@ -614,14 +635,14 @@ function belowFloor(league: League, team: Team): boolean {
 function aiBids(league: League, rng: Rng) {
   const os = league.offseason!;
   for (const team of rng.shuffle(Object.values(league.teams).filter((t) => t.controller.kind === 'ai'))) {
-    if (team.roster.length >= SUMMER_ROSTER_MAX - 2) continue;
+    if (nhlRoster(league, team).length >= SUMMER_ROSTER_MAX - 2 || contractCount(team) >= CONTRACT_MAX - 1) continue;
     const needs = aiNeeds(league, team);
     if (!needs.length) continue;
     // Teams under the salary floor overpay to get there (bad teams have to).
     const gap = Math.max(0, league.settings.salaryFloor - payroll(league, team));
     const floorBoost = 1 + Math.min(0.6, (gap / league.settings.salaryCap) * 2.5);
     const maxBids = gap > 0 ? 5 : 3;
-    let room = capRoom(league, team) - 1_000_000 * Math.max(0, ROSTER_MAX - team.roster.length - 2);
+    let room = capRoom(league, team) - 1_000_000 * Math.max(0, ROSTER_MAX - nhlRoster(league, team).length - 2);
     // Spread interest around: each team looks at a weighted random slice of the
     // affordable players it needs, favoring the better ones.
     const candidates = freeAgents(league).filter((p) => needs.includes(group(p)) && (os.freeAgentAsks[p.id]?.salary ?? Infinity) <= room);
@@ -668,7 +689,7 @@ export function resolveFreeAgencyRound(league: League): FaResult[] {
     if (!offers.length) continue;
     const ask = os.freeAgentAsks[p.id] ?? askingContract(league, p);
     const valid = offers.filter(
-      ({ team, offer }) => offer.salary <= capRoom(league, team) && team.roster.length < SUMMER_ROSTER_MAX,
+      ({ team, offer }) => offer.salary <= capRoom(league, team) && contractCount(team) < CONTRACT_MAX,
     );
     let best: (typeof valid)[number] | null = null;
     let bestU = -Infinity;
@@ -704,12 +725,12 @@ function aiFreeAgency(league: League): number {
   for (let round = 0; round < 4; round++) {
     const teams = rng.shuffle(Object.values(league.teams).filter((t) => t.controller.kind === 'ai'));
     for (const team of teams) {
-      const roster = team.roster.map((id) => league.players[id]);
+      const roster = nhlRoster(league, team);
       const short = (['G', 'D', 'F'] as const).find((g) => roster.filter((p) => group(p) === g).length < TARGET[g]);
       // Teams under the salary floor have to spend: take the best upgrade available.
       const need = short ?? (belowFloor(league, team) ? aiNeeds(league, team)[0] : undefined);
-      if (!need || team.roster.length >= ROSTER_MAX + 2) continue;
-      const room = capRoom(league, team) - 1_500_000 * Math.max(0, ROSTER_MAX - team.roster.length - 1);
+      if (!need || roster.length >= ROSTER_MAX + 2 || contractCount(team) >= CONTRACT_MAX) continue;
+      const room = capRoom(league, team) - 1_500_000 * Math.max(0, ROSTER_MAX - roster.length - 1);
       const strategy = team.controller.kind === 'ai' ? team.controller.strategy : 'balanced';
       const weakest = roster.filter((p) => group(p) === need).map(overall).sort((a, b) => b - a)[DRESSED[need] - 1] ?? 0;
       const pool = freeAgents(league).filter(
@@ -755,7 +776,7 @@ export function offerExtension(league: League, team: Team, p: Player, offer: Con
     .filter((id) => id !== p.id)
     .map((id) => league.players[id])
     .filter((x) => x.contract && (x.contract.yearsLeft > 1 || x.extension))
-    .reduce((s, x) => s + (x.extension?.salary ?? x.contract!.salary), 0);
+    .reduce((s, x) => s + nextSeasonHit(x), 0);
   const rfaCase = openCase(league, p.id);
   if (rfaCase) {
     // Unsigned RFA during free agency: his qualifying offer is already on the books.
@@ -837,15 +858,19 @@ function trainingCamp(league: League) {
   for (const team of Object.values(league.teams)) {
     const human = team.controller.kind === 'human';
     const prospects = () => (team.prospects ?? []).map((id) => league.players[id]).filter(Boolean);
-    const roster = () => team.roster.map((id) => league.players[id]);
+    const nhl = () => nhlRoster(league, team);
 
     if (!human) {
-      // Promote prospects who'd crack the lineup (weakest dressed at their position + 1).
+      // Promote prospects who'd crack the lineup (weakest dressed at their position + 1)...
       for (const p of prospects().sort((a, b) => overall(b) - overall(a))) {
-        const peers = roster().filter((x) => group(x) === group(p)).map(overall).sort((a, b) => b - a);
+        const peers = nhl().filter((x) => group(x) === group(p)).map(overall).sort((a, b) => b - a);
         const need = p.pos === 'G' ? 2 : p.pos === 'D' ? 6 : 12;
         const bar = peers[need - 1] ?? 0;
         if (age(p, league.season + 1) >= 19 && overall(p) >= bar + 1) promoteProspect(league, team, p);
+        // ...and sign older ones with a future to the farm team.
+        else if (age(p, league.season + 1) >= 20 && contractCount(team) < CONTRACT_MAX - 2 && scoutedPotential(league, team.id, p) >= 66) {
+          signProspectToFarm(league, team, p);
+        }
       }
     }
     // Prospects who aged out without a contract become free agents.
@@ -854,18 +879,55 @@ function trainingCamp(league: League) {
     const extra = prospects().sort((a, b) => a.hidden.potential - b.hidden.potential).slice(0, Math.max(0, prospects().length - PROSPECT_MAX));
     for (const p of extra) releasePlayer(league, team, p);
 
-    // Cut down to the roster limit: young ELC players go down, everyone else is released.
+    // Cut the NHL roster to 23: extra players go to the farm team (keeping 12 F, 6 D, 2 G).
     const keepCounts = { F: 12, D: 6, G: 2 };
-    while (team.roster.length > ROSTER_MAX) {
-      const r = roster();
+    while (nhl().length > ROSTER_MAX) {
+      const r = nhl();
       const counts = { F: r.filter(isF).length, D: r.filter((p) => p.pos === 'D').length, G: r.filter((p) => p.pos === 'G').length };
-      const cuttable = r.filter((p) => counts[group(p)] > keepCounts[group(p)]).sort((a, b) => overall(a) - overall(b));
-      const cut = cuttable[0];
+      const cut = r.filter((p) => counts[group(p)] > keepCounts[group(p)]).sort((a, b) => overall(a) - overall(b))[0];
       if (!cut) break;
-      if (cut.contract?.kind === 'ELC' && age(cut, league.season + 1) <= 22) demoteToProspects(league, team, cut);
-      else releasePlayer(league, team, cut);
+      sendDown(league, team, cut);
+    }
+    // Too many contracts: the weakest farm players are released.
+    trimContracts(league, team, (p) => releasePlayer(league, team, p));
+    if (!human) {
+      fillFarm(league, team);
+      aiRosterMoves(league, team);
     }
   }
+}
+
+/** AI farm teams sign depth to field a lineup (league-minimum, two-way deals). */
+function fillFarm(league: League, team: Team) {
+  const farm = farmRoster(league, team);
+  for (const g of ['G', 'D', 'F'] as const) {
+    let have = farm.filter((p) => group(p) === g).length;
+    while (have < FARM_TARGET[g] && contractCount(team) < CONTRACT_MAX - 1) {
+      const pool = freeAgents(league).filter((p) => group(p) === g && !p.injury && age(p, league.season + 1) <= 30);
+      if (!pool.length) break;
+      const p = pool.reduce((a, b) => (overall(b) > overall(a) ? b : a));
+      applyContract(league, p, { salary: LEAGUE_MIN_SALARY, years: 1 });
+      p.teamId = team.id;
+      p.farm = true;
+      team.roster.push(p.id);
+      if (league.offseason) delete league.offseason.freeAgentAsks[p.id];
+      tx(league, 'signing', team.id, p, `Signs ${nm(p)} (${p.pos}, ${overall(p)} OVR) to a two-way deal with ${affiliateLabel(league, team)}`);
+      have++;
+    }
+  }
+}
+
+/** Sign an unsigned prospect to his entry-level deal and assign him to the farm team. */
+export function signProspectToFarm(league: League, team: Team, p: Player) {
+  if (p.prospectOf !== team.id) throw new Error('Not one of your prospects');
+  if (contractCount(team) >= CONTRACT_MAX) throw new Error(`You're at the ${CONTRACT_MAX}-contract limit`);
+  team.prospects = (team.prospects ?? []).filter((id) => id !== p.id);
+  p.prospectOf = undefined;
+  p.teamId = team.id;
+  p.farm = true;
+  p.contract = { salary: ELC_SALARY, yearsLeft: 3, kind: 'ELC', expiresAs: 'RFA' };
+  team.roster.push(p.id);
+  tx(league, 'promotion', team.id, p, `${nm(p)} signs his entry-level deal and joins ${affiliateLabel(league, team)}`);
 }
 
 // ---- New season ----
@@ -879,6 +941,7 @@ function startNewSeason(league: League) {
   closeBooks(league);
   offseasonStaff(league);
   offseasonSkillsCoaches(league);
+  offseasonScouts(league);
   league.season += 1;
   league.day = 0;
   league.phase = 'regular-season';

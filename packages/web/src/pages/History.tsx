@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Badge, Card, Empty, Spinner, TeamChip, TeamLink } from '../components/ui';
-import { useTRPC } from '../trpc';
+import { useSort } from '../sort';
+import { useTRPC, type Outputs } from '../trpc';
 import { useLeague } from './LeagueLayout';
 
 export function HistoryPage() {
@@ -10,6 +11,22 @@ export function HistoryPage() {
   const q = useQuery(trpc.life.history.queryOptions({ leagueId: L.id }));
   if (!q.data) return <Spinner />;
   const h = q.data;
+  return <HistoryView h={h} />;
+}
+
+function HistoryView({ h }: { h: NonNullable<Outputs['life']['history']> }) {
+  const L = useLeague();
+  const { sorted: seasons, Th } = useSort(
+    h.seasons,
+    {
+      season: (s) => s.season,
+      champ: (s) => (s.champion ? `${s.champion.city} ${s.champion.name}` : null),
+      runner: (s) => (s.runnerUp ? `${s.runnerUp.city} ${s.runnerUp.name}` : null),
+      mvp: (s) => s.mvpName ?? null,
+    },
+    { key: 'season' },
+    'history',
+  );
   const player = (id: string, name: string) => (
     <Link to={`/league/${L.id}/player/${id}`} className="hover:text-white hover:underline">
       {name}
@@ -24,14 +41,14 @@ export function HistoryPage() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Season</th>
-                    <th>Champion</th>
-                    <th>Runner-up</th>
-                    <th>MVP</th>
+                    <Th k="season">Season</Th>
+                    <Th k="champ">Champion</Th>
+                    <Th k="runner">Runner-up</Th>
+                    <Th k="mvp">MVP</Th>
                   </tr>
                 </thead>
                 <tbody>
-                  {h.seasons.map((s) => (
+                  {seasons.map((s) => (
                     <tr key={s.season}>
                       <td className="tabular">
                         {s.season}–{String((s.season + 1) % 100).padStart(2, '0')}

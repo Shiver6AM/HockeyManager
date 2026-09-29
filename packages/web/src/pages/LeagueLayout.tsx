@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { createContext, useContext } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { HeaderActions } from '../components/HeaderActions';
+import { HeaderActions, SimProgress } from '../components/HeaderActions';
 import { NotificationBell } from '../components/NotificationBell';
 import { Badge, cx, ErrorBox, Spinner, TeamChip } from '../components/ui';
 import { dayLabel, PHASE_LABEL } from '../format';
@@ -35,6 +35,7 @@ export function LeagueLayout() {
           ['re-sign', 'Re-sign'],
         ] as Array<[string, string]>)
       : []),
+    ...(L.myTeamId && L.phase !== 'offseason' ? ([['scouting', 'Scouting']] as Array<[string, string]>) : []),
     ['standings', 'Standings'],
     ['scores', 'Scores'],
     ['stats', 'Stats'],
@@ -67,6 +68,7 @@ export function LeagueLayout() {
               <NotificationBell leagueId={leagueId} />
             </div>
           </div>
+          <SimProgress />
           <nav className="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-3">
             {tabs.map(([to, label]) => (
               <NavLink

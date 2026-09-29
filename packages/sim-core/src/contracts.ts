@@ -2,6 +2,7 @@
  * Contract money: market value, asking prices, payroll and cap room.
  * Phase 4 replaces fixed asking prices with real negotiation.
  */
+import { capHit } from './farm';
 import { clamp, deriveSeed, Rng } from './rng';
 import { age, overall } from './ratings';
 import type { ContractOffer, League, Player, Team } from './types';
@@ -56,7 +57,7 @@ export function deadCapFor(league: League, team: Team, season = capSeason(league
 }
 
 export function payroll(league: League, team: Team): number {
-  return team.roster.reduce((s, id) => s + (league.players[id].contract?.salary ?? 0), 0) + deadCapFor(league, team);
+  return team.roster.reduce((s, id) => s + capHit(league.players[id]), 0) + deadCapFor(league, team);
 }
 
 /**

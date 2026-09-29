@@ -7,6 +7,7 @@
  * operations. Every owner has a goal for the season and a confidence meter
  * that moves with results.
  */
+import { scoutPayroll } from './scouting';
 import { contenderScore } from './negotiation';
 import { overall } from './ratings';
 import { skillsCoachPayroll } from './skills';
@@ -97,7 +98,7 @@ export function bookGame(league: League, home: Team, away: Team, homePts: number
       f.media += FINANCE.mediaPerSeason / n;
       f.sponsorship += (FINANCE.sponsorshipBase * (t.market ?? 1)) / n;
       f.salaries += payroll(league, t) / n;
-      f.staff += (staffPayroll(t) + skillsCoachPayroll(t)) / n;
+      f.staff += (staffPayroll(t) + skillsCoachPayroll(t) + scoutPayroll(t)) / n;
       f.operations += FINANCE.operationsPerSeason / n;
     }
   }

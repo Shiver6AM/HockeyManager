@@ -349,7 +349,8 @@ describe('multiplayer league flow', () => {
     expect(ov.season).toBe(before + 1);
     expect(ov.phase).toBe('regular-season');
     const hal = await bob.data.team({ leagueId, teamId: 'HAL' });
-    expect(hal.players.length).toBeLessThanOrEqual(24);
+    expect(hal.players.filter((p) => !p.farm).length).toBeLessThanOrEqual(24);
+    expect(hal.players.length).toBeLessThanOrEqual(hal.contractMax);
     // Career pages carry last season.
     const vet = hal.players.find((p) => p.age >= 25)!;
     const career = await bob.data.player({ leagueId, playerId: vet.id });

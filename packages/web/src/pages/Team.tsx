@@ -6,23 +6,28 @@ import { FrontOffice } from '../components/FrontOffice';
 import { LinesBoard } from '../components/LinesBoard';
 import { SkillsCoaches } from '../components/SkillsCoaches';
 import { TacticsPanel } from '../components/TacticsPanel';
-import { PlayerFilterBar, SortTh, usePlayerFilters, useSort } from '../components/PlayerFilters';
-import { OfferForm } from '../components/OfferForm';
-import { Badge, Button, Card, cx, Empty, ErrorBox, Modal, Rating, Spinner, TeamChip } from '../components/ui';
-import { gaa, money, signed, svPct, toi } from '../format';
+import { PlayerFilterBar, usePlayerFilters } from '../components/PlayerFilters';
+import { FarmTable, GoalieTable, SkaterTable } from '../components/RosterTables';
+import { ContractsTab } from '../components/ContractsTab';
+import { Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip } from '../components/ui';
+import { useSort } from '../sort';
+import { money, svPct } from '../format';
 import { useTRPC, type Outputs } from '../trpc';
 import { useLeague } from './LeagueLayout';
 
 type TeamData = Outputs['data']['team'];
-type P = TeamData['players'][number];
 type Lines = TeamData['lines'];
 
 export function TeamPage() {
   const L = useLeague();
   const { teamId = '' } = useParams();
   const trpc = useTRPC();
-  const q = useQuery(trpc.data.team.queryOptions({ leagueId: L.id, teamId }));
-  const [tab, setTab] = useState<'roster' | 'lines' | 'systems' | 'coaching' | 'prospects' | 'schedule' | 'front office'>('roster');
+  const [statsSeason, setStatsSeason] = useState<number | 'all'>(L.season);
+  const q = useQuery({
+    ...trpc.data.team.queryOptions({ leagueId: L.id, teamId, statsSeason: statsSeason === L.season ? undefined : statsSeason }),
+    placeholderData: (prev) => prev,
+  });
+  const [tab, setTab] = useState<'roster' | 'contracts' | 'lines' | 'systems' | 'coaching' | 'prospects' | 'schedule' | 'front office'>('roster');
   if (q.error) return <ErrorBox error={q.error} />;
   if (!q.data) return <Spinner />;
   const t = q.data;
@@ -71,7 +76,7 @@ export function TeamPage() {
       </div>
 
       <div className="flex gap-1 overflow-x-auto rounded-lg bg-rink-900 p-1 text-sm sm:w-fit">
-        {(['roster', 'lines', 'systems', 'coaching', 'prospects', 'schedule', 'front office'] as const).map((k) => (
+        {(['roster', 'contracts', 'lines', 'systems', 'coaching', 'prospects', 'schedule', 'front office'] as const).map((k) => (
           <button
             key={k}
             onClick={() => setTab(k)}
@@ -82,7 +87,8 @@ export function TeamPage() {
         ))}
       </div>
 
-      {tab === 'roster' && <Roster t={t} />}
+      {tab === 'roster' && <Roster t={t} season={statsSeason} setSeason={setStatsSeason} />}
+      {tab === 'contracts' && <ContractsTab leagueId={L.id} teamId={t.team.id} />}
       {tab === 'prospects' && <Prospects t={t} />}
       {tab === 'systems' && <TacticsPanel t={t} leagueId={L.id} />}
       {tab === 'coaching' && <SkillsCoaches leagueId={L.id} teamId={t.team.id} />}
@@ -122,192 +128,49 @@ export function TeamPage() {
 // Roster
 // ---------------------------------------------------------------------------
 
-function Status({ p }: { p: P }) {
-  if (!p.injury) return null;
-  return (
-    <Badge tone={p.injury.severity === 'day-to-day' ? 'warn' : 'bad'}>
-      {p.injury.severity === 'day-to-day' ? 'DTD' : 'IR'} · {p.injury.type} · {p.injury.daysLeft}d
-    </Badge>
-  );
-}
-
-/** Contract as three columns: AAV, years left, and status when it ends. */
-function ContractCells({ p }: { p: P }) {
-  const c = p.contract;
-  return (
-    <>
-      <td className="num tabular">
-        {c ? money(c.salary) : <span className="text-ice-500">—</span>}
-        {p.extension && (
-          <span className="block text-[10px] text-win" title="Agreed new deal">
-            → {money(p.extension.salary)} × {p.extension.years}
-          </span>
-        )}
-      </td>
-      <td className="num tabular">{c ? c.yearsLeft : '—'}</td>
-      <td>
-        {c ? (
-          <span className={cx('text-xs', c.yearsLeft === 1 && !p.extension ? 'font-semibold text-warn' : 'text-ice-400')}>
-            {c.kind === 'ELC' && <span className="mr-1 text-blue-300">ELC</span>}
-            {c.expiresAs}
-            {p.qualifyingOffer && (
-              <span className="block text-[10px] font-normal text-ice-500" title="Qualifying offer needed to keep his rights">
-                QO {money(p.qualifyingOffer.salary)}
-              </span>
-            )}
-          </span>
-        ) : (
-          '—'
-        )}
-      </td>
-    </>
-  );
-}
-
-function ContractHeads({ sort }: { sort: ReturnType<typeof useSort> }) {
-  return (
-    <>
-      <SortTh label="AAV" k="aav" sort={sort} className="num" title="Average annual value" />
-      <SortTh label="Yrs" k="years" sort={sort} className="num" title="Years left, including this one" />
-      <SortTh label="Expiry" k="status" sort={sort} title="Status when the contract ends" />
-    </>
-  );
-}
-
-function Roster({ t }: { t: TeamData }) {
+function Roster({ t, season, setSeason }: { t: TeamData; season: number | 'all'; setSeason: (s: number | 'all') => void }) {
+  const L = useLeague();
   const { filters, setFilters, types, filtered } = usePlayerFilters(t.players);
-  const sort = useSort('overall');
-  const fwd = sort.sort(filtered.filter((p) => p.pos !== 'D' && p.pos !== 'G'));
-  const def = sort.sort(filtered.filter((p) => p.pos === 'D'));
-  const gol = sort.sort(filtered.filter((p) => p.pos === 'G'));
+  const nhl = filtered.filter((p) => !p.farm);
+  const farm = filtered.filter((p) => p.farm);
+  const fwd = nhl.filter((p) => p.pos !== 'D' && p.pos !== 'G');
+  const def = nhl.filter((p) => p.pos === 'D');
+  const gol = nhl.filter((p) => p.pos === 'G');
+  const label = season === 'all' ? 'career totals' : season === L.season ? 'this season' : `${season}-${String(season + 1).slice(2)}`;
   return (
     <div className="space-y-5">
-      <PlayerFilterBar value={filters} onChange={setFilters} types={types} />
+      <div className="flex flex-wrap items-center gap-3">
+        <PlayerFilterBar value={filters} onChange={setFilters} types={types} className="min-w-0 flex-1" />
+        <label className="text-[11px] font-semibold tracking-wider text-ice-500 uppercase">
+          Stats
+          <select className="slot mt-0.5 block normal-case" value={String(season)} onChange={(e) => setSeason(e.target.value === 'all' ? 'all' : Number(e.target.value))}>
+            {t.statsSeasons.map((y) => (
+              <option key={y} value={y}>
+                {y === L.season ? 'This season' : `${y}-${String(y + 1).slice(2)}`}
+              </option>
+            ))}
+            <option value="all">All time (career)</option>
+          </select>
+        </label>
+      </div>
+      <p className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-ice-300">
+        <span>
+          Active roster <span className={cx('font-semibold', t.active > t.activeMax ? 'text-red-300' : 'text-white')}>{t.active}</span>/{t.activeMax}
+          <span className="text-ice-500"> (injured players don't count)</span>
+        </span>
+        <span>
+          Contracts <span className={cx('font-semibold', t.contracts > t.contractMax ? 'text-red-300' : 'text-white')}>{t.contracts}</span>/{t.contractMax}
+        </span>
+        <span>
+          Farm team: <span className="text-white">{t.affiliate}</span>
+        </span>
+      </p>
       {filtered.length === 0 && <Empty>No players match these filters.</Empty>}
-      {t.isMine && t.players.length > 23 && (
-        <p className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
-          {t.players.length} players on the roster. The limit is 23 once the season starts; at the end of training camp your lowest-rated extras are
-          sent down or released.
-        </p>
-      )}
-      {fwd.length > 0 && <SkaterTable title={`Forwards (${fwd.length})`} players={fwd} t={t} sort={sort} />}
-      {def.length > 0 && <SkaterTable title={`Defense (${def.length})`} players={def} t={t} sort={sort} />}
-      {gol.length > 0 && (
-        <Card title={`Goalies (${gol.length})`}>
-          <div className="-m-4 overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <SortTh label="Player" k="name" sort={sort} />
-                  <SortTh label="Age" k="age" sort={sort} className="num" />
-                  <SortTh label="OVR" k="overall" sort={sort} className="num" />
-                  <th className={cx('num', STAT_H)}>GP</th>
-                  <th className={cx('num', STAT_H)}>W</th>
-                  <th className={cx('num', STAT_H)}>L</th>
-                  <th className={cx('num', STAT_H)}>OTL</th>
-                  <th className={cx('num', STAT_H)}>SV%</th>
-                  <th className={cx('num', STAT_H)}>GAA</th>
-                  <th className={cx('num', STAT_H)}>SO</th>
-                  <th className="num text-ice-500">REF</th>
-                  <th className="num text-ice-500">POS</th>
-                  <th className="num text-ice-500">REB</th>
-                  <th className="num text-ice-500">MEN</th>
-                  <ContractHeads sort={sort} />
-                  <th>Injury</th>
-                  {t.isMine && <th />}
-                </tr>
-              </thead>
-              <tbody>
-                {gol.map((p) => {
-                  const s = p.goalieStats;
-                  return (
-                    <tr key={p.id}>
-                      <td>
-                        <span className="block text-base font-semibold">
-                          <PlayerLink p={p} />
-                        </span>
-                        <span className="text-xs text-ice-500">
-                          {p.archetype} · <span title={p.potential.projection}>pot. {p.potential.grade}</span>
-                        </span>
-                      </td>
-                      <td className="num">{p.age}</td>
-                      <td className="num">
-                        <Rating value={p.overall} />
-                      </td>
-                      <td className={cx('num', STAT)}>{s?.gp ?? 0}</td>
-                      <td className={cx('num font-semibold text-white', STAT)}>{s?.w ?? 0}</td>
-                      <td className={cx('num', STAT)}>{s?.l ?? 0}</td>
-                      <td className={cx('num', STAT)}>{s?.otl ?? 0}</td>
-                      <td className={cx('num font-semibold text-white', STAT)}>{s ? svPct(s.sa, s.ga) : '—'}</td>
-                      <td className={cx('num', STAT)}>{s ? gaa(s.ga, s.toi) : '—'}</td>
-                      <td className={cx('num', STAT)}>{s?.so ?? 0}</td>
-                      <td className="num text-xs text-ice-400">{p.goalie?.reflexes}</td>
-                      <td className="num text-xs text-ice-400">{p.goalie?.positioning}</td>
-                      <td className="num text-xs text-ice-400">{p.goalie?.rebounds}</td>
-                      <td className="num text-xs text-ice-400">{p.goalie?.mental}</td>
-                      <ContractCells p={p} />
-                      <td>
-                        <Status p={p} />
-                      </td>
-                      {t.isMine && (
-                        <td>
-                          <RosterActions t={t} p={p} />
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
+      {fwd.length > 0 && <SkaterTable title={`Forwards (${fwd.length})`} players={fwd} t={t} statsLabel={label} />}
+      {def.length > 0 && <SkaterTable title={`Defense (${def.length})`} players={def} t={t} statsLabel={label} />}
+      {gol.length > 0 && <GoalieTable players={gol} t={t} statsLabel={label} />}
+      {farm.length > 0 && <FarmTable players={farm} t={t} />}
     </div>
-  );
-}
-
-function RosterActions({ t, p }: { t: TeamData; p: P }) {
-  const L = useLeague();
-  const trpc = useTRPC();
-  const qc = useQueryClient();
-  const done = { onSuccess: () => qc.invalidateQueries() };
-  const release = useMutation(trpc.offseason.release.mutationOptions(done));
-  const down = useMutation(trpc.offseason.sendDown.mutationOptions(done));
-  const [extending, setExtending] = useState(false);
-  if (!t.isMine) return null;
-  const canSendDown = p.contract?.kind === 'ELC' || p.age <= 22;
-  const buyoutNote = p.buyout
-    ? `He'll be bought out: ${money(p.buyout.perSeason)} of dead cap per season for ${p.buyout.seasons} seasons.`
-    : 'His contract comes off your cap and he becomes a free agent.';
-  return (
-    <span className="flex flex-wrap gap-1">
-      {p.canExtend && p.deal && (
-        <Button variant="ghost" className="px-1.5 py-0 text-[11px] text-blue-300" onClick={() => setExtending(!extending)}>
-          Extend
-        </Button>
-      )}
-      {canSendDown && (
-        <Button variant="ghost" className="px-1.5 py-0 text-[11px]" disabled={down.isPending} onClick={() => down.mutate({ leagueId: L.id, playerId: p.id })}>
-          Send down
-        </Button>
-      )}
-      <Button
-        variant="ghost"
-        className="px-1.5 py-0 text-[11px] hover:text-red-300"
-        disabled={release.isPending}
-        onClick={() => {
-          if (confirm(`Release ${p.name}? ${buyoutNote}`)) release.mutate({ leagueId: L.id, playerId: p.id });
-        }}
-      >
-        Release
-      </Button>
-      {(release.error || down.error) && <span className="text-[11px] text-red-300">{String((release.error ?? down.error)?.message)}</span>}
-      {extending && p.deal && (
-        <Modal title={`Extend ${p.name}`} onClose={() => setExtending(false)}>
-          <OfferForm leagueId={L.id} playerId={p.id} deal={p.deal} mode="negotiate" attemptsLeft={p.attemptsLeft} />
-        </Modal>
-      )}
-    </span>
   );
 }
 
@@ -320,6 +183,9 @@ function PlayerLink({ p }: { p: { id: string; name: string } }) {
   );
 }
 
+type Prospect = TeamData['prospects'][number];
+const prospectPts = (p: Prospect) => (p.minor ? (p.minor.g ?? 0) + (p.minor.a ?? 0) : 0);
+
 function Prospects({ t }: { t: TeamData }) {
   const L = useLeague();
   const trpc = useTRPC();
@@ -327,11 +193,32 @@ function Prospects({ t }: { t: TeamData }) {
   const done = { onSuccess: () => qc.invalidateQueries() };
   const promote = useMutation(trpc.offseason.promote.mutationOptions(done));
   const release = useMutation(trpc.offseason.release.mutationOptions(done));
+  const { sorted, Th } = useSort(
+    t.prospects,
+    {
+      name: (p) => p.lastName,
+      pos: (p) => p.pos,
+      age: (p) => p.age,
+      ovr: (p) => p.overall,
+      pot: (p) => p.potentialValue,
+      league: (p) => p.league,
+      club: (p) => p.club,
+      region: (p) => p.region,
+      gp: (p) => p.minor?.gp ?? 0,
+      g: (p) => (p.pos === 'G' ? (p.minor?.w ?? 0) : (p.minor?.g ?? 0)),
+      a: (p) => (p.pos === 'G' ? (p.minor?.sa ? 1 - (p.minor.ga ?? 0) / p.minor.sa : null) : (p.minor?.a ?? 0)),
+      p: (p) => (p.pos === 'G' ? (p.minor?.gp ? -((p.minor.ga ?? 0) / p.minor.gp) : null) : prospectPts(p)),
+      drafted: (p) => (p.draft ? p.draft.overall + (3000 - p.draft.season) * 1000 : null),
+    },
+    { key: 'pot' },
+    'prospects',
+  );
   return (
     <Card title="Prospects">
       <p className="-mt-1 mb-3 text-sm text-ice-400">
-        Prospects play in junior (19 and under) or the AHL, with their stats below, and don't count against the cap or the 23-man roster. Promoting one signs a 3-year entry-level deal
-        ($950K). Unsigned prospects are released at 23.
+        Your unsigned draft picks keep playing where they were drafted from (junior, college or Europe) until you sign them. They don't count against the
+        cap, the 23-man roster or the 50-contract limit. Promoting one signs a 3-year entry-level deal ($950K); he joins your NHL roster or your farm team.
+        Unsigned prospects are released at 23.
       </p>
       {t.prospects.length === 0 ? (
         <Empty>No prospects in the system.</Empty>
@@ -340,25 +227,26 @@ function Prospects({ t }: { t: TeamData }) {
           <table className="table">
             <thead>
               <tr>
-                <th>Prospect</th>
-                <th>Pos</th>
-                <th className="num">Age</th>
-                <th className="num">OVR</th>
-                <th className="num">Grade</th>
-                <th>Projection</th>
-                <th>League</th>
-                <th className="num" title="Games played this season">GP</th>
-                <th className="num" title="Goals (skaters) · wins (goalies)">G/W</th>
-                <th className="num" title="Assists (skaters) · save % (goalies)">A/SV%</th>
-                <th className="num" title="Points (skaters) · GAA (goalies)">P/GAA</th>
-                <th>Drafted</th>
+                <Th k="name">Prospect</Th>
+                <Th k="pos">Pos</Th>
+                <Th k="age" className="num">Age</Th>
+                <Th k="ovr" className="num">OVR</Th>
+                <Th k="pot">Potential</Th>
+                <Th k="league">League</Th>
+                <Th k="club">Team</Th>
+                <Th k="region">Region</Th>
+                <Th k="gp" className="num" title="Games played this season">GP</Th>
+                <Th k="g" className="num" title="Goals (skaters) · wins (goalies)">G/W</Th>
+                <Th k="a" className="num" title="Assists (skaters) · save % (goalies)">A/SV%</Th>
+                <Th k="p" className="num" title="Points (skaters) · GAA (goalies)">P/GAA</Th>
+                <Th k="drafted">Drafted</Th>
                 <th />
               </tr>
             </thead>
             <tbody>
-              {t.prospects.map((p) => (
+              {sorted.map((p) => (
                 <tr key={p.id}>
-                  <td>
+                  <td className="whitespace-nowrap">
                     <PlayerLink p={p} />
                   </td>
                   <td className="text-ice-400">{p.pos}</td>
@@ -366,9 +254,12 @@ function Prospects({ t }: { t: TeamData }) {
                   <td className="num">
                     <Rating value={p.overall} />
                   </td>
-                  <td className="num font-display text-blue-300">{p.grade}</td>
-                  <td className="text-ice-300">{p.projection}</td>
-                  <td className="text-xs text-ice-400">{p.minor?.league ?? (p.age <= 19 ? 'Junior' : 'AHL')}</td>
+                  <td className="whitespace-nowrap">
+                    <PotentialBadge potential={p} showLabel />
+                  </td>
+                  <td className="text-xs font-semibold whitespace-nowrap text-ice-200">{p.league}</td>
+                  <td className="text-xs whitespace-nowrap text-ice-300">{p.club}</td>
+                  <td className="text-xs whitespace-nowrap text-ice-500">{p.region}</td>
                   <td className="num">{p.minor?.gp ?? 0}</td>
                   {p.pos === 'G' ? (
                     <>
@@ -380,15 +271,15 @@ function Prospects({ t }: { t: TeamData }) {
                     <>
                       <td className="num">{p.minor?.g ?? 0}</td>
                       <td className="num">{p.minor?.a ?? 0}</td>
-                      <td className="num font-semibold text-white">{(p.minor?.g ?? 0) + (p.minor?.a ?? 0)}</td>
+                      <td className="num font-semibold text-white">{prospectPts(p)}</td>
                     </>
                   )}
-                  <td className="text-xs text-ice-400">{p.draft ? `${p.draft.season} R${p.draft.round} #${p.draft.overall}` : 'Undrafted'}</td>
+                  <td className="text-xs whitespace-nowrap text-ice-400">{p.draft ? `${p.draft.season} R${p.draft.round} #${p.draft.overall}` : 'Undrafted'}</td>
                   <td className="text-right">
                     {t.isMine && (
                       <span className="flex justify-end gap-1">
                         <Button className="px-2 py-0.5 text-xs" disabled={promote.isPending} onClick={() => promote.mutate({ leagueId: L.id, playerId: p.id })}>
-                          Promote
+                          Sign
                         </Button>
                         <Button
                           variant="ghost"
@@ -413,108 +304,6 @@ function Prospects({ t }: { t: TeamData }) {
     </Card>
   );
 }
-
-const STAT = 'bg-blueline/10 text-base tabular';
-const STAT_H = 'bg-blueline/10 text-ice-200';
-
-function SkaterTable({ title, players, t, sort }: { title: string; players: P[]; t: TeamData; sort: ReturnType<typeof useSort> }) {
-  return (
-    <Card title={title}>
-      <div className="-m-4 overflow-x-auto">
-        <table className="table">
-          <thead>
-            <tr>
-              <SortTh label="Player" k="name" sort={sort} className="min-w-52" />
-              <SortTh label="Pos" k="pos" sort={sort} />
-              <SortTh label="Age" k="age" sort={sort} className="num" />
-              <SortTh label="OVR" k="overall" sort={sort} className="num" />
-              <th className={cx('num', STAT_H)}>GP</th>
-              <th className={cx('num', STAT_H)}>G</th>
-              <th className={cx('num', STAT_H)}>A</th>
-              <th className={cx('num', STAT_H)}>P</th>
-              <th className={cx('num', STAT_H)}>+/-</th>
-              <th className={cx('num', STAT_H)}>TOI</th>
-              <th className="num text-ice-500" title="Skating">
-                SKT
-              </th>
-              <th className="num text-ice-500" title="Shooting">
-                SHT
-              </th>
-              <th className="num text-ice-500" title="Passing">
-                PAS
-              </th>
-              <th className="num text-ice-500" title="Puck handling">
-                HND
-              </th>
-              <th className="num text-ice-500" title="Offensive IQ">
-                OIQ
-              </th>
-              <th className="num text-ice-500" title="Defensive IQ">
-                DIQ
-              </th>
-              <th className="num text-ice-500" title="Checking">
-                CHK
-              </th>
-              <th className="num text-ice-500" title="Faceoffs">
-                FO
-              </th>
-              <ContractHeads sort={sort} />
-              <th>Injury</th>
-              {t.isMine && <th />}
-            </tr>
-          </thead>
-          <tbody>
-            {players.map((p) => {
-              const s = p.stats;
-              const r = p.skater!;
-              return (
-                <tr key={p.id} className={cx(p.injury && 'opacity-60')}>
-                  <td>
-                    <span className="block text-base font-semibold">
-                      <PlayerLink p={p} />
-                    </span>
-                    <span className="text-xs text-ice-500">
-                      {p.archetype} · <span title={p.potential.projection}>pot. {p.potential.grade}</span>
-                    </span>
-                  </td>
-                  <td className="text-ice-400">{p.pos}</td>
-                  <td className="num">{p.age}</td>
-                  <td className="num">
-                    <Rating value={p.overall} />
-                  </td>
-                  <td className={cx('num', STAT)}>{s?.gp ?? 0}</td>
-                  <td className={cx('num font-semibold text-white', STAT)}>{s?.g ?? 0}</td>
-                  <td className={cx('num font-semibold text-white', STAT)}>{s?.a ?? 0}</td>
-                  <td className={cx('num font-bold text-white', STAT)}>{s ? s.g + s.a : 0}</td>
-                  <td className={cx('num', STAT, s && s.pm > 0 ? 'text-win' : s && s.pm < 0 ? 'text-red-300' : '')}>{s ? signed(s.pm) : 0}</td>
-                  <td className={cx('num', STAT)}>{s?.gp ? toi(s.toi, s.gp) : '—'}</td>
-                  {[r.skating, r.shooting, r.passing, r.handling, r.offIQ, r.defIQ, r.checking, r.faceoffs].map((v, i) => (
-                    <td key={i} className="num text-xs text-ice-400">
-                      {v}
-                    </td>
-                  ))}
-                  <ContractCells p={p} />
-                  <td>
-                    <Status p={p} />
-                  </td>
-                  {t.isMine && (
-                    <td>
-                      <RosterActions t={t} p={p} />
-                    </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Lines
-// ---------------------------------------------------------------------------
 
 function LinesView({ t }: { t: TeamData }) {
   const byId = new Map(t.players.map((p) => [p.id, p]));
@@ -636,7 +425,7 @@ function LinesEditor({ t }: { t: TeamData }) {
         </div>
       </Card>
 
-      <LinesBoard draft={draft} onChange={setDraft} players={t.players} catalog={t.systems} formation={t.tactics.pp} leagueId={L.id} chemistryGames={t.chemistryGames} />
+      <LinesBoard draft={draft} onChange={setDraft} players={t.players.filter((p) => !p.farm)} catalog={t.systems} formation={t.tactics.pp} leagueId={L.id} chemistryGames={t.chemistryGames} />
     </div>
   );
 }
