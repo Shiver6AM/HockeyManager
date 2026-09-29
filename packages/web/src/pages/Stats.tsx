@@ -7,53 +7,128 @@ import { useSort } from '../sort';
 import { useTRPC, type Outputs } from '../trpc';
 import { useLeague, useTeamById } from './LeagueLayout';
 
+type View = 'season' | 'all';
+type Scope = 'nhl' | 'prospects' | 'undrafted';
+const seasonLabel = (y: number) => `${y}-${String(y + 1).slice(2)}`;
+
+function Segmented<T extends string | boolean>({ value, options, onChange, label }: { value: T; options: Array<[T, string]>; onChange: (v: T) => void; label: string }) {
+  return (
+    <div role="tablist" aria-label={label} className="flex flex-wrap rounded-lg bg-rink-800 p-1 text-sm">
+      {options.map(([v, text]) => (
+        <button
+          key={String(v)}
+          role="tab"
+          aria-selected={value === v}
+          onClick={() => onChange(v)}
+          className={cx('rounded-md px-3 py-1 font-semibold whitespace-nowrap', value === v ? 'bg-rink-600 text-white' : 'text-ice-400 hover:text-ice-200')}
+        >
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function StatsPage() {
   const L = useLeague();
   const trpc = useTRPC();
+  const [view, setView] = useState<View>('season');
+  const [scope, setScope] = useState<Scope>('nhl');
   const [playoffs, setPlayoffs] = useState(L.phase === 'playoffs');
-  const [season, setSeason] = useState<number | 'all'>(L.season);
+  const [season, setSeason] = useState<number>(L.season);
+  const nhl = view === 'all' || scope === 'nhl';
   const q = useQuery({
-    ...trpc.data.leaders.queryOptions({ leagueId: L.id, playoffs, season: season === L.season ? undefined : season }),
+    ...trpc.data.leaders.queryOptions({ leagueId: L.id, playoffs, season: view === 'all' ? 'all' : season === L.season ? undefined : season }),
     placeholderData: (prev) => prev,
+    enabled: nhl,
   });
+  const minor = useQuery({
+    ...trpc.data.minorLeaders.queryOptions({ leagueId: L.id, scope: scope === 'undrafted' ? 'undrafted' : 'prospects', season }),
+    placeholderData: (prev) => prev,
+    enabled: !nhl,
+  });
+  const seasons = useQuery({ ...trpc.data.leaders.queryOptions({ leagueId: L.id }), select: (d) => d.seasons, enabled: !nhl });
+  const seasonList = (nhl ? q.data?.seasons : seasons.data) ?? [L.season];
   const awards = useQuery(trpc.data.awards.queryOptions({ leagueId: L.id }));
   const fmt = (v: number, f: string, label: string) =>
     f === 'pct' ? v.toFixed(3).replace(/^0/, '') : f === 'dec' ? v.toFixed(2) : label === 'Plus/Minus' ? signed(v) : String(v);
+  const idx = seasonList.indexOf(season);
+  const showPlayoffToggle = nhl && (view === 'all' || L.phase !== 'regular-season' || season !== L.season);
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-display text-2xl font-semibold tracking-wide text-white uppercase">League leaders</h1>
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="font-display text-2xl font-semibold tracking-wide text-white uppercase">League stats</h1>
         <span className="ml-auto" />
-        <select
-          className="slot w-auto"
-          aria-label="Season"
-          value={String(season)}
-          onChange={(e) => setSeason(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-        >
-          {(q.data?.seasons ?? [L.season]).map((y) => (
-            <option key={y} value={y}>
-              {y === L.season ? 'This season' : `${y}-${String(y + 1).slice(2)}`}
-            </option>
-          ))}
-          <option value="all">All time</option>
-        </select>
-        {(L.phase !== 'regular-season' || season !== L.season) && (
-          <div className="flex rounded-lg bg-rink-800 p-1 text-sm">
-            {[false, true].map((po) => (
+        <Segmented
+          label="View"
+          value={view}
+          onChange={setView}
+          options={[
+            ['season', 'Season leaders'],
+            ['all', 'All-time leaders'],
+          ]}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-rink-700 bg-rink-900/60 p-3">
+        {view === 'season' ? (
+          <>
+            <div className="flex items-center gap-1">
+              <span className="mr-1 text-xs font-semibold tracking-wider text-ice-500 uppercase">Season</span>
               <button
-                key={String(po)}
-                onClick={() => setPlayoffs(po)}
-                className={cx('rounded-md px-3 py-1 font-semibold', playoffs === po ? 'bg-rink-600 text-white' : 'text-ice-400')}
+                className="rounded-md bg-rink-800 px-2.5 py-1 text-ice-300 hover:bg-rink-700 disabled:opacity-30"
+                aria-label="Previous season"
+                disabled={idx < 0 || idx >= seasonList.length - 1}
+                onClick={() => setSeason(seasonList[idx + 1])}
               >
-                {po ? 'Playoffs' : 'Regular season'}
+                ‹
               </button>
-            ))}
+              <select className="slot w-auto" aria-label="Season" value={String(season)} onChange={(e) => setSeason(Number(e.target.value))}>
+                {seasonList.map((y) => (
+                  <option key={y} value={y}>
+                    {seasonLabel(y)}
+                    {y === L.season ? ' (current)' : ''}
+                  </option>
+                ))}
+              </select>
+              <button className="rounded-md bg-rink-800 px-2.5 py-1 text-ice-300 hover:bg-rink-700 disabled:opacity-30" aria-label="Next season" disabled={idx <= 0} onClick={() => setSeason(seasonList[idx - 1])}>
+                ›
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold tracking-wider text-ice-500 uppercase">Players</span>
+              <Segmented
+                label="Players"
+                value={scope}
+                onChange={setScope}
+                options={[
+                  ['nhl', 'NHL'],
+                  ['prospects', 'Top 100 prospects'],
+                  ['undrafted', 'Top 100 undrafted'],
+                ]}
+              />
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-ice-400">Career totals across every season in this league, retired players included.</p>
+        )}
+        {showPlayoffToggle && (
+          <div className="ml-auto">
+            <Segmented
+              label="Season type"
+              value={playoffs}
+              onChange={setPlayoffs}
+              options={[
+                [false, 'Regular season'],
+                [true, 'Playoffs'],
+              ]}
+            />
           </div>
         )}
       </div>
 
-      {awards.data && awards.data.current.length > 0 && (
+      {view === 'season' && season === L.season && scope === 'nhl' && awards.data && awards.data.current.length > 0 && (
         <Card title="Awards">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {awards.data.current.map((a) => (
@@ -77,7 +152,16 @@ export function StatsPage() {
         </Card>
       )}
 
-      {!q.data ? (
+      {!nhl ? (
+        !minor.data ? (
+          <Spinner />
+        ) : (
+          <>
+            <MinorSkaterTable key={`${scope}-${season}`} rows={minor.data.skaters} scope={scope as 'prospects' | 'undrafted'} season={season} />
+            <MinorGoalieTable rows={minor.data.goalies} />
+          </>
+        )
+      ) : !q.data ? (
         <Spinner />
       ) : (
         <>
@@ -94,11 +178,155 @@ export function StatsPage() {
               <LeaderCard key={cat.label} title={cat.label} rows={cat.rows} fmt={(v) => fmt(v, cat.fmt, cat.label)} />
             ))}
           </div>
-          <SkaterStatsTable rows={q.data.allSkaters} />
-          <GoalieStatsTable rows={q.data.allGoalies} />
+          <SkaterStatsTable rows={q.data.allSkaters} allTime={view === 'all'} />
+          <GoalieStatsTable rows={q.data.allGoalies} allTime={view === 'all'} />
         </>
       )}
     </div>
+  );
+}
+
+type Minor = Outputs['data']['minorLeaders'];
+
+function MinorSkaterTable({ rows, scope, season }: { rows: Minor['skaters']; scope: 'prospects' | 'undrafted'; season: number }) {
+  const [pos, setPos] = useState('All');
+  const filtered = rows.filter((r) => pos === 'All' || (pos === 'F' ? r.pos !== 'D' : r.pos === pos));
+  const { sorted, Th } = useSort(
+    filtered,
+    {
+      name: (r) => r.name.split(' ').slice(-1)[0],
+      pos: (r) => r.pos,
+      age: (r) => r.age,
+      league: (r) => r.league,
+      club: (r) => r.club ?? '',
+      org: (r) => r.orgId ?? '',
+      draft: (r) => r.draft ?? '',
+      gp: (r) => r.gp,
+      g: (r) => r.g,
+      a: (r) => r.a,
+      p: (r) => r.p,
+      ppg: (r) => (r.gp ? r.p / r.gp : 0),
+      pim: (r) => r.pim,
+    },
+    { key: 'p' },
+    'stats-minor',
+  );
+  const title = scope === 'prospects' ? 'Top 100 prospect scorers' : 'Top 100 undrafted scorers';
+  const note =
+    scope === 'prospects'
+      ? 'Drafted players outside the NHL: junior, college, Europe and the AHL.'
+      : 'Players who hadn’t been drafted yet, in every league (junior, college, Europe).';
+  return (
+    <Card
+      title={`${title} · ${seasonLabel(season)}`}
+      action={
+        <div className="flex rounded-md bg-rink-800 p-0.5 text-xs">
+          {['All', 'F', 'D'].map((x) => (
+            <button key={x} onClick={() => setPos(x)} className={cx('rounded px-2 py-0.5 font-semibold', pos === x ? 'bg-rink-600 text-white' : 'text-ice-400')}>
+              {x}
+            </button>
+          ))}
+        </div>
+      }
+    >
+      <p className="-mt-1 mb-3 text-xs text-ice-500">{note}</p>
+      {rows.length === 0 ? (
+        <Empty>No games played yet for this group.</Empty>
+      ) : (
+        <div className="-mx-4 -mb-4 overflow-x-auto">
+          <table className="table">
+            <thead>
+              <tr>
+                <th className="num">#</th>
+                <Th k="name">Player</Th>
+                <Th k="pos">Pos</Th>
+                <Th k="age" className="num">Age</Th>
+                <Th k="league">League</Th>
+                <Th k="club">Club</Th>
+                {scope === 'prospects' && <Th k="org">Rights</Th>}
+                {scope === 'prospects' && <Th k="draft">Drafted</Th>}
+                <Th k="gp" className="num">GP</Th>
+                <Th k="g" className="num">G</Th>
+                <Th k="a" className="num">A</Th>
+                <Th k="p" className="num">P</Th>
+                <Th k="ppg" className="num" title="Points per game">P/GP</Th>
+                <Th k="pim" className="num">PIM</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((r, i) => (
+                <tr key={r.id}>
+                  <td className="num text-ice-500">{i + 1}</td>
+                  <NameCell r={r} />
+                  <td className="text-ice-400">{r.pos}</td>
+                  <td className="num">{r.age}</td>
+                  <td className="text-xs whitespace-nowrap text-ice-300">{r.league}</td>
+                  <td className="text-xs whitespace-nowrap text-ice-400">{r.club ?? '—'}</td>
+                  {scope === 'prospects' && (r.orgId ? <TeamCell abbr={r.orgId} /> : <td className="text-ice-500">—</td>)}
+                  {scope === 'prospects' && <td className="text-xs whitespace-nowrap text-ice-400">{r.draft ?? '—'}</td>}
+                  <td className="num">{r.gp}</td>
+                  <td className="num">{r.g}</td>
+                  <td className="num">{r.a}</td>
+                  <td className="num font-semibold text-white">{r.p}</td>
+                  <td className="num">{r.gp ? (r.p / r.gp).toFixed(2) : '—'}</td>
+                  <td className="num">{r.pim}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function MinorGoalieTable({ rows }: { rows: Minor['goalies'] }) {
+  const { sorted, Th } = useSort(
+    rows,
+    {
+      name: (r) => r.name.split(' ').slice(-1)[0],
+      league: (r) => r.league,
+      club: (r) => r.club ?? '',
+      gp: (r) => r.gp,
+      w: (r) => r.w,
+      sv: (r) => (r.sa ? 1 - r.ga / r.sa : null),
+      so: (r) => r.so,
+    },
+    { key: 'w' },
+    'stats-minor-goalies',
+  );
+  if (!rows.length) return null;
+  return (
+    <Card title={`Goalies (${rows.length}, min. 5 GP)`}>
+      <div className="-mx-4 -mb-4 overflow-x-auto">
+        <table className="table">
+          <thead>
+            <tr>
+              <Th k="name">Goalie</Th>
+              <Th k="league">League</Th>
+              <Th k="club">Club</Th>
+              <Th k="gp" className="num">GP</Th>
+              <Th k="w" className="num">W</Th>
+              <Th k="sv" className="num">SV%</Th>
+              <Th k="so" className="num">SO</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r) => (
+              <tr key={r.id}>
+                <NameCell r={r} />
+                <td className="text-xs whitespace-nowrap text-ice-300">{r.league}</td>
+                <td className="text-xs whitespace-nowrap text-ice-400">{r.club ?? '—'}</td>
+                <td className="num">{r.gp}</td>
+                <td className="num font-semibold text-white">{r.w}</td>
+                <td className="num">{svPct(r.sa, r.ga)}</td>
+                <td className="num">{r.so}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }
 
@@ -153,10 +381,20 @@ function NameCell({ r }: { r: { id: string; name: string } }) {
   );
 }
 
-function SkaterStatsTable({ rows }: { rows: Leaders['allSkaters'] }) {
+function ActiveToggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs text-ice-400">
+      <input type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} />
+      Active only
+    </label>
+  );
+}
+
+function SkaterStatsTable({ rows, allTime }: { rows: Leaders['allSkaters']; allTime: boolean }) {
   const [pos, setPos] = useState('All');
+  const [activeOnly, setActiveOnly] = useState(false);
   const [n, setN] = useState(PAGE);
-  const filtered = rows.filter((r) => pos === 'All' || (pos === 'F' ? r.pos !== 'D' : r.pos === pos));
+  const filtered = rows.filter((r) => (pos === 'All' || (pos === 'F' ? r.pos !== 'D' : r.pos === pos)) && (!allTime || !activeOnly || r.active));
   const { sorted, Th } = useSort(
     filtered,
     {
@@ -186,14 +424,17 @@ function SkaterStatsTable({ rows }: { rows: Leaders['allSkaters'] }) {
   );
   return (
     <Card
-      title={`All skaters (${filtered.length})`}
+      title={`${allTime ? 'All-time skaters' : 'All skaters'} (${filtered.length})`}
       action={
+        <div className="flex items-center gap-3">
+        {allTime && <ActiveToggle value={activeOnly} onChange={setActiveOnly} />}
         <div className="flex rounded-md bg-rink-800 p-0.5 text-xs">
           {['All', 'F', 'D'].map((x) => (
             <button key={x} onClick={() => setPos(x)} className={cx('rounded px-2 py-0.5 font-semibold', pos === x ? 'bg-rink-600 text-white' : 'text-ice-400')}>
               {x}
             </button>
           ))}
+        </div>
         </div>
       }
     >
@@ -203,7 +444,7 @@ function SkaterStatsTable({ rows }: { rows: Leaders['allSkaters'] }) {
             <tr>
               <th className="num">#</th>
               <Th k="name">Player</Th>
-              <Th k="team">Team</Th>
+              <Th k="team">{allTime ? 'Now' : 'Team'}</Th>
               <Th k="pos">Pos</Th>
               <Th k="gp" className="num">GP</Th>
               <Th k="g" className="num">G</Th>
@@ -262,7 +503,9 @@ function SkaterStatsTable({ rows }: { rows: Leaders['allSkaters'] }) {
   );
 }
 
-function GoalieStatsTable({ rows }: { rows: Leaders['allGoalies'] }) {
+function GoalieStatsTable({ rows: all, allTime }: { rows: Leaders['allGoalies']; allTime: boolean }) {
+  const [activeOnly, setActiveOnly] = useState(false);
+  const rows = all.filter((r) => !allTime || !activeOnly || r.active);
   const { sorted, Th } = useSort(
     rows,
     {
@@ -284,13 +527,13 @@ function GoalieStatsTable({ rows }: { rows: Leaders['allGoalies'] }) {
     'stats-goalies',
   );
   return (
-    <Card title={`All goalies (${rows.length})`}>
+    <Card title={`${allTime ? 'All-time goalies' : 'All goalies'} (${rows.length})`} action={allTime ? <ActiveToggle value={activeOnly} onChange={setActiveOnly} /> : undefined}>
       <div className="-mx-4 -mb-4 overflow-x-auto">
         <table className="table">
           <thead>
             <tr>
               <Th k="name">Goalie</Th>
-              <Th k="team">Team</Th>
+              <Th k="team">{allTime ? 'Now' : 'Team'}</Th>
               <Th k="gp" className="num">GP</Th>
               <Th k="gs" className="num">GS</Th>
               <Th k="w" className="num">W</Th>

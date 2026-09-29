@@ -10,6 +10,7 @@ export function TeamsPage() {
   const qc = useQueryClient();
   const nav = useNavigate();
   const teams = useQuery(trpc.leagues.teams.queryOptions({ leagueId: L.id }));
+  const leaders = useQuery(trpc.data.franchiseTopScorers.queryOptions({ leagueId: L.id }));
   const claim = useMutation(
     trpc.leagues.claimTeam.mutationOptions({
       onSuccess: async (_r, vars) => {
@@ -45,9 +46,28 @@ export function TeamsPage() {
                 .map((t) => (
                   <li key={t.id} className="flex items-center gap-3 py-2">
                     <TeamChip team={t} size="lg" />
-                    <Link to={`/league/${L.id}/team/${t.id}`} className="flex-1 truncate text-sm hover:underline">
-                      {t.city} <span className="text-ice-400">{t.name}</span>
-                    </Link>
+                    <div className="min-w-0 flex-1">
+                      <Link to={`/league/${L.id}/team/${t.id}`} className="block truncate text-sm hover:underline">
+                        {t.city} <span className="text-ice-400">{t.name}</span>
+                      </Link>
+                      <p className="truncate text-xs text-ice-500" title="All-time leading scorer with this franchise">
+                        All-time leader:{' '}
+                        {leaders.data?.[t.id] ? (
+                          <>
+                            <Link to={`/league/${L.id}/player/${leaders.data[t.id]!.id}`} className="text-ice-300 hover:underline">
+                              {leaders.data[t.id]!.name}
+                            </Link>{' '}
+                            <span className="tabular">
+                              · {leaders.data[t.id]!.p} P in {leaders.data[t.id]!.gp} GP
+                            </span>
+                          </>
+                        ) : leaders.data ? (
+                          '—'
+                        ) : (
+                          '…'
+                        )}
+                      </p>
+                    </div>
                     <span className="tabular w-10 text-right text-sm text-ice-300" title="Team rating">
                       {t.rating.toFixed(1)}
                     </span>
