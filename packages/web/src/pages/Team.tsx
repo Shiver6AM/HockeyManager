@@ -9,6 +9,7 @@ import { TacticsPanel } from '../components/TacticsPanel';
 import { PlayerFilterBar, usePlayerFilters } from '../components/PlayerFilters';
 import { FarmTable, GoalieTable, SkaterTable } from '../components/RosterTables';
 import { ContractsTab } from '../components/ContractsTab';
+import { FranchiseRecords } from '../components/FranchiseRecords';
 import { Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip } from '../components/ui';
 import { useSort } from '../sort';
 import { money, svPct } from '../format';
@@ -27,7 +28,7 @@ export function TeamPage() {
     ...trpc.data.team.queryOptions({ leagueId: L.id, teamId, statsSeason: statsSeason === L.season ? undefined : statsSeason }),
     placeholderData: (prev) => prev,
   });
-  const [tab, setTab] = useState<'roster' | 'contracts' | 'lines' | 'systems' | 'coaching' | 'prospects' | 'schedule' | 'front office'>('roster');
+  const [tab, setTab] = useState<'roster' | 'contracts' | 'lines' | 'systems' | 'coaching' | 'prospects' | 'schedule' | 'records' | 'front office'>('roster');
   if (q.error) return <ErrorBox error={q.error} />;
   if (!q.data) return <Spinner />;
   const t = q.data;
@@ -76,7 +77,7 @@ export function TeamPage() {
       </div>
 
       <div className="flex gap-1 overflow-x-auto rounded-lg bg-rink-900 p-1 text-sm sm:w-fit">
-        {(['roster', 'contracts', 'lines', 'systems', 'coaching', 'prospects', 'schedule', 'front office'] as const).map((k) => (
+        {(['roster', 'contracts', 'lines', 'systems', 'coaching', 'prospects', 'schedule', 'records', 'front office'] as const).map((k) => (
           <button
             key={k}
             onClick={() => setTab(k)}
@@ -92,6 +93,7 @@ export function TeamPage() {
       {tab === 'prospects' && <Prospects t={t} />}
       {tab === 'systems' && (t.hasLines ? <TacticsPanel t={t} leagueId={L.id} /> : <Card><Empty>Systems are set once the roster is built.</Empty></Card>)}
       {tab === 'coaching' && <SkillsCoaches leagueId={L.id} teamId={t.team.id} />}
+      {tab === 'records' && <FranchiseRecords leagueId={L.id} teamId={t.team.id} />}
       {tab === 'front office' && <FrontOffice leagueId={L.id} teamId={t.team.id} />}
       {tab === 'lines' &&
         (!t.hasLines ? (

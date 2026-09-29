@@ -75,6 +75,7 @@ import { readBoxScore, readLeague } from '../state';
 import { badRequest, memberProcedure, router } from '../trpc';
 import { playerName, publicPlayer, teamInfo } from '../views';
 import { grade } from './offseason';
+import { franchiseRecords, franchiseTopScorers, minorLeaders } from '../records';
 
 const overallOf = (L: League, id: string) => overall(L.players[id]);
 
@@ -121,7 +122,8 @@ function statsSeasons(L: League, t: League['teams'][string]): number[] {
  */
 function leaderPool(L: League, playoffs: boolean, season: number | 'all' | undefined) {
   const current = { sk: playoffs ? L.playoffSkaterStats : L.skaterStats, gs: playoffs ? L.playoffGoalieStats : L.goalieStats };
-  if (season === undefined || season === L.season) return { sk: Object.entries(current.sk), gs: Object.entries(current.gs) };
+  if (season === undefined || season === L.season) return { sk: Object.entries(current.sk), gs: Object.entries(current.gs), teamAt: new Map<string, string | null>() };
+  const teamAt = new Map<string, string | null>();
   const careers: Array<[string, League['careerStats'] extends Record<string, infer C> | undefined ? C : never]> = [
     ...Object.entries(L.careerStats ?? {}),
     ...Object.values(L.retired ?? {}).map((r) => [r.id, r.career] as [string, typeof r.career]),
@@ -136,6 +138,7 @@ function leaderPool(L: League, playoffs: boolean, season: number | 'all' | undef
   for (const [id, lines] of careers) {
     for (const c of lines) {
       if (season !== 'all' && c.season !== season) continue;
+      if (season !== 'all' && (c.skater || c.goalie || c.playoffSkater || c.playoffGoalie)) teamAt.set(id, c.teamId);
       add(skOut, id, playoffs ? c.playoffSkater : c.skater);
       add(gsOut, id, playoffs ? c.playoffGoalie : c.goalie);
     }
@@ -144,7 +147,7 @@ function leaderPool(L: League, playoffs: boolean, season: number | 'all' | undef
     for (const [id, line] of Object.entries(current.sk)) add(skOut, id, line);
     for (const [id, line] of Object.entries(current.gs)) add(gsOut, id, line);
   }
-  return { sk: Object.entries(skOut), gs: Object.entries(gsOut) };
+  return { sk: Object.entries(skOut), gs: Object.entries(gsOut), teamAt };
 }
 
 const chemView = (c: ReturnType<typeof unitChemistry>) => ({
@@ -625,12 +628,15 @@ export const dataRouter = router({
     .input(z.object({ playoffs: z.boolean().default(false), season: z.union([z.number().int(), z.literal('all')]).optional() }))
     .query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
-    const { sk, gs } = leaderPool(L, input.playoffs, input.season);
+    const { sk, gs, teamAt } = leaderPool(L, input.playoffs, input.season);
     const who = (id: string) => {
       const p = L.players[id];
       const r = L.retired?.[id];
-      return { id, name: p ? `${p.firstName} ${p.lastName}` : (r?.name ?? id), pos: p?.pos ?? r?.pos ?? '', teamId: p?.teamId ?? null };
+      // A past season shows the team he played for then.
+      const teamId = teamAt.has(id) ? (teamAt.get(id) ?? null) : (p?.teamId ?? null);
+      return { id, name: p ? `${p.firstName} ${p.lastName}` : (r?.name ?? id), pos: p?.pos ?? r?.pos ?? '', teamId, active: !!p && !r };
     };
+    const teamLabel = (id: string) => L.teams[who(id).teamId ?? '']?.abbr ?? (!L.players[id] || L.retired?.[id] ? 'RET' : 'FA');
     const maxGp = Math.max(1, ...sk.map(([, s]) => s.gp));
     const minGoalieGp = Math.max(1, Math.round(maxGp * 0.3));
     const top = <T,>(rows: T[], key: (r: T) => number, asc = false, n = 10) =>
@@ -670,7 +676,7 @@ export const dataRouter = router({
         .filter(([, s]) => s.gp > 0)
         .map(([id, s]) => ({
           ...who(id),
-          team: L.teams[who(id).teamId ?? '']?.abbr ?? (L.players[id] ? 'FA' : 'RET'),
+          team: teamLabel(id),
           gp: s.gp,
           g: s.g,
           a: s.a,
@@ -692,7 +698,7 @@ export const dataRouter = router({
         .filter(([, g]) => g.gp > 0)
         .map(([id, g]) => ({
           ...who(id),
-          team: L.teams[who(id).teamId ?? '']?.abbr ?? (L.players[id] ? 'FA' : 'RET'),
+          team: teamLabel(id),
           gp: g.gp,
           gs: g.gs,
           w: g.w,
@@ -707,6 +713,27 @@ export const dataRouter = router({
       /** Seasons with stats to browse (newest first). */
       seasons: [...new Set([L.season, ...L.history.map((h) => h.season)])].sort((x, y) => y - x),
     };
+  }),
+
+  /** Top 100 scorers outside the NHL: drafted prospects (junior, college, Europe, AHL) or players not yet drafted. */
+  minorLeaders: memberProcedure
+    .input(z.object({ scope: z.enum(['prospects', 'undrafted']), season: z.number().int().optional() }))
+    .query(async ({ ctx, input }) => {
+      const L = await readLeague(ctx.db, input.leagueId);
+      return { season: input.season ?? L.season, ...minorLeaders(L, input.scope, input.season ?? L.season) };
+    }),
+
+  /** A team's all-time records: career leaders with the club and its best seasons. */
+  franchiseRecords: memberProcedure.input(z.object({ teamId: z.string() })).query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    if (!L.teams[input.teamId]) throw new TRPCError({ code: 'NOT_FOUND', message: 'No such team' });
+    return franchiseRecords(L, input.teamId);
+  }),
+
+  /** Every team's all-time leading scorer. */
+  franchiseTopScorers: memberProcedure.query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    return franchiseTopScorers(L);
   }),
 
   playoffs: memberProcedure.query(async ({ ctx, input }) => {

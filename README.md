@@ -435,6 +435,14 @@ anyone who hasn't acted gets sensible defaults.
 - **History:** champions and MVPs by season, title counts, the **Hall of Fame** (retired
   players are scored on production, awards, titles and peak, with credit for careers that
   began before the league existed) and all-time leaders.
+- **Stats:** season leaders for any season played (step back with ‹ ›, and each past season shows
+  the team a player was with then), plus all-time career leaders with an active-only filter.
+  A Players filter switches to the **top 100 prospect scorers** (drafted, not in the NHL:
+  junior, college, Europe, AHL) or the **top 100 undrafted scorers**, with league, club,
+  rights holder and draft slot.
+- **Franchise records:** every team page has a Records tab with the club's career
+  scoring and goaltending leaders and its best single seasons; the Teams directory shows
+  each franchise's all-time leading scorer.
 - **Assistant GM:** if a manager never decides on an expiring player, the assistant GM
   handles him the way an AI team would, so an absent manager can't lose half a roster.
   An explicit "let go" is always respected.
