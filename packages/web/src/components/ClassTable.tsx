@@ -121,6 +121,7 @@ export function ClassTable({
         <table className="table">
           <thead className="sticky top-0 z-10 bg-rink-900">
             <tr>
+              {action && <th className="w-0" />}
               <Th k="name">Prospect</Th>
               <Th k="pos">Pos</Th>
               <Th k="age" className="num">Age</Th>
@@ -140,12 +141,12 @@ export function ClassTable({
               <th>Projection</th>
               <Th k="conf">Confidence</Th>
               <Th k="style">Style</Th>
-              {action && <th />}
             </tr>
           </thead>
           <tbody>
             {sorted.slice(0, maxRows).map((p) => (
               <tr key={p.id} className={cx(!p.scouted && 'text-ice-400')}>
+                {action && <td className="w-0 whitespace-nowrap">{action(p)}</td>}
                 <td className="whitespace-nowrap">
                   <Link to={`/league/${leagueId}/player/${p.id}`} className="text-ice-50 hover:underline">
                     {p.name}
@@ -200,7 +201,6 @@ export function ClassTable({
                   <ConfidenceBar value={p.confidence} />
                 </td>
                 <td className="text-xs whitespace-nowrap text-ice-400">{p.archetype}</td>
-                {action && <td className="text-right">{action(p)}</td>}
               </tr>
             ))}
           </tbody>

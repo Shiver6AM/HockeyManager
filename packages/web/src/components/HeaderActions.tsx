@@ -73,13 +73,26 @@ export function HeaderActions() {
   const busy = sim.running || sim.starting;
   const resignWeek = offseason && L.offseasonStage === 're-sign' && L.resignDay !== null;
   const beforeFa = offseason && (!L.offseasonStage || L.offseasonStage === 'draft' || L.offseasonStage === 're-sign');
+  const faDays = offseason && L.offseasonStage === 'free-agency' && L.faDay !== null;
   const primary: { label: string; target: Target } = offseason
-    ? { label: resignWeek ? (L.resignDay! < L.resignDays ? `Next day (${L.resignDay}/${L.resignDays})` : 'Open free agency') : 'Next stage', target: { days: 1 } }
+    ? {
+        label: resignWeek
+          ? L.resignDay! < L.resignDays
+            ? `Next day (${L.resignDay}/${L.resignDays})`
+            : 'Open free agency'
+          : faDays
+            ? L.faDay! < L.faDays
+              ? `Next day (FA ${L.faDay}/${L.faDays})`
+              : 'Close free agency'
+            : 'Next stage',
+        target: { days: 1 },
+      }
     : { label: 'Sim 1 day', target: { days: 1 } };
   const deadlineAhead = L.daysToDeadline !== null && L.daysToDeadline > 0;
   const more: Array<{ label: string; target: Target }> = offseason
     ? [
         ...(beforeFa ? [{ label: 'Sim to free agency', target: { to: 'free-agency' } as Target }] : []),
+        ...(beforeFa || faDays ? [{ label: 'Sim to end of free agency', target: { to: 'training-camp' } as Target }] : []),
         { label: 'Advance to next season', target: { to: 'next-season' } },
       ]
     : [

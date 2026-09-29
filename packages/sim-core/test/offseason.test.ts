@@ -15,6 +15,8 @@ import {
   promoteProspect,
   ROSTER_MAX,
   placeBid,
+  faDecidesIn,
+  FA_LISTEN_DAYS,
   offerExtension,
   standings,
   type League,
@@ -131,15 +133,31 @@ describe('offseason with a human manager', () => {
       const ask = L.offseason!.freeAgentAsks[t.id];
       placeBid(L, team, t, { salary: Math.round((ask.salary * 1.5) / 25_000) * 25_000, years: ask.years });
     }
-    offseasonStep(L, { force: true }); // round 1
+    // He listens for 3-5 days before deciding; the offer stands meanwhile.
+    for (const t of targets) {
+      const d = faDecidesIn(L, t.id)!;
+      expect(d).toBeGreaterThanOrEqual(FA_LISTEN_DAYS[0]);
+      expect(d).toBeLessThanOrEqual(FA_LISTEN_DAYS[1]);
+    }
+    offseasonStep(L, { force: true }); // day 1
+    for (const t of targets) {
+      expect(t.teamId).toBeNull();
+      expect(L.offseason!.bids![ME][t.id]).toBeTruthy();
+    }
+    // Nobody signs on the first two days: everyone gets a chance to make offers.
+    offseasonStep(L, { force: true }); // day 2
+    expect(L.offseason!.faLog).toHaveLength(0);
+    for (let d = 3; d <= 1 + FA_LISTEN_DAYS[1]; d++) offseasonStep(L, { force: true });
     const won = targets.filter((t) => t.teamId === ME);
     expect(won.length).toBeGreaterThanOrEqual(1);
     for (const t of won) expect(team.roster).toContain(t.id);
-    // Every signing went to the offer the player liked best among the ones he got.
-    expect(L.offseason!.bids).toEqual({});
+    for (const t of targets) {
+      // Decided: signed somewhere (the offer he liked best) or turned everything down.
+      expect(t.teamId !== null || L.offseason!.faHoldoutLog!.some((h) => h.playerId === t.id)).toBe(true);
+      expect(L.offseason!.bids![ME]?.[t.id]).toBeUndefined();
+    }
     expect(L.offseason!.faLog!.length).toBeGreaterThanOrEqual(5);
-    offseasonStep(L, { force: true }); // round 2
-    offseasonStep(L, { force: true }); // round 3 + depth fill
+    while (L.offseason!.stage === 'free-agency') offseasonStep(L, { force: true });
     expect(L.offseason!.stage).toBe('training-camp');
     for (const t of Object.values(L.teams)) {
       if (t.controller.kind === 'ai') expect(t.roster.length).toBeGreaterThanOrEqual(20);

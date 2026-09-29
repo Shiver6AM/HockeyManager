@@ -8,7 +8,10 @@ import {
   capRoom,
   deadCapFor,
   demoteToProspects,
-  FA_ROUNDS,
+  FA_DAYS,
+  FA_LISTEN_DAYS,
+  faDayOf,
+  faDecidesIn,
   NEGOTIATION,
   offerExtension,
   offersAreDeferred,
@@ -160,6 +163,8 @@ function mustBeStage(L: League, ...stages: string[]) {
     throw badRequest(`That can only be done during: ${stages.map((s) => STAGE_LABELS[s as keyof typeof STAGE_LABELS] ?? s).join(', ')}`);
   }
 }
+
+const isFreeAgentNow = (L: League, id: string) => !!L.players[id] && !L.players[id].teamId && !L.players[id].prospectOf;
 
 export const offseasonRouter = router({
   overview: memberProcedure.query(async ({ ctx, input }) => {
@@ -528,8 +533,9 @@ export const offseasonRouter = router({
     return {
       canSign,
       bidding,
-      faRound: os?.faRound ?? null,
-      faRounds: FA_ROUNDS,
+      faDay: bidding && os ? faDayOf(os) : null,
+      faDays: FA_DAYS,
+      listenDays: FA_LISTEN_DAYS,
       phase: L.phase,
       stage: os?.stage ?? null,
       capRoom: team ? capRoom(L, team) : null,
@@ -539,12 +545,17 @@ export const offseasonRouter = router({
       rosterMax: CONTRACT_MAX,
       active: team ? activeRoster(L, team).length : null,
       activeMax: ACTIVE_MAX,
-      myBids: Object.entries(myBids).map(([id, offer]) => ({ playerId: id, name: nameOf(id), offer })),
+      myBids: Object.entries(myBids).map(([id, offer]) => ({ playerId: id, name: nameOf(id), offer, decidesIn: faDecidesIn(L, id) })),
       results: (os?.faLog ?? [])
         .slice()
         .sort((a, b) => b.round - a.round || b.offer.salary - a.offer.salary)
         .slice(0, 60)
         .map((r) => ({ ...r, name: nameOf(r.playerId), team: teamInfo(L.teams[r.teamId]), mine: r.teamId === my })),
+      /** Free agents who turned down every offer (most recent first). */
+      holdouts: (os?.faHoldoutLog ?? [])
+        .slice(-40)
+        .reverse()
+        .map((h) => ({ day: h.day, playerId: h.playerId, name: nameOf(h.playerId), bidders: h.teamIds.length, mine: !!my && h.teamIds.includes(my), signed: !isFreeAgentNow(L, h.playerId) })),
       players: freeAgents(L)
         .map((p) => {
           const base = os?.freeAgentAsks[p.id] ?? inSeasonAsk(L, p);
@@ -552,7 +563,12 @@ export const offseasonRouter = router({
             ...publicPlayer(L, p),
             ask: base,
             priorities: priorities(p),
-            deal: team && (bidding || canSign) ? dealTerms(L, p, team, base, bidding ? ((os?.faRound ?? 1) - 1) * 1.2 : 2) : null,
+            deal: team && (bidding || canSign) ? dealTerms(L, p, team, base, bidding ? (os?.faHoldouts?.[p.id] ?? 0) * 1.2 : 2) : null,
+            /** Days until he decides on the offers he has (null: nobody has made one yet). */
+            decidesIn: bidding ? faDecidesIn(L, p.id) : null,
+            /** How many teams have an offer in (the terms stay sealed). */
+            offers: bidding ? Object.values(os?.bids ?? {}).filter((b) => b[p.id]).length : 0,
+            holdouts: os?.faHoldouts?.[p.id] ?? 0,
             attemptsLeft: attemptsLeft(L, p.id, my),
             myBid: myBids[p.id] ?? null,
             ...scouting(L, my, p),

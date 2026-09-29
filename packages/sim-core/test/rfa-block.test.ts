@@ -153,15 +153,19 @@ describe('restricted free agents', () => {
     const offer = { salary: Math.min(capRoom(L, bidder) - 100_000, Math.round((ask.salary * 1.4) / 25_000) * 25_000 + 250_000), years: ask.years };
     expect(() => tenderOfferSheet(L, hal, p, offer)).toThrow(/your own RFA/);
     tenderOfferSheet(L, bidder, p, offer);
-    offseasonStep(L, { force: true }); // round 1: he signs the best sheet; HAL decides
     const c = L.offseason!.rfa![p.id];
+    // He weighs sheets for a few days, like any free agent, then signs the best one; HAL decides.
+    offseasonStep(L, { force: true });
+    offseasonStep(L, { force: true });
+    expect(c.sheet).toBeFalsy();
+    offseasonStep(L, { force: true });
     expect(c.sheet).toBeTruthy(); // ours, or an AI team's that he liked better
     expect(c.status).toBe('unsigned');
     const from = c.sheet!.fromTeam;
     const terms = c.sheet!.offer;
     const comp = compensationPicks(L, from, terms.salary)!;
     decideOfferSheet(L, hal, p.id, false);
-    offseasonStep(L, { force: true }); // round 2 settles it
+    offseasonStep(L, { force: true }); // the next day settles it
     expect(c.status).toBe('departed');
     expect(p.teamId).toBe(from);
     expect(p.contract).toMatchObject({ salary: terms.salary, yearsLeft: terms.years });

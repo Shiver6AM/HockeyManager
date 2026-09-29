@@ -8,7 +8,7 @@ import { useEffect, useRef } from 'react';
 import { useLeague } from './pages/LeagueLayout';
 import { useTRPC } from './trpc';
 
-export type Target = { days: number } | { to: 'playoffs' | 'end-of-season' | 'next-season' | 'trade-deadline' | 'free-agency' };
+export type Target = { days: number } | { to: 'playoffs' | 'end-of-season' | 'next-season' | 'trade-deadline' | 'free-agency' | 'training-camp' };
 
 export function useSim() {
   const L = useLeague();

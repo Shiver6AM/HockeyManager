@@ -32,7 +32,7 @@ import {
   SUMMER_ROSTER_MAX,
 } from './contracts';
 import { aiValuation, askFromTeam, offerUtility, respondToOffer, type OfferResult } from './negotiation';
-import { aiWouldQualify, holdArbitration, openCase, openRfaCase, resolveOfferSheets, settleRfaCase } from './rfa';
+import { aiWouldQualify, holdArbitration, openCase, openRfaCase, resolveOfferSheets, settlePending, settleRfaCase } from './rfa';
 import { developPlayer, retirementChance } from './development';
 import { createDraft, runDraft, scoutedPotential } from './draft';
 import { generatePlayer, talentStats } from './generate';
@@ -48,7 +48,7 @@ import { offseasonSkillsCoaches } from './skills';
 import { affiliateLabel, capHit, CONTRACT_MAX, contractCount, FARM_TARGET, farmRoster, nhlRoster, sendDown, trimContracts } from './farm';
 import { offseasonStaff } from './staff';
 import { buildSchedule } from './schedule';
-import type { CareerLine, ContractOffer, FaResult, League, OffseasonStage, Player, PlayerId, StandingsRow, Team, TeamId } from './types';
+import type { CareerLine, ContractOffer, FaHoldout, FaResult, League, OffseasonStage, Player, PlayerId, StandingsRow, Team, TeamId } from './types';
 import { slider } from './sliders';
 
 export const OFFSEASON_STAGES: OffseasonStage[] = ['draft', 're-sign', 'free-agency', 'training-camp'];
@@ -305,16 +305,18 @@ function offseasonStepInner(league: League, opts: { force: boolean }): StepResul
       return { from, to: 'free-agency', note: `${n} players re-signed` };
     }
     case 'free-agency': {
-      const round = os.faRound ?? 1;
-      resolveOfferSheets(league, round);
-      const results = resolveFreeAgencyRound(league);
-      if ((os.faRound ?? 1) <= FA_ROUNDS) {
-        return { from, to: 'free-agency', note: `Bidding round ${round}: ${results.length} players signed` };
+      const day = faDayOf(os);
+      // RFA offer sheets are settled every day and decided every few days.
+      if (day % 3 === 0) resolveOfferSheets(league, day / 3);
+      else settlePending(league);
+      const { signed, holdouts } = resolveFreeAgencyDay(league);
+      if (day < FA_DAYS) {
+        return { from, to: 'free-agency', note: `Free agency day ${day} of ${FA_DAYS}: ${signed.length} signed${holdouts.length ? `, ${holdouts.length} turned down every offer` : ''}` };
       }
       holdArbitration(league);
       const n = aiFreeAgency(league);
       os.stage = 'training-camp';
-      return { from, to: 'training-camp', note: `Final round: ${results.length} signed; ${n} more depth signings` };
+      return { from, to: 'training-camp', note: `Free agency closes: ${signed.length} signed on the last day; ${n} more depth signings` };
     }
     case 'training-camp': {
       trainingCamp(league);
@@ -583,9 +585,13 @@ function finishResigning(league: League): number {
   // Depth players looking for work join the pool, then everyone gets an asking price.
   addFillerFreeAgents(league);
   for (const p of freeAgents(league)) os.freeAgentAsks[p.id] = askingContract(league, p);
-  os.faRound = 1;
+  os.faDay = 1;
+  os.faRound = undefined;
   os.bids = {};
+  os.faClock = {};
+  os.faHoldouts = {};
   os.faLog = [];
+  os.faHoldoutLog = [];
   return resigned;
 }
 
@@ -610,14 +616,45 @@ function addFillerFreeAgents(league: League) {
 
 // ---- Free agency ----
 
-export const FA_ROUNDS = 3;
+/** Free agency lasts this many days; then AI teams fill their holes and camp opens. */
+export const FA_DAYS = 10;
+/** A free agent listens to offers for this many days (from the first one) before he decides. */
+export const FA_LISTEN_DAYS: readonly [number, number] = [3, 5];
+
+/** Today's free agency day (older saves ran in three rounds). */
+export function faDayOf(os: NonNullable<League['offseason']>): number {
+  if (os.faDay === undefined) os.faDay = ((os.faRound ?? 1) - 1) * 3 + 1;
+  return os.faDay;
+}
+
+/** Start a free agent's listening period when his first offer arrives. */
+function startClock(league: League, p: Player) {
+  const os = league.offseason!;
+  const clock = (os.faClock ??= {});
+  if (clock[p.id] !== undefined) return;
+  const n = os.faHoldouts?.[p.id] ?? 0;
+  const rng = new Rng(deriveSeed(league.seed, `fa-listen:${league.season}:${p.id}:${n}`));
+  clock[p.id] = Math.min(FA_DAYS, faDayOf(os) + rng.int(FA_LISTEN_DAYS[0], FA_LISTEN_DAYS[1]));
+}
+
+/** Days until a free agent decides (0 = today), or null if nobody has made him an offer. */
+export function faDecidesIn(league: League, playerId: PlayerId): number | null {
+  const os = league.offseason;
+  const due = os?.faClock?.[playerId];
+  if (!os || due === undefined) return null;
+  return Math.max(0, due - faDayOf(os));
+}
 
 export function signFreeAgent(league: League, team: Team, p: Player, offer = league.offseason?.freeAgentAsks[p.id]) {
   if (!offer) throw new Error('No asking price for that player');
   applyContract(league, p, offer);
   p.teamId = team.id;
   team.roster.push(p.id);
-  if (league.offseason) delete league.offseason.freeAgentAsks[p.id];
+  if (league.offseason) {
+    delete league.offseason.freeAgentAsks[p.id];
+    delete league.offseason.faClock?.[p.id];
+    for (const b of Object.values(league.offseason.bids ?? {})) delete b[p.id];
+  }
   tx(league, 'signing', team.id, p, `Signs ${nm(p)} (${p.pos}, ${overall(p)} OVR): ${offer.years} yr × $${(offer.salary / 1e6).toFixed(2)}M`);
 }
 
@@ -630,6 +667,7 @@ export function placeBid(league: League, team: Team, p: Player, offer: ContractO
   if (offer.salary < LEAGUE_MIN_SALARY) throw new Error('Offer is below the league minimum');
   if (offer.salary > capRoom(league, team)) throw new Error('Not enough cap room for that offer');
   ((os.bids ??= {})[team.id] ??= {})[p.id] = offer;
+  startClock(league, p);
 }
 
 export function withdrawBid(league: League, team: Team, playerId: PlayerId) {
@@ -655,26 +693,30 @@ function belowFloor(league: League, team: Team): boolean {
   return payroll(league, team) < league.settings.salaryFloor;
 }
 
-function aiBids(league: League, rng: Rng) {
+function aiBids(league: League, rng: Rng, day: number) {
   const os = league.offseason!;
   for (const team of rng.shuffle(Object.values(league.teams).filter((t) => t.controller.kind === 'ai'))) {
+    // Every front office is on the phones on day one, then checks in every few days.
+    if (day > 1 && !rng.chance(0.5)) continue;
     if (nhlRoster(league, team).length >= SUMMER_ROSTER_MAX - 2 || contractCount(team) >= CONTRACT_MAX - 1) continue;
     const needs = aiNeeds(league, team);
     if (!needs.length) continue;
+    const mine = ((os.bids ??= {})[team.id] ??= {});
+    const out = Object.values(mine);
     // Teams under the salary floor overpay to get there (bad teams have to).
     const gap = Math.max(0, league.settings.salaryFloor - payroll(league, team));
     const floorBoost = 1 + Math.min(0.6, (gap / league.settings.salaryCap) * 2.5);
-    const maxBids = gap > 0 ? 5 : 3;
-    let room = capRoom(league, team) - 1_000_000 * Math.max(0, ROSTER_MAX - nhlRoster(league, team).length - 2);
+    const maxBids = gap > 0 ? 7 : 5;
+    let room = capRoom(league, team) - 1_000_000 * Math.max(0, ROSTER_MAX - nhlRoster(league, team).length - 2) - out.reduce((s, o) => s + o.salary, 0);
     // Spread interest around: each team looks at a weighted random slice of the
     // affordable players it needs, favoring the better ones.
-    const candidates = freeAgents(league).filter((p) => needs.includes(group(p)) && (os.freeAgentAsks[p.id]?.salary ?? Infinity) <= room);
+    const candidates = freeAgents(league).filter((p) => !mine[p.id] && needs.includes(group(p)) && (os.freeAgentAsks[p.id]?.salary ?? Infinity) <= room);
     const pool: Player[] = [];
     while (pool.length < 6 && candidates.length) {
       const i = rng.weighted(candidates.map((p) => Math.exp((overall(p) - 65) / 6)));
       pool.push(candidates.splice(i, 1)[0]);
     }
-    let made = 0;
+    let made = out.length;
     for (const p of pool) {
       if (made >= maxBids) break;
       const base = os.freeAgentAsks[p.id];
@@ -685,7 +727,8 @@ function aiBids(league: League, rng: Rng) {
       const salary = Math.min(value, Math.max(ask.salary * rng.normal(1.03, 0.06) * floorBoost, LEAGUE_MIN_SALARY));
       const offer = { salary: Math.round(salary / 25_000) * 25_000, years: ask.years };
       if (offer.salary > room || offer.salary < LEAGUE_MIN_SALARY) continue;
-      ((os.bids ??= {})[team.id] ??= {})[p.id] = offer;
+      mine[p.id] = offer;
+      startClock(league, p);
       room -= offer.salary;
       made++;
     }
@@ -693,26 +736,41 @@ function aiBids(league: League, rng: Rng) {
 }
 
 /**
- * Resolve one blind-bidding round. Every free agent looks at all the offers
- * he got (humans' and AI teams') and signs with the best one if it clears his
- * bar, which drops a little each round. Stars choose first.
+ * One day of free agency. AI teams make offers, then every free agent whose
+ * listening period is up looks at everything on the table (humans' and AI
+ * teams' sealed offers alike) and signs the best one if it clears his bar.
+ * If nothing does, he turns them all down, lowers his sights and listens again.
+ * Offers stand until he decides, so nobody wins by being online first: every
+ * manager has at least three days to get an offer in. On the last day everyone
+ * with an offer decides. Stars choose first.
  */
-export function resolveFreeAgencyRound(league: League): FaResult[] {
+export function resolveFreeAgencyDay(league: League): { signed: FaResult[]; holdouts: FaHoldout[] } {
   const os = league.offseason!;
-  const round = os.faRound ?? 1;
-  const rng = new Rng(deriveSeed(league.seed, `fa-round:${league.season}:${round}`));
-  aiBids(league, rng);
-  const bids = os.bids ?? {};
-  const results: FaResult[] = [];
+  const day = faDayOf(os);
+  const last = day >= FA_DAYS;
+  const rng = new Rng(deriveSeed(league.seed, `fa-day:${league.season}:${day}`));
+  aiBids(league, rng, day);
+  const bids = (os.bids ??= {});
+  const clock = (os.faClock ??= {});
+  const holdCount = (os.faHoldouts ??= {});
+  const signed: FaResult[] = [];
+  const holdouts: FaHoldout[] = [];
   const players = freeAgents(league).sort((a, b) => overall(b) - overall(a));
   for (const p of players) {
+    const due = clock[p.id];
+    if (due === undefined || (due > day && !last)) continue;
+    delete clock[p.id];
     const offers = Object.entries(bids)
       .filter(([, b]) => b[p.id])
       .map(([teamId, b]) => ({ team: league.teams[teamId], offer: b[p.id] }));
     if (!offers.length) continue;
     const ask = os.freeAgentAsks[p.id] ?? askingContract(league, p);
     const valid = offers.filter(
-      ({ team, offer }) => offer.salary <= capRoom(league, team) && contractCount(team) < CONTRACT_MAX,
+      ({ team, offer }) =>
+        offer.salary <= capRoom(league, team) &&
+        contractCount(team) < CONTRACT_MAX &&
+        // An AI team that has filled the hole since doesn't follow through.
+        (team.controller.kind !== 'ai' || aiNeeds(league, team).includes(group(p))),
     );
     let best: (typeof valid)[number] | null = null;
     let bestU = -Infinity;
@@ -723,21 +781,34 @@ export function resolveFreeAgencyRound(league: League): FaResult[] {
         best = o;
       }
     }
-    const bar = 1 - (round - 1) * 0.06;
+    if (!valid.length) {
+      // Every team with an offer in has moved on (filled the spot or spent the money): he's back on the market.
+      for (const b of Object.values(bids)) delete b[p.id];
+      continue;
+    }
+    const n = holdCount[p.id] ?? 0;
+    const bar = Math.max(0.8, 1 - 0.06 * n - 0.004 * (day - 1));
     if (best && bestU >= bar) {
       signFreeAgent(league, best.team, p, best.offer);
-      const r = { round, playerId: p.id, teamId: best.team.id, offer: best.offer, bidders: offers.length };
-      results.push(r);
+      signed.push({ round: day, playerId: p.id, teamId: best.team.id, offer: best.offer, bidders: offers.length });
+    } else {
+      // Nothing good enough: every offer comes off the table and he waits for better.
+      holdouts.push({ day, playerId: p.id, teamIds: offers.map((o) => o.team.id) });
+      for (const b of Object.values(bids)) delete b[p.id];
+      holdCount[p.id] = n + 1;
+      const a = os.freeAgentAsks[p.id];
+      if (a) a.salary = Math.max(LEAGUE_MIN_SALARY, Math.round((a.salary * 0.9) / 25_000) * 25_000);
     }
   }
-  (os.faLog ??= []).push(...results);
-  os.bids = {};
-  os.faRound = round + 1;
-  // Unsigned players come down a bit.
-  for (const ask of Object.values(os.freeAgentAsks)) {
-    ask.salary = Math.max(LEAGUE_MIN_SALARY, Math.round((ask.salary * 0.88) / 25_000) * 25_000);
+  (os.faLog ??= []).push(...signed);
+  (os.faHoldoutLog ??= []).push(...holdouts);
+  os.faDay = day + 1;
+  // Players nobody is talking to come down a little each day.
+  for (const [id, ask] of Object.entries(os.freeAgentAsks)) {
+    if (clock[id] !== undefined) continue;
+    ask.salary = Math.max(LEAGUE_MIN_SALARY, Math.round((ask.salary * 0.97) / 25_000) * 25_000);
   }
-  return results;
+  return { signed, holdouts };
 }
 
 /** After the bidding rounds, AI teams fill any remaining holes at asking price. */

@@ -22,6 +22,9 @@ import {
   type AdvanceResult,
   type League,
   type ScheduledGame,
+  FA_DAYS,
+  FA_LISTEN_DAYS,
+  faDayOf,
 } from '@hockey-gm/sim-core';
 import { TRPCError } from '@trpc/server';
 import { Cron } from 'croner';
@@ -29,7 +32,7 @@ import type { Db, Queryable } from './db';
 import { deliver, deliverAll, humanTeams, type Notice } from './notify';
 import { extractBoxScores, loadForUpdate, saveLeague } from './state';
 
-export type AdvanceTarget = { days: number } | { to: 'playoffs' | 'end-of-season' | 'next-season' | 'trade-deadline' | 'free-agency' };
+export type AdvanceTarget = { days: number } | { to: 'playoffs' | 'end-of-season' | 'next-season' | 'trade-deadline' | 'free-agency' | 'training-camp' };
 
 export interface AdvanceSummary {
   fromDay: number;
@@ -105,7 +108,7 @@ export function cancelSim(leagueId: string): boolean {
 
 function targetLabel(t: AdvanceTarget, offseason: boolean): string {
   if ('days' in t) return offseason ? (t.days === 1 ? 'next step' : `${t.days} steps`) : t.days === 1 ? '1 day' : `${t.days} days`;
-  return { playoffs: 'the playoffs', 'end-of-season': 'the end of the season', 'next-season': 'next season', 'trade-deadline': 'the trade deadline', 'free-agency': 'free agency' }[t.to];
+  return { playoffs: 'the playoffs', 'end-of-season': 'the end of the season', 'next-season': 'next season', 'trade-deadline': 'the trade deadline', 'free-agency': 'free agency', 'training-camp': 'the end of free agency' }[t.to];
 }
 
 function estimateTotal(L: League, t: AdvanceTarget, triggeredBy: string): number {
@@ -122,8 +125,10 @@ function estimateTotal(L: League, t: AdvanceTarget, triggeredBy: string): number
       return left + playoffs;
     case 'free-agency':
       return 9;
+    case 'training-camp':
+      return L.offseason?.stage === 'free-agency' ? FA_DAYS - faDayOf(L.offseason) + 1 : FA_DAYS + 9;
     case 'next-season':
-      return left + playoffs + 16;
+      return left + playoffs + 16 + FA_DAYS;
   }
 }
 
@@ -143,6 +148,8 @@ function reached(L: League, t: AdvanceTarget, j: SimJob, triggeredBy: string, st
       return L.phase === 'offseason';
     case 'free-agency':
       return L.phase !== 'offseason' || (!!L.offseason && !['fantasy-draft', 'draft', 're-sign'].includes(L.offseason.stage));
+    case 'training-camp':
+      return L.phase !== 'offseason' || L.offseason?.stage === 'training-camp';
     case 'next-season':
       return startPhase === 'offseason' ? L.phase === 'regular-season' : j.phaseChanges.includes('offseason') && L.phase === 'regular-season';
   }
@@ -150,11 +157,12 @@ function reached(L: League, t: AdvanceTarget, j: SimJob, triggeredBy: string, st
 
 function checkTarget(L: League, t: AdvanceTarget) {
   if (L.phase === 'offseason') {
-    if ('to' in t && t.to !== 'next-season' && t.to !== 'free-agency') throw new Error('The season is over. Advance through the offseason instead.');
+    if ('to' in t && t.to !== 'next-season' && t.to !== 'free-agency' && t.to !== 'training-camp') throw new Error('The season is over. Advance through the offseason instead.');
+    if ('to' in t && t.to === 'training-camp' && L.offseason?.stage === 'training-camp') throw new Error('Free agency is already over');
     if ('to' in t && t.to === 'free-agency' && L.offseason && !['fantasy-draft', 'draft', 're-sign'].includes(L.offseason.stage)) throw new Error('Free agency is already open');
     return;
   }
-  if ('to' in t && t.to === 'free-agency') throw new Error('Free agency opens in the offseason');
+  if ('to' in t && (t.to === 'free-agency' || t.to === 'training-camp')) throw new Error('Free agency is in the offseason');
   if ('to' in t && t.to === 'trade-deadline') {
     if (L.phase !== 'regular-season') throw new Error('The trade deadline is during the regular season');
     const d = tradeDeadline(L);
@@ -305,6 +313,8 @@ export function summaryOf(j: SimJob): AdvanceSummary {
 interface Before {
   clock: string | null;
   faLog: number;
+  faHoldouts: number;
+  stage: string | null;
   bids: Record<string, string[]>;
   tx: number;
   pendingSheets: Set<string>;
@@ -320,7 +330,7 @@ function snapshotForNotices(L: League): Before {
   }
   const pendingSheets = new Set(Object.entries(L.offseason?.rfa ?? {}).filter(([, c]) => c.status === 'unsigned' && c.sheet).map(([id]) => id));
   const answers = Object.fromEntries(Object.entries(L.offseason?.responses ?? {}).map(([id, r]) => [id, `${r.day}:${r.result}`]));
-  return { clock: pick ? `${pick.overall}:${pick.teamId}` : null, faLog: L.offseason?.faLog?.length ?? 0, bids, tx: L.transactions.length, pendingSheets, answers };
+  return { clock: pick ? `${pick.overall}:${pick.teamId}` : null, faLog: L.offseason?.faLog?.length ?? 0, faHoldouts: L.offseason?.faHoldoutLog?.length ?? 0, stage: L.offseason?.stage ?? null, bids, tx: L.transactions.length, pendingSheets, answers };
 }
 
 const STAGE_TEXT: Record<string, string> = {
@@ -349,11 +359,10 @@ export function advanceNotices(L: League, before: Before, res: AdvanceResult): {
     if (w + l + o) team.push({ teamId, kind: 'advance', text: `Your team went ${w}-${l}${o ? `-${o}` : ''} in the latest games.`, link: `/team/${teamId}` });
   }
   // Phase and stage changes.
-  let faRound = 0;
   for (const change of res.phaseChanges as string[]) {
     if (change === 'free-agency') {
-      faRound++;
-      all.push(faRound === 1 && !before.faLog ? 'Free agency is open: place your sealed bids.' : `A free-agency bidding round has been resolved.`);
+      if (before.stage !== 'free-agency' && !all.some((x) => x.startsWith('Free agency is open')))
+        all.push(`Free agency is open: make your offers. Each player listens for ${FA_LISTEN_DAYS[0]}-${FA_LISTEN_DAYS[1]} days from his first offer before deciding.`);
     } else if (STAGE_TEXT[change]) all.push(STAGE_TEXT[change]);
   }
   if (res.phaseChanges.includes('offseason' as never) && L.playoffs?.champion) {
@@ -380,6 +389,14 @@ export function advanceNotices(L: League, before: Before, res: AdvanceResult): {
       if (teamId !== r.teamId && ids.includes(r.playerId)) {
         team.push({ teamId, kind: 'free-agency', text: `${who} signed with ${L.teams[r.teamId].city} instead.`, link: '/free-agents' });
       }
+    }
+  }
+  // Free agents who turned down every offer, for the managers who made one.
+  for (const h of (L.offseason?.faHoldoutLog ?? []).slice(before.faHoldouts)) {
+    const p = L.players[h.playerId];
+    const who = p ? `${p.firstName} ${p.lastName}` : h.playerId;
+    for (const teamId of h.teamIds) {
+      if (L.teams[teamId]?.controller.kind === 'human') team.push({ teamId, kind: 'free-agency', text: `${who} turned down every offer, yours included. He's back on the market and a little cheaper.`, link: '/free-agents' });
     }
   }
   // Restricted free agents: offer sheets waiting on you, and results of sheets and hearings.

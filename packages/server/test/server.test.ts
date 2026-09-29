@@ -327,10 +327,23 @@ describe('multiplayer league flow', () => {
       // (Random leagues occasionally leave HAL capped out after re-signing.)
       const bid = Math.floor(Math.min(target.ask.salary * 1.5, budget) / 25_000) * 25_000;
       await bob.offseason.placeBid({ leagueId, playerId: target.id, salary: bid, years: target.ask.years });
-      expect((await bob.offseason.freeAgents({ leagueId })).myBids).toHaveLength(1);
+      const after = await bob.offseason.freeAgents({ leagueId });
+      expect(after.myBids).toHaveLength(1);
+      // He listens for a few days before deciding, so nobody else is locked out.
+      const d = after.myBids[0].decidesIn!;
+      expect(d).toBeGreaterThanOrEqual(3);
+      expect(d).toBeLessThanOrEqual(5);
+      const row = after.players.find((p) => p.id === target.id)!;
+      expect(row.offers).toBeGreaterThanOrEqual(1);
+      await comm.sim.advance({ leagueId, target: { days: 1 } });
+      const next = await bob.offseason.freeAgents({ leagueId });
+      expect(next.faDay).toBe(2);
+      expect(next.players.find((p) => p.id === target.id)).toBeTruthy(); // still listening
+      expect(next.myBids[0].decidesIn).toBe(d - 1);
       bobBid = true;
     }
-    await comm.sim.advance({ leagueId, target: { days: 3 } }); // three bidding rounds
+    await comm.sim.advance({ leagueId, target: { to: 'training-camp' } }); // the rest of free agency
+    expect((await comm.leagues.overview({ leagueId })).offseasonStage).toBe('training-camp');
     const faAfter = await bob.offseason.freeAgents({ leagueId });
     expect(faAfter.results.length).toBeGreaterThan(5);
     const team = await bob.data.team({ leagueId, teamId: 'HAL' });
