@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { advanceLeague, allHumansReady, type AdvanceSummary } from '../advance';
+import { TRPCError } from '@trpc/server';
+import { advanceLeague, allHumansReady, cancelSim, simJob, startAdvance, summaryOf, type AdvanceSummary, type SimJob } from '../advance';
 import { advancerProcedure, badRequest, commissionerProcedure, memberProcedure, router } from '../trpc';
 
 const target = z.union([
@@ -9,10 +10,35 @@ const target = z.union([
 
 export const simRouter = router({
   /** Commissioner-driven advance. Works in both modes (a manual override for scheduled leagues). */
-  advance: advancerProcedure.input(z.object({ target })).mutation(async ({ ctx, input }) => {
-    const summary = await advanceLeague(ctx.db, input.leagueId, input.target, `commissioner:${ctx.user.id}`);
-    await ctx.scheduler.sync(input.leagueId).catch(() => undefined);
-    return summary;
+  advance: advancerProcedure.input(z.object({ target, background: z.boolean().default(false) })).mutation(async ({ ctx, input }) => {
+    let started;
+    try {
+      started = await startAdvance(ctx.db, input.leagueId, input.target, `commissioner:${ctx.user.id}`, {
+        startedBy: ctx.user.displayName,
+        onDone: () => void ctx.scheduler.sync(input.leagueId).catch(() => undefined),
+      });
+    } catch (e) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: (e as Error).message });
+    }
+    // The browser gets the job straight away and follows its progress; other callers wait for the result.
+    if (input.background) return { ...summaryOf(started.job), jobId: started.job.id, running: true };
+    const j = await started.finished;
+    if (j.status === 'failed') throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: j.error ?? 'The sim failed' });
+    return { ...summaryOf(j), jobId: j.id, running: false };
+  }),
+
+  /** The league's sim in progress (or the one that just finished), for everyone in the league. */
+  status: memberProcedure.query(({ input }) => {
+    const j = simJob(input.leagueId);
+    if (!j) return null;
+    // Keep a finished job visible briefly so every client sees how it ended.
+    if (j.status !== 'running' && Date.now() - (j.finishedAt ?? 0) > 60_000) return null;
+    return jobView(j);
+  }),
+
+  cancel: advancerProcedure.mutation(({ input }) => {
+    if (!cancelSim(input.leagueId)) throw badRequest('Nothing is simming');
+    return { ok: true };
   }),
 
   /**
@@ -69,3 +95,24 @@ export const simRouter = router({
     }));
   }),
 });
+
+function jobView(j: SimJob) {
+  return {
+    id: j.id,
+    status: j.status,
+    label: j.label,
+    startedBy: j.startedBy ?? (j.triggeredBy === 'schedule' ? 'the schedule' : j.triggeredBy === 'all-ready' ? 'everyone being ready' : null),
+    startedAt: j.startedAt,
+    finishedAt: j.finishedAt,
+    season: j.season,
+    day: j.day,
+    phase: j.phase,
+    stage: j.stage,
+    done: j.done,
+    total: j.total,
+    progress: j.status === 'running' ? Math.min(0.99, j.done / Math.max(1, j.total)) : 1,
+    games: j.games,
+    cancelling: j.cancel && j.status === 'running',
+    error: j.error,
+  };
+}

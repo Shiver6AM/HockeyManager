@@ -126,16 +126,40 @@ export function Modal({ title, onClose, children }: { title: ReactNode; onClose:
   );
 }
 
-/** Scouts' grade for a player's ceiling, with the projected role on hover (or shown). */
+const GRADE_SCALE: Record<string, number> = { 'A+': 1, A: 0.92, 'A-': 0.84, 'B+': 0.74, B: 0.66, 'B-': 0.58, 'C+': 0.48, C: 0.4, 'C-': 0.32, D: 0.18, F: 0 };
+
+/** Grey (low ceiling) → green (elite), for a scouting grade. */
+export function gradeColor(grade: string): { bg: string; fg: string } {
+  const t = GRADE_SCALE[grade] ?? 0;
+  const hue = Math.round(220 - 78 * t);
+  const sat = Math.round(6 + 62 * t);
+  const light = Math.round(34 + 6 * t);
+  return { bg: `hsl(${hue} ${sat}% ${light}%)`, fg: t > 0.55 ? '#ffffff' : '#cbd5e1' };
+}
+
+/** Scouts' grade for a player's ceiling as a colour-scaled chip, with the projected role on hover (or shown). */
 export function PotentialBadge({ potential, showLabel }: { potential?: { grade: string; projection: string } | null; showLabel?: boolean }) {
   if (!potential) return null;
-  const g = potential.grade[0];
-  const tone =
-    g === 'A' ? 'bg-win/20 text-win' : g === 'B' ? 'bg-blueline/20 text-blue-200' : g === 'C' ? 'bg-rink-700 text-ice-200' : 'bg-rink-800 text-ice-500';
+  const c = gradeColor(potential.grade);
   return (
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap" title={`Potential: ${potential.projection} (${potential.grade})`}>
-      <span className={cx('inline-flex min-w-7 justify-center rounded px-1 py-0.5 text-[11px] font-bold', tone)}>{potential.grade}</span>
+      <span className="inline-flex min-w-7 justify-center rounded px-1 py-0.5 text-[11px] font-bold" style={{ background: c.bg, color: c.fg }}>
+        {potential.grade}
+      </span>
       {showLabel && <span className="text-xs text-ice-400">{potential.projection}</span>}
+    </span>
+  );
+}
+
+/** A trade-value meter, like the trade screen's. */
+export function ValueBar({ value }: { value: number }) {
+  const pct = Math.round(value * 100);
+  return (
+    <span className="inline-flex items-center gap-1.5" title={`Trade value ${pct}/100 to your front office`}>
+      <span className="h-1.5 w-16 overflow-hidden rounded-full bg-rink-700">
+        <span className={cx('block h-1.5 rounded-full', pct >= 65 ? 'bg-win' : pct >= 40 ? 'bg-blueline' : pct >= 20 ? 'bg-warn' : 'bg-goal')} style={{ width: `${Math.max(3, pct)}%` }} />
+      </span>
+      <span className="tabular w-6 text-right text-[11px] text-ice-400">{pct}</span>
     </span>
   );
 }

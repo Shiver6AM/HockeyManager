@@ -48,6 +48,24 @@ import {
   type League,
   type Player,
   proSeasons,
+  MINOR_LEAGUES,
+  minorLeagueOf,
+  playerRegion,
+  REGION_LABEL,
+  SCOUTING,
+  scoutConfidence,
+  balanceRoster,
+  callUp,
+  contractCount,
+  CONTRACT_MAX,
+  nhlRoster,
+  sendDown,
+  activeRoster,
+  ACTIVE_MAX,
+  affiliateLabel,
+  signProspectToFarm,
+  autoLines,
+  healthyRoster,
 } from '@hockey-gm/sim-core';
 import { z } from 'zod';
 import { mutateLeague } from '../advance';
@@ -66,9 +84,50 @@ export function grade(scouted: number): string {
 }
 
 /** What the viewer's scouts think of a player. Managers without a team see a league-wide consensus. */
+/** His most recent NHL season: this one if he's played, otherwise his last. */
+function recentStats(L: League, p: Player) {
+  const now = { skater: L.skaterStats[p.id] ?? null, goalie: L.goalieStats[p.id] ?? null };
+  if ((now.skater?.gp ?? now.goalie?.gp ?? 0) > 0) return { statsSeason: L.season, skaterStats: now.skater, goalieStats: now.goalie };
+  const last = [...(L.careerStats?.[p.id] ?? [])].reverse().find((c) => (c.skater?.gp ?? c.goalie?.gp ?? 0) > 0);
+  return { statsSeason: last?.season ?? null, skaterStats: last?.skater ?? null, goalieStats: last?.goalie ?? null };
+}
+
 function scouting(L: League, viewerTeam: string | null, p: Player) {
   const s = scoutedPotential(L, viewerTeam ?? 'league', p);
   return { grade: grade(s), projection: projectionLabel(s, p.pos) };
+}
+
+/**
+ * A draft-eligible prospect as the viewer's scouts see him: where he plays,
+ * his stats, and a projection only if they've scouted his region (with how
+ * confident they are). Unscouted players show no ratings or projection.
+ */
+export function classView(L: League, viewerTeam: string | null, p: Player, draftSeason: number) {
+  const conf = scoutConfidence(L, viewerTeam ?? 'league', p);
+  const scouted = conf >= SCOUTING.showAt;
+  const s = scoutedPotential(L, viewerTeam ?? 'league', p);
+  const mt = minorLeagueOf(L, p);
+  const region = playerRegion(L, p);
+  const base = publicPlayer(L, p);
+  const stats = L.prospectStats?.[p.id] ?? null;
+  return {
+    ...base,
+    overall: scouted ? base.overall : null,
+    skater: scouted ? base.skater : null,
+    goalie: scouted ? base.goalie : null,
+    age: age(p, draftSeason),
+    league: MINOR_LEAGUES[mt.league]?.name ?? mt.league,
+    club: mt.team,
+    region,
+    regionLabel: REGION_LABEL[region],
+    stats,
+    confidence: Math.round(conf * 100) / 100,
+    scouted,
+    grade: scouted ? grade(s) : null,
+    projection: scouted ? projectionLabel(s, p.pos) : null,
+    /** For sorting: the scouts' read, or a stats-based guess for players nobody has seen. */
+    scoutValue: scouted ? s : 40 + (stats ? Math.min(25, ((stats.g + stats.a) / Math.max(1, stats.gp)) * 12) : 0),
+  };
 }
 
 function requireTeam(m: Membership): string {
@@ -140,12 +199,7 @@ export const offseasonRouter = router({
     const my = ctx.membership.teamId;
     const taken = new Set(d.picks.map((p) => p.playerId).filter(Boolean));
     const list = (my && L.offseason?.draftLists?.[my]) || [];
-    const prospectView = (p: Player) => ({
-      ...publicPlayer(L, p),
-      age: age(p, d.season),
-      ...scouting(L, my, p),
-      scoutValue: scoutedPotential(L, my ?? 'league', p),
-    });
+    const prospectView = (p: Player) => classView(L, my, p, d.season);
     return {
       season: d.season,
       current: d.current,
@@ -360,8 +414,11 @@ export const offseasonRouter = router({
       stage: os?.stage ?? null,
       capRoom: team ? capRoom(L, team) : null,
       payroll: team ? payroll(L, team) : null,
-      rosterCount: team ? team.roster.length : null,
-      rosterMax: L.phase === 'offseason' ? SUMMER_ROSTER_MAX : ROSTER_MAX,
+      /** Contracts count toward the 50-contract limit (NHL + farm). */
+      rosterCount: team ? contractCount(team) : null,
+      rosterMax: CONTRACT_MAX,
+      active: team ? activeRoster(L, team).length : null,
+      activeMax: ACTIVE_MAX,
       myBids: Object.entries(myBids).map(([id, offer]) => ({ playerId: id, name: nameOf(id), offer })),
       results: (os?.faLog ?? [])
         .slice()
@@ -379,11 +436,13 @@ export const offseasonRouter = router({
             attemptsLeft: attemptsLeft(L, p.id, my),
             myBid: myBids[p.id] ?? null,
             ...scouting(L, my, p),
+            potentialValue: scoutedPotential(L, my ?? 'league', p),
             careerGp: (L.careerStats?.[p.id] ?? []).reduce((s, c) => s + (c.skater?.gp ?? c.goalie?.gp ?? 0), 0),
+            ...recentStats(L, p),
           };
         })
         .sort((a, b) => b.overall - a.overall)
-        .slice(0, 150),
+        .slice(0, 400),
     };
   }),
 
@@ -395,7 +454,7 @@ export const offseasonRouter = router({
         const p = L.players[input.playerId];
         const team = L.teams[teamId];
         if (!p) throw badRequest('No such player');
-        if (team.roster.length >= SUMMER_ROSTER_MAX) throw badRequest(`Your roster is full (${SUMMER_ROSTER_MAX}).`);
+        if (contractCount(team) >= CONTRACT_MAX) throw badRequest(`You're at the ${CONTRACT_MAX}-contract limit. Release a player first.`);
         try {
           placeBid(L, team, p, { salary: input.salary, years: input.years });
         } catch (e) {
@@ -420,11 +479,16 @@ export const offseasonRouter = router({
         const team = L.teams[teamId];
         const p = L.players[input.playerId];
         if (!p || !freeAgents(L).includes(p)) throw badRequest('That player is not a free agent');
-        const max = L.phase === 'offseason' ? SUMMER_ROSTER_MAX : ROSTER_MAX + team.roster.filter((id) => L.players[id].injury).length;
-        if (team.roster.length >= max) throw badRequest(`Your roster is full (${max}). Release or send down a player first.`);
+        if (contractCount(team) >= CONTRACT_MAX) throw badRequest(`You're at the ${CONTRACT_MAX}-contract limit. Release a player first.`);
         const base = L.offseason?.freeAgentAsks[p.id] ?? inSeasonAsk(L, p);
         try {
-          return negotiateFreeAgent(L, team, p, { salary: input.salary, years: input.years }, base);
+          const r = negotiateFreeAgent(L, team, p, { salary: input.salary, years: input.years }, base);
+          // In season, a full 23-man roster means he reports to the farm team; call him up when you're ready.
+          if (r.result === 'accept' && L.phase !== 'offseason' && activeRoster(L, team).length > ACTIVE_MAX) {
+            sendDown(L, team, p, 'signed with the NHL roster full');
+            return { ...r, message: `${r.message} Your NHL roster is full, so he reports to ${affiliateLabel(L, team)} until you call him up.`.trim() };
+          }
+          return r;
         } catch (e) {
           throw badRequest((e as Error).message);
         }
@@ -534,10 +598,44 @@ export const offseasonRouter = router({
       const team = L.teams[teamId];
       const p = L.players[input.playerId];
       if (!p || p.prospectOf !== teamId) throw badRequest('Not one of your prospects');
-      const max = L.phase === 'offseason' ? SUMMER_ROSTER_MAX : ROSTER_MAX + team.roster.filter((id) => L.players[id].injury).length;
-      if (team.roster.length >= max) throw badRequest(`Your roster is full (${max}). Release or send down a player first.`);
+      if (contractCount(team) >= CONTRACT_MAX) throw badRequest(`You're at the ${CONTRACT_MAX}-contract limit. Release a player first.`);
       if (capRoom(L, team) < 950_000) throw badRequest('Not enough cap room for an entry-level deal');
       promoteProspect(L, team, p);
+      balanceRoster(L, team);
+      fixLines(L, teamId, p.id);
+    });
+    return { ok: true };
+  }),
+
+  /** Sign a prospect to his entry-level deal and send him to the farm team. */
+  signToFarm: memberProcedure.input(z.object({ playerId: z.string() })).mutation(async ({ ctx, input }) => {
+    const teamId = requireTeam(ctx.membership);
+    await mutateLeague(ctx.db, input.leagueId, (L) => {
+      const p = L.players[input.playerId];
+      if (!p) throw badRequest('No such player');
+      try {
+        signProspectToFarm(L, L.teams[teamId], p);
+      } catch (e) {
+        throw badRequest((e as Error).message);
+      }
+    });
+    return { ok: true };
+  }),
+
+  /** Call a player up from the farm team (someone else may have to go down). */
+  callUp: memberProcedure.input(z.object({ playerId: z.string(), sendDownId: z.string().optional() })).mutation(async ({ ctx, input }) => {
+    const teamId = requireTeam(ctx.membership);
+    await mutateLeague(ctx.db, input.leagueId, (L) => {
+      const team = L.teams[teamId];
+      const p = L.players[input.playerId];
+      if (!p) throw badRequest('No such player');
+      try {
+        if (input.sendDownId) sendDown(L, team, L.players[input.sendDownId]);
+        callUp(L, team, p);
+      } catch (e) {
+        throw badRequest((e as Error).message);
+      }
+      fixLines(L, teamId, input.sendDownId ?? p.id);
     });
     return { ok: true };
   }),
@@ -546,7 +644,11 @@ export const offseasonRouter = router({
     const teamId = requireTeam(ctx.membership);
     await mutateLeague(ctx.db, input.leagueId, (L) => {
       try {
-        demoteToProspects(L, L.teams[teamId], L.players[input.playerId]);
+        const team = L.teams[teamId];
+        const p = L.players[input.playerId];
+        if (!p) throw new Error('No such player');
+        if (nhlRoster(L, team).filter((x) => x.id !== p.id).length < 20) throw new Error('You need at least 20 players on the NHL roster');
+        sendDown(L, team, p);
       } catch (e) {
         throw badRequest((e as Error).message);
       }
@@ -581,7 +683,14 @@ function inSeasonAsk(L: League, p: Player) {
 function fixLines(L: League, teamId: string, playerId: string) {
   const t = L.teams[teamId];
   const ids = [...t.lines.forwards.flat(), ...t.lines.defense.flat(), ...t.lines.goalies];
-  if (ids.includes(playerId)) t.autoLines = true;
+  if (ids.includes(playerId) || t.autoLines) {
+    t.autoLines = true;
+    try {
+      t.lines = autoLines(healthyRoster(L, t), t.tactics);
+    } catch {
+      /* short of bodies until the next game-day call-up */
+    }
+  }
 }
 
 function attemptsLeft(L: League, playerId: string, teamId: string | null) {

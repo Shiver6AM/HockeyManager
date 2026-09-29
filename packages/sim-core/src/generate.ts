@@ -233,13 +233,18 @@ export function talentLevel(league: League): number {
   return talentStats(league).mean;
 }
 
-export function talentStats(league: League): { mean: number; sd: number } {
-  const n = Object.keys(league.teams).length * 23;
-  const ovrs = Object.values(league.players)
-    .filter((p) => !league.retired?.[p.id])
-    .map(overall)
-    .sort((a, b) => b - a)
-    .slice(0, n);
+/**
+ * Talent of an NHL-shaped pool: the best 21 skaters and 2 goalies per team
+ * (positions counted separately so a deep pool of AHL goalies can't skew it),
+ * or just the skaters or just the goalies of that pool.
+ */
+export function talentStats(league: League, which: 'all' | 'skaters' | 'goalies' = 'all'): { mean: number; sd: number } {
+  const teams = Object.keys(league.teams).length;
+  const active = Object.values(league.players).filter((p) => !league.retired?.[p.id] && p.draftClass === undefined);
+  const best = (ps: typeof active, n: number) => ps.map(overall).sort((a, b) => b - a).slice(0, n);
+  const sk = which === 'goalies' ? [] : best(active.filter((p) => p.pos !== 'G'), teams * 21);
+  const gl = which === 'skaters' ? [] : best(active.filter((p) => p.pos === 'G'), teams * 2);
+  const ovrs = [...sk, ...gl];
   const mean = ovrs.reduce((s, x) => s + x, 0) / ovrs.length;
   const sd = Math.sqrt(ovrs.reduce((s, x) => s + (x - mean) ** 2, 0) / ovrs.length);
   return { mean, sd };
@@ -380,6 +385,8 @@ export function generateLeague(opts: GenerateOptions): League {
   const talent = talentStats(league);
   league.settings.talentAnchor = talent.mean;
   league.settings.talentSpread = talent.sd;
+  league.settings.skaterAnchor = talentStats(league, 'skaters');
+  league.settings.goalieAnchor = talentStats(league, 'goalies');
   league.schedule = buildSchedule(Object.values(teams), new Rng(deriveSeed(opts.seed, `schedule:${season}`)));
   return league;
 }

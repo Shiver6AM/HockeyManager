@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Badge, Button, Card, cx, Empty, ErrorBox, TeamChip } from '../components/ui';
 import { useTRPC } from '../trpc';
 import { useLeague } from './LeagueLayout';
+import { useSim } from '../sim';
 
 const STAGES = [
   { id: 'review', label: 'Season review' },
@@ -41,7 +42,7 @@ export function OffseasonPanel() {
   const qc = useQueryClient();
   const os = useQuery(trpc.offseason.overview.queryOptions({ leagueId: L.id }));
   const refresh = () => qc.invalidateQueries();
-  const advance = useMutation(trpc.sim.advance.mutationOptions({ onSuccess: refresh }));
+  const sim = useSim();
   const ready = useMutation(trpc.sim.setReady.mutationOptions({ onSuccess: refresh }));
   if (os.isLoading) return null;
   const o = os.data;
@@ -121,7 +122,7 @@ export function OffseasonPanel() {
         <div className="mt-5 border-t border-rink-700 pt-4">
           <p className="mb-2 text-xs font-semibold tracking-wider text-ice-400 uppercase">{L.isCommissioner ? 'Commissioner' : 'Co-commissioner'}</p>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => advance.mutate({ leagueId: L.id, target: { days: 1 } })} disabled={advance.isPending}>
+            <Button onClick={() => sim.start({ days: 1 })} disabled={sim.running || sim.starting}>
               {stage === 'review'
                 ? 'Begin the offseason'
                 : stage === 'draft'
@@ -135,11 +136,11 @@ export function OffseasonPanel() {
                       : 'Next stage'}
             </Button>
             {(stage === 'review' || stage === 'draft' || stage === 're-sign') && (
-              <Button variant="secondary" onClick={() => advance.mutate({ leagueId: L.id, target: { to: 'free-agency' } })} disabled={advance.isPending}>
+              <Button variant="secondary" onClick={() => sim.start({ to: 'free-agency' })} disabled={sim.running || sim.starting}>
                 Sim to free agency
               </Button>
             )}
-            <Button variant="ghost" onClick={() => advance.mutate({ leagueId: L.id, target: { to: 'next-season' } })} disabled={advance.isPending}>
+            <Button variant="ghost" onClick={() => sim.start({ to: 'next-season' })} disabled={sim.running || sim.starting}>
               Skip to next season
             </Button>
           </div>
@@ -147,7 +148,7 @@ export function OffseasonPanel() {
         </div>
       )}
       <div className="mt-2">
-        <ErrorBox error={advance.error ?? ready.error} />
+        <ErrorBox error={sim.startError ?? ready.error} />
       </div>
     </Card>
   );

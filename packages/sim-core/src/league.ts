@@ -1,11 +1,15 @@
 import { playoffMvp, regularSeasonAwards } from './awards';
+import { initScouts, scoutingDay } from './scouting';
+import { ensureDraftClass } from './draft';
 import { recordChemistry } from './chemistry';
 import { initSkillsCoaches, trainingDay } from './skills';
 import { prospectGameDay } from './prospects';
+import { initFarm } from './farmInit';
 import { simulateGame } from './game';
 import { currentRound, HOME_PATTERN, nextRound, seedPlayoffs, WINS_NEEDED } from './playoffs';
 import { deriveSeed } from './rng';
-import { prepareTeamForGame } from './roster';
+import { aiRosterMoves, prepareTeamForGame } from './roster';
+import { balanceRoster } from './farm';
 import { bookGame, initFinances, ownerReviews } from './finances';
 import { addNews, gameNews, newsFromTransactions } from './news';
 import { initStaff, refillStaffPool, trainerInjuryMultiplier } from './staff';
@@ -174,7 +178,10 @@ export function ensureLeagueLife(league: League) {
   const teams = Object.values(league.teams);
   if (teams.some((t) => !t.staff)) initStaff(league);
   if (teams.some((t) => !t.finances)) initFinances(league);
-  if (teams.some((t) => !t.skillsCoaches)) initSkillsCoaches(league);
+  if (teams.some((t) => !t.skillsCoaches || !t.goalieCoach)) initSkillsCoaches(league);
+  if (teams.some((t) => !t.farmStocked)) initFarm(league);
+  if (teams.some((t) => !t.scouts)) initScouts(league);
+  ensureDraftClass(league);
   refillStaffPool(league); // no-op unless the job market is thin
   league.newsState ??= { txCursor: league.transactions.length, streaks: {}, nextId: 1 };
 }
@@ -187,7 +194,11 @@ function simDay(league: League): ScheduledGame[] {
 }
 
 function simDayInner(league: League): ScheduledGame[] {
-  if (league.day > 0) healInjuries(league);
+  if (league.day > 0) {
+    healInjuries(league);
+    // Players back from injury retake their spots: extras go down to the farm.
+    for (const t of Object.values(league.teams)) balanceRoster(league, t);
+  }
   const yesterday = teamsPlayingOn(league, league.day - 1);
   const played: ScheduledGame[] = [];
 
@@ -200,6 +211,8 @@ function simDayInner(league: League): ScheduledGame[] {
     }
     trainingDay(league);
     prospectGameDay(league);
+    scoutingDay(league);
+    if (league.day % 7 === 6) for (const t of Object.values(league.teams)) aiRosterMoves(league, t);
     league.day++;
     const deadline = tradeDeadline(league);
     if (league.day === deadline) addNews(league, 'trade', 'It’s trade deadline day: deals must be done before the next game day.');
@@ -213,6 +226,7 @@ function simDayInner(league: League): ScheduledGame[] {
   if (league.phase === 'playoffs' && league.playoffs) {
     played.push(...playoffDay(league, yesterday));
     trainingDay(league);
+    scoutingDay(league);
     league.day++;
   }
   return played;

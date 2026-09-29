@@ -119,10 +119,13 @@ describe('offseason with a human manager', () => {
     const team = L.teams[ME];
     // Bid generously on a few mid-market players; rival bids and team fit decide the rest.
     // (Spread whatever cap room the team has over two bids.)
-    const targets = freeAgents(L)
-      .filter((p) => L.offseason!.freeAgentAsks[p.id]?.salary * 1.5 <= capRoom(L, team) / 2)
-      .sort((a, b) => overall(b) - overall(a))
-      .slice(0, 2);
+    // (Spread over two bids when there's room, else one.)
+    const pick = (n: number) =>
+      freeAgents(L)
+        .filter((p) => L.offseason!.freeAgentAsks[p.id]?.salary * 1.5 <= capRoom(L, team) / n)
+        .sort((a, b) => overall(b) - overall(a))
+        .slice(0, n);
+    const targets = pick(2).length ? pick(2) : pick(1);
     expect(targets.length).toBeGreaterThanOrEqual(1);
     for (const t of targets) {
       const ask = L.offseason!.freeAgentAsks[t.id];
@@ -158,7 +161,8 @@ describe('offseason with a human manager', () => {
     expect(Object.keys(L.skaterStats)).toHaveLength(0);
     for (const t of Object.values(L.teams)) {
       // (Emergency call-ups can cover players still injured from last season.)
-      expect(t.roster.filter((id) => !L.players[id].injury).length).toBeLessThanOrEqual(ROSTER_MAX + 1);
+      expect(t.roster.filter((id) => !L.players[id].injury && !L.players[id].farm).length).toBeLessThanOrEqual(ROSTER_MAX + 1);
+      expect(t.roster.length).toBeLessThanOrEqual(50);
       for (const id of [...t.lines.forwards.flat(), ...t.lines.defense.flat(), ...t.lines.goalies]) {
         expect(L.players[id]?.teamId).toBe(t.id);
       }

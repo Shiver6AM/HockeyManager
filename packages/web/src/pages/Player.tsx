@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Badge, Card, Empty, ErrorBox, Rating, Spinner, TeamChip, TeamLink } from '../components/ui';
 import { gaa, money, signed, svPct, toi } from '../format';
+import { useSort } from '../sort';
 import { useTRPC } from '../trpc';
 import { useLeague } from './LeagueLayout';
 
@@ -257,6 +258,47 @@ function CareerTables({ career, isG }: { career: CareerRow[]; isG: boolean }) {
   const nhl = career.map((c) => (isG ? gl(c) : sk(c))).filter(Boolean);
   const sum = (k: string) => nhl.reduce((s, x) => s + ((x as unknown as Record<string, number>)[k] ?? 0), 0);
   const dash = <td className="num text-ice-600">—</td>;
+  type R = Record<string, number | undefined>;
+  const line = (c: CareerRow): R | null => {
+    const nhlLine = isG ? gl(c) : sk(c);
+    if (nhlLine) return nhlLine as unknown as R;
+    return which === 'regular' && c.minor ? (c.minor as unknown as R) : null;
+  };
+  const f = (k: string) => (c: CareerRow) => line(c)?.[k] ?? null;
+  const cols: Record<string, (c: CareerRow) => number | string | null> = {
+    season: (c) => c.season * 10 + (sk(c) || gl(c) ? 1 : 0),
+    team: (c) => c.team?.abbr ?? c.minor?.league ?? null,
+    age: (c) => c.age,
+    ovr: (c) => c.overall,
+    gp: f('gp'),
+    gs: f('gs'),
+    g: f('g'),
+    a: f('a'),
+    p: (c) => (line(c) ? (line(c)!.g ?? 0) + (line(c)!.a ?? 0) : null),
+    pm: f('pm'),
+    pim: f('pim'),
+    ppg: f('ppg'),
+    ppa: f('ppa'),
+    shg: f('shg'),
+    gwg: f('gwg'),
+    sog: f('sog'),
+    spct: (c) => (line(c)?.sog ? (line(c)!.g ?? 0) / line(c)!.sog! : null),
+    hits: f('hits'),
+    blk: f('blk'),
+    fo: (c) => (line(c)?.fow || line(c)?.fol ? (line(c)!.fow ?? 0) / ((line(c)!.fow ?? 0) + (line(c)!.fol ?? 0)) : null),
+    toi: (c) => (line(c)?.toi && line(c)?.gp ? line(c)!.toi! / line(c)!.gp! : null),
+    w: f('w'),
+    l: f('l'),
+    otl: f('otl'),
+    sa: f('sa'),
+    ga: f('ga'),
+    sv: (c) => (line(c)?.sa ? 1 - (line(c)!.ga ?? 0) / line(c)!.sa! : null),
+    gaa: (c) => (line(c)?.gp ? -((line(c)!.ga ?? 0) / line(c)!.gp!) : null),
+    so: f('so'),
+  };
+  const { sorted, Th } = useSort(rows, cols, { key: 'season', dir: 'asc' }, isG ? 'career-g' : 'career-s');
+  const SK: [string, string][] = [['gp', 'GP'], ['g', 'G'], ['a', 'A'], ['p', 'P'], ['pm', '+/-'], ['pim', 'PIM'], ['ppg', 'PPG'], ['ppa', 'PPA'], ['shg', 'SHG'], ['gwg', 'GWG'], ['sog', 'SOG'], ['spct', 'S%'], ['hits', 'HIT'], ['blk', 'BLK'], ['fo', 'FO%'], ['toi', 'TOI']];
+  const GK: [string, string][] = [['gp', 'GP'], ['gs', 'GS'], ['w', 'W'], ['l', 'L'], ['otl', 'OTL'], ['sa', 'SA'], ['ga', 'GA'], ['sv', 'SV%'], ['gaa', 'GAA'], ['so', 'SO']];
   return (
     <>
       <div className="-mt-1 mb-3 flex gap-1 text-xs">
@@ -276,23 +318,20 @@ function CareerTables({ career, isG }: { career: CareerRow[]; isG: boolean }) {
         <div className="-mx-4 -mb-4 overflow-x-auto">
           <table className="table text-xs">
             <thead>
-              {isG ? (
-                <tr>
-                  <th>Season</th><th>Team</th><th className="num">Age</th><th className="num">OVR</th><th className="num">GP</th><th className="num">GS</th>
-                  <th className="num">W</th><th className="num">L</th><th className="num">OTL</th><th className="num">SA</th><th className="num">GA</th>
-                  <th className="num">SV%</th><th className="num">GAA</th><th className="num">SO</th>
-                </tr>
-              ) : (
-                <tr>
-                  <th>Season</th><th>Team</th><th className="num">Age</th><th className="num">OVR</th><th className="num">GP</th><th className="num">G</th>
-                  <th className="num">A</th><th className="num">P</th><th className="num">+/-</th><th className="num">PIM</th><th className="num">PPG</th>
-                  <th className="num">PPA</th><th className="num">SHG</th><th className="num">GWG</th><th className="num">SOG</th><th className="num">S%</th>
-                  <th className="num">HIT</th><th className="num">BLK</th><th className="num">FO%</th><th className="num">TOI</th>
-                </tr>
-              )}
+              <tr>
+                <Th k="season">Season</Th>
+                <Th k="team">Team</Th>
+                <Th k="age" className="num">Age</Th>
+                <Th k="ovr" className="num">OVR</Th>
+                {(isG ? GK : SK).map(([k, label]) => (
+                  <Th key={k} k={k} className="num">
+                    {label}
+                  </Th>
+                ))}
+              </tr>
             </thead>
             <tbody>
-              {rows.map((c) => {
+              {sorted.map((c) => {
                 const minor = which === 'regular' && !sk(c) && !gl(c) ? c.minor : null;
                 const s = sk(c);
                 const g = gl(c);

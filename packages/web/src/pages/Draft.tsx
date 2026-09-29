@@ -3,9 +3,9 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Rating, Spinner, TeamChip } from '../components/ui';
 import { useTRPC } from '../trpc';
+import { ClassTable, GRADE_TONE } from '../components/ClassTable';
 import { useLeague } from './LeagueLayout';
 
-const GRADE_TONE: Record<string, string> = { A: 'text-win', B: 'text-blue-300', C: 'text-ice-200', D: 'text-ice-400', F: 'text-ice-500' };
 
 export function DraftPage() {
   const L = useLeague();
@@ -14,7 +14,6 @@ export function DraftPage() {
   const board = useQuery({ ...trpc.offseason.draftBoard.queryOptions({ leagueId: L.id }), refetchInterval: 4000 });
   const pick = useMutation(trpc.offseason.makePick.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));
   const saveList = useMutation(trpc.offseason.setDraftList.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));
-  const [pos, setPos] = useState<string>('All');
   const [round, setRound] = useState<number | null>(null);
   const b = board.data;
   const byId = useMemo(() => new Map(b?.available.map((p) => [p.id, p]) ?? []), [b]);
@@ -28,7 +27,6 @@ export function DraftPage() {
   const shownRound = round ?? (clock?.round ?? 1);
   const list = b.myList;
   const setList = (ids: string[]) => saveList.mutate({ leagueId: L.id, playerIds: ids });
-  const filtered = b.available.filter((p) => pos === 'All' || (pos === 'F' ? ['C', 'LW', 'RW'].includes(p.pos) : p.pos === pos));
 
   return (
     <div className="space-y-5">
@@ -56,71 +54,31 @@ export function DraftPage() {
         <div className="space-y-5 xl:col-span-2">
           <Card
             title={`Available prospects (${b.available.length})`}
-            action={
-              <div className="flex rounded-md bg-rink-800 p-0.5 text-xs">
-                {['All', 'F', 'D', 'G'].map((x) => (
-                  <button key={x} onClick={() => setPos(x)} className={cx('rounded px-2 py-0.5 font-semibold', pos === x ? 'bg-rink-600 text-white' : 'text-ice-400')}>
-                    {x}
-                  </button>
-                ))}
-              </div>
-            }
           >
             <p className="-mt-1 mb-3 text-xs text-ice-400">
-              Grades and projections come from <span className="text-ice-200">your</span> scouts. Other teams' scouts see things differently, and nobody sees
-              true potential. OVR is what the player can do today.
+              What you know depends on where <span className="text-ice-200">your</span> scouts went this season: prospects in regions you scouted show a
+              grade, a projection and how confident your scouts are; the rest are just names and stat lines. Other teams saw things differently.
             </p>
-            <div className="-mx-4 -mb-4 max-h-[36rem] overflow-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Prospect</th>
-                    <th>Pos</th>
-                    <th className="num">Age</th>
-                    <th className="num">OVR</th>
-                    <th className="num">Grade</th>
-                    <th>Projection</th>
-                    <th>Style</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.slice(0, 120).map((p) => (
-                    <tr key={p.id}>
-                      <td>
-                        <Link to={`/league/${L.id}/player/${p.id}`} className="text-ice-50 hover:underline">
-                          {p.name}
-                        </Link>{' '}
-                        <span className="text-xs text-ice-500">{p.nationality}</span>
-                      </td>
-                      <td className="text-ice-400">{p.pos}</td>
-                      <td className="num">{p.age}</td>
-                      <td className="num">
-                        <Rating value={p.overall} />
-                      </td>
-                      <td className={cx('num font-display text-base', GRADE_TONE[p.grade[0]])}>{p.grade}</td>
-                      <td className="text-ice-300">{p.projection}</td>
-                      <td className="text-xs text-ice-400">{p.archetype}</td>
-                      <td className="text-right">
-                        {mine && inDraftStage ? (
-                          <Button className="px-2 py-0.5 text-xs" onClick={() => pick.mutate({ leagueId: L.id, playerId: p.id })} disabled={pick.isPending}>
-                            Draft
-                          </Button>
-                        ) : (
-                          b.myTeamId &&
-                          !done &&
-                          !list.includes(p.id) && (
-                            <Button variant="ghost" className="px-2 py-0.5 text-xs" onClick={() => setList([...list, p.id])}>
-                              + List
-                            </Button>
-                          )
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ClassTable
+              players={b.available}
+              leagueId={L.id}
+              storageKey="draft-board"
+              action={(p) =>
+                mine && inDraftStage ? (
+                  <Button className="px-2 py-0.5 text-xs" onClick={() => pick.mutate({ leagueId: L.id, playerId: p.id })} disabled={pick.isPending}>
+                    Draft
+                  </Button>
+                ) : (
+                  b.myTeamId &&
+                  !done &&
+                  !list.includes(p.id) && (
+                    <Button variant="ghost" className="px-2 py-0.5 text-xs" onClick={() => setList([...list, p.id])}>
+                      + List
+                    </Button>
+                  )
+                )
+              }
+            />
           </Card>
         </div>
 
@@ -146,7 +104,7 @@ export function DraftPage() {
                         <Link to={`/league/${L.id}/player/${id}`} className="flex-1 truncate hover:underline">
                           {p.name} <span className="text-xs text-ice-500">{p.pos}</span>
                         </Link>
-                        <span className={cx('font-display', GRADE_TONE[p.grade[0]])}>{p.grade}</span>
+                        <span className={cx('font-display', p.grade ? GRADE_TONE[p.grade[0]] : 'text-ice-600')}>{p.grade ?? '?'}</span>
                         <button className="px-1 text-ice-400 hover:text-white" onClick={() => move(-1)} aria-label="Move up">
                           ↑
                         </button>

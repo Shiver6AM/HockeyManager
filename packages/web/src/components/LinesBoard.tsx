@@ -27,7 +27,7 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { PlayerPeek } from './PlayerPeek';
 import { Badge, cx } from './ui';
 import type { Outputs } from '../trpc';
 import { bonusColor, lineChemistry, signed1, spotBonus, type Basis, type LiveChem } from '../chemistry';
@@ -167,8 +167,10 @@ function Card({
   selected,
   dragging,
   fit,
+  onInfo,
 }: {
   p?: P;
+  onInfo?: () => void;
   compact?: boolean;
   warn?: string;
   invalid?: boolean;
@@ -194,6 +196,24 @@ function Card({
     >
       <span className={cx('flex items-center justify-between gap-1 font-semibold', !color && 'text-ice-50')}>
         <span className="truncate">{compact ? p.lastName : `${p.firstName[0]}. ${p.lastName}`}</span>
+        {onInfo && (
+          <button
+            type="button"
+            aria-label={`Details for ${p.name}`}
+            title="Stats and situational skills"
+            className="ml-auto shrink-0 rounded-full border border-current/30 px-1 text-[9px] leading-[14px] font-bold opacity-60 hover:opacity-100"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onInfo();
+            }}
+          >
+            i
+          </button>
+        )}
         {fit && (
           <span className="tabular shrink-0 rounded bg-black/15 px-1 text-[10px]">
             {fit.bonus !== undefined ? signed1(fit.bonus) : fit.value}
@@ -227,7 +247,9 @@ function SlotCell({
   selected,
   onTap,
   fit,
+  onInfo,
 }: {
+  onInfo?: () => void;
   refv: Ref;
   p?: P;
   tag?: string;
@@ -264,13 +286,13 @@ function SlotCell({
           !drop.isOver && droppable && 'ring-1 ring-win/40',
         )}
       >
-        <Card p={p} compact={compact} warn={warn} invalid={invalid} selected={selected} fit={fit} />
+        <Card p={p} compact={compact} warn={warn} invalid={invalid} selected={selected} fit={fit} onInfo={onInfo} />
       </div>
     </div>
   );
 }
 
-function BenchCard({ p, selected, onTap }: { p: P; selected: boolean; onTap: () => void }) {
+function BenchCard({ p, selected, onTap, onInfo }: { p: P; selected: boolean; onTap: () => void; onInfo: () => void }) {
   const drag = useDraggable({ id: `bench:${p.id}`, data: { src: { type: 'bench', id: p.id } satisfies Source } });
   return (
     <div
@@ -280,7 +302,7 @@ function BenchCard({ p, selected, onTap }: { p: P; selected: boolean; onTap: () 
       onClick={onTap}
       className={cx('w-40 cursor-grab active:cursor-grabbing', drag.isDragging && 'opacity-30')}
     >
-      <Card p={p} selected={selected} />
+      <Card p={p} selected={selected} onInfo={onInfo} />
     </div>
   );
 }
@@ -329,6 +351,7 @@ export function LinesBoard({
   const [active, setActive] = useState<Source | null>(null);
   const [picked, setPicked] = useState<Source | null>(null);
   const [view, setView] = useState<'main' | 'special'>('main');
+  const [info, setInfo] = useState<string | null>(null);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
@@ -430,6 +453,7 @@ export function LinesBoard({
         selected={!!picked && picked.type === 'slot' && refKey(picked.ref) === refKey(r)}
         onTap={() => tapSlot(r)}
         fit={fit}
+        onInfo={p ? () => setInfo(p.id) : undefined}
       />
     );
   };
@@ -494,7 +518,7 @@ export function LinesBoard({
         </div>
         <p className="min-w-0 flex-1 text-sm text-ice-400">
           Drag to swap, drag a scratch onto a slot to dress him, or drag a dressed skater onto a special-unit spot. On a phone, tap one player then where he
-          goes. Special-unit cards run from white (costs him) to green (plays to his strengths); the number is his rating bonus in that spot. Line
+          goes. Tap the ⓘ on any card for his stats and situational skills. Special-unit cards run from white (costs him) to green (plays to his strengths); the number is his rating bonus in that spot. Line
           chemistry chips update as you move players.
           {picked && (
             <button className="ml-2 text-blue-300 hover:underline" onClick={() => setPicked(null)}>
@@ -509,21 +533,13 @@ export function LinesBoard({
           {bench.length ? (
             <div className="flex flex-wrap gap-2">
               {bench.map((p) => (
-                <div key={p.id} className="relative">
-                  <BenchCard
-                    p={p}
-                    selected={picked?.type === 'bench' && picked.id === p.id}
-                    onTap={() => setPicked(picked?.type === 'bench' && picked.id === p.id ? null : { type: 'bench', id: p.id })}
-                  />
-                  <Link
-                    to={`/league/${leagueId}/player/${p.id}`}
-                    className="absolute top-1 right-1 text-[10px] text-ice-500 hover:text-white"
-                    title="Player page"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    ↗
-                  </Link>
-                </div>
+                <BenchCard
+                  key={p.id}
+                  p={p}
+                  selected={picked?.type === 'bench' && picked.id === p.id}
+                  onTap={() => setPicked(picked?.type === 'bench' && picked.id === p.id ? null : { type: 'bench', id: p.id })}
+                  onInfo={() => setInfo(p.id)}
+                />
               ))}
             </div>
           ) : (
@@ -623,6 +639,7 @@ export function LinesBoard({
       )}
 
       <DragOverlay dropAnimation={null}>{overlayId ? <div className="w-40"><Card p={byId.get(overlayId)} dragging /></div> : null}</DragOverlay>
+      {info && byId.get(info) && <PlayerPeek p={byId.get(info)!} catalog={catalog} leagueId={leagueId} onClose={() => setInfo(null)} />}
       {bench.some((p) => p.injury) && (
         <p className="mt-2 text-xs text-ice-500">
           <Badge tone="warn">INJ</Badge> Injured players can be placed, but they'll be swapped for your best healthy scratch at game time.

@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 123 tests: sim determinism, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 137 tests: sim determinism, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -101,11 +101,34 @@ simulate, save the state and box scores, clear ready flags, and write to the aud
 (*League → Advance history*). Because each game has its own seed, simming 7 days one at a
 time produces exactly the same league as simming a week at once. The tests check this.
 
+Advances from the browser run as **background jobs** on the server, one day at a time,
+so a long sim never hangs a request. Every manager in the league sees a progress bar under
+the header ("Simming to the trade deadline · Jan 14 · 412 games · by Jon"), the sim
+buttons are disabled for everyone while it runs (so co-commissioners can't start a
+second one), and changes to the league are refused until it finishes. Advancers can
+**cancel**: the days already simmed are kept. Progress is saved every few seconds.
+
 ### Managing your team
 
-- **Roster:** ratings, season stats, contracts (AAV, years left and status after expiry
-  as separate, sortable columns) and injury status, with the same filters as the trade
-  screen.
+- **Roster:** position, potential (a chip shaded grey to green), a trade-value bar,
+  ratings, stats, contracts and injury status, in separate columns. Stats can be shown
+  for this season, any past season or career totals. Every table in the game sorts by
+  every column.
+- **Farm team:** each club has an AHL affiliate. Teams hold up to **50 contracts**, and
+  at most **23 healthy players** are on the NHL roster (injured players don't count).
+  Send players down and call them up yourself; when someone is hurt, the replacement
+  comes up from the farm instead of a free agent being signed, and when he's healthy the
+  weakest extra player goes back down. Only the part of a buried salary above $1.15M
+  counts against the cap. AI teams promote farm players who outgrow the AHL.
+- **Contracts tab:** every player's cap hit season by season for seven seasons (current
+  deal, agreed extensions, then UFA/RFA), the cap outlook for each season (committed,
+  dead cap, space), each player's interest in re-signing (team success, role, loyalty,
+  ambition, age), and Extend / Release (buyout) buttons.
+- **Free agents:** filter by position, archetype, age, overall, potential, term and AAV
+  wanted, points, games played and interest in your team; every variable has its own
+  sortable column. In season, a signing with a full roster reports to the farm team.
+- **Player details from the lines:** the ⓘ on any card opens his ratings, situational
+  (special-teams role) skills and stats.
 - **Lines editor (drag and drop):** 4 forward lines, 3 D pairs, starter/backup goalie,
   2 PP units and 2 PK units, plus an *Other situations* view: two 4-on-4 units, three
   3-on-3 overtime units, a 4-on-3 power play, a 3-man penalty kill, the 6-skater extra
@@ -214,9 +237,21 @@ anyone who hasn't acted gets sensible defaults.
   players a grade (A+ … F) and a projection specific to his position ("First-line
   center", "Top-pair defenseman", "Starting goalie"…). Every team's scouts
   make different, repeatable errors.
-- **Prospects:** draft picks develop outside the 23-man roster and the cap, playing in
-  junior (19 and under) or the AHL, with stats that go into their career lines. Promoting
-  one signs a 3-year entry-level deal. Unsigned prospects are released at 23.
+- **Area scouts and fog of war:** next summer's draft class plays all season in real
+  development leagues (WHL, OHL, QMJHL, USHL, NCAA, J20, SHL, Liiga, MHL, KHL, Czech
+  Extraliga, Swiss NL, DEL…), grouped into eight regions. Each team employs up to four
+  area scouts with an evaluation skill and a familiarity with each region; assign them
+  to regions (or let the head scout decide). Every day in a region builds your
+  confidence there, faster for skilled scouts who know the area. On the Scouting page
+  and draft board, prospects from regions you haven't scouted show no ratings or
+  projection, and projections sharpen as confidence grows. Knowledge resets each season.
+- **Prospects:** unsigned draft picks keep playing with their junior, college or
+  European club (shown on the Prospects tab), with stats that go into their career lines.
+  Signing one gives him a 3-year entry-level deal. Unsigned prospects are released at 23.
+- **Goalie coaches:** every team has a goalie coach who trains up to four goalies'
+  reflexes, positioning, rebound control or mental game, alongside the skills coaches.
+- **Standings:** division, wild-card, conference and league views, with seeds (M1…,
+  WC1, WC2) and a cut line below the second wild card.
 - **Retirement:** age sets the baseline (rare before 32, likely by the late 30s,
   certain at 44), but ability matters: a serviceable veteran keeps playing, and stars
   can go into their 40s, while fading players and unsigned veterans hang them up early.

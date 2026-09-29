@@ -1,7 +1,20 @@
 import {
   ARENA_CAPACITY,
+  assignScout,
+  hireScout,
+  playerRegion,
+  regionConfidence,
+  REGIONS,
+  releaseScout,
+  SCOUTING,
+  scoutPayroll,
+  scoutRate,
+  scoutRegions,
+  type Region,
+  type Scout,
   coachability,
   coachabilityLabel,
+  coachesOf,
   hireSkillsCoach,
   overall,
   projectedSeasonGain,
@@ -33,6 +46,7 @@ import { mutateLeague } from '../advance';
 import { readLeague } from '../state';
 import { authedProcedure, badRequest, memberProcedure, router } from '../trpc';
 import { teamInfo } from '../views';
+import { classView } from './offseason';
 
 function financeView(f: TeamFinances) {
   return {
@@ -101,7 +115,7 @@ export const lifeRouter = router({
       isMine,
       market: t.market ?? 1,
       staff: STAFF_ROLES.map((role) => ({ role, label: STAFF_LABEL[role], member: t.staff?.[role] ?? null })),
-      staffPayroll: staffPayroll(t) + skillsCoachPayroll(t),
+      staffPayroll: staffPayroll(t) + skillsCoachPayroll(t) + scoutPayroll(t),
       finances: t.finances ? financeView(t.finances) : null,
       history: (t.financeHistory ?? []).map(financeView).reverse(),
       cash: t.cash ?? 0,
@@ -142,6 +156,7 @@ export const lifeRouter = router({
       yearsLeft: c.yearsLeft,
       auto: c.auto,
       assignments: c.assignments,
+      kind: c.kind ?? 'skills',
     });
     const skillOptions = [...new Set(t.roster.flatMap((id) => (L.players[id] ? skillsFor(L.players[id]) : [])))].map((s) => ({
       id: s,
@@ -155,7 +170,8 @@ export const lifeRouter = router({
       maxPlayers: SKILLS.maxPlayers,
       groups: SKILL_GROUPS.map((g) => ({ id: g, label: SKILL_GROUP_LABEL[g] })),
       skills: skillOptions,
-      coaches: (t.skillsCoaches ?? []).map((c) => ({
+      maxGoalies: SKILLS.maxGoalies,
+      coaches: coachesOf(t).map((c) => ({
         ...coachView(c),
         working: plan
           .filter((x) => x.coach.id === c.id)
@@ -185,11 +201,11 @@ export const lifeRouter = router({
           gains: p.trainingLog?.season === L.season ? p.trainingLog.gains : {},
           /** Pace (points per season) under each of this team's coaches for each skill, for the assignment editor. */
           pace: Object.fromEntries(
-            (t.skillsCoaches ?? []).map((c) => [c.id, Object.fromEntries(skillsFor(p).map((s) => [s, projectedSeasonGain(L, c, p, s as TrainableSkill)]))]),
+            coachesOf(t).map((c) => [c.id, Object.fromEntries(skillsFor(p).map((s) => [s, projectedSeasonGain(L, c, p, s as TrainableSkill)]))]),
           ),
         }))
         .sort((a, b) => b.overall - a.overall),
-      pool: isMine ? (L.skillsCoachPool ?? []).map(coachView).sort((a, b) => b.salary - a.salary) : [],
+      pool: isMine ? [...(L.skillsCoachPool ?? []), ...(L.goalieCoachPool ?? [])].map(coachView).sort((a, b) => b.salary - a.salary) : [],
       payroll: skillsCoachPayroll(t),
     };
   }),
@@ -233,6 +249,87 @@ export const lifeRouter = router({
       await mutateLeague(ctx.db, input.leagueId, (L) => {
         try {
           setCoachPlan(L.teams[teamId], input.coachId, { auto: input.auto, assignments: input.assignments as SkillsCoach['assignments'] }, L);
+        } catch (e) {
+          throw badRequest((e as Error).message);
+        }
+      });
+      return { ok: true };
+    }),
+
+  // ---- Scouting ----
+  scouting: memberProcedure.input(z.object({ teamId: z.string() })).query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    const t = L.teams[input.teamId];
+    if (!t) throw badRequest('No such team');
+    const isMine = ctx.membership.teamId === t.id;
+    const where = new Map(scoutRegions(L, t).map((x) => [x.scout.id, x.region]));
+    // Other teams' scouting knowledge stays private.
+    const conf = (r: Region) => (isMine ? Math.round(regionConfidence(L, t.id, r) * 100) / 100 : null);
+    const classIds = L.draftClass?.ids ?? L.offseason?.draft.classIds ?? [];
+    const inRegion = (r: Region) => classIds.filter((id) => L.players[id] && L.players[id].draftClass !== undefined && playerRegion(L, L.players[id]) === r).length;
+    const scoutView = (sc: Scout) => ({ ...sc, region: where.get(sc.id) ?? null, ratePerDay: where.get(sc.id) ? Math.round(scoutRate(t, sc, where.get(sc.id)!) * 100) / 100 : null });
+    return {
+      isMine,
+      maxScouts: SCOUTING.maxScouts,
+      headScout: t.staff?.scout ?? null,
+      draftSeason: L.draftClass?.season ?? L.offseason?.draft.season ?? null,
+      regions: REGIONS.map((r) => ({ ...r, confidence: conf(r.id), prospects: inRegion(r.id) })),
+      scouts: (t.scouts ?? []).map(scoutView),
+      pool: isMine ? (L.scoutPool ?? []).map((sc) => ({ ...sc, region: null, ratePerDay: null })).sort((a, b) => b.skill - a.skill) : [],
+      payroll: scoutPayroll(t),
+      /** Knowledge needed for ~63% confidence, and a good scout's daily pace, for the explainer. */
+      k: SCOUTING.K,
+    };
+  }),
+
+  /** This season's draft class, as your scouts see it. */
+  draftClass: memberProcedure.query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    const d = L.draftClass ?? (L.offseason?.draft ? { season: L.offseason.draft.season, ids: L.offseason.draft.classIds } : null);
+    if (!d) return null;
+    const my = ctx.membership.teamId;
+    return {
+      season: d.season,
+      players: d.ids
+        .map((id) => L.players[id])
+        .filter((p) => p && p.draftClass !== undefined)
+        .map((p) => classView(L, my, p, d.season))
+        .sort((a, b) => b.scoutValue - a.scoutValue),
+    };
+  }),
+
+  hireScout: memberProcedure.input(z.object({ scoutId: z.string() })).mutation(async ({ ctx, input }) => {
+    const teamId = ctx.membership.teamId;
+    if (!teamId) throw badRequest('You do not manage a team');
+    return mutateLeague(ctx.db, input.leagueId, (L) => {
+      try {
+        return { name: hireScout(L, L.teams[teamId], input.scoutId).name };
+      } catch (e) {
+        throw badRequest((e as Error).message);
+      }
+    });
+  }),
+
+  releaseScout: memberProcedure.input(z.object({ scoutId: z.string() })).mutation(async ({ ctx, input }) => {
+    const teamId = ctx.membership.teamId;
+    if (!teamId) throw badRequest('You do not manage a team');
+    return mutateLeague(ctx.db, input.leagueId, (L) => {
+      try {
+        return releaseScout(L, L.teams[teamId], input.scoutId);
+      } catch (e) {
+        throw badRequest((e as Error).message);
+      }
+    });
+  }),
+
+  assignScout: memberProcedure
+    .input(z.object({ scoutId: z.string(), region: z.enum(['auto', 'west', 'ontario', 'quebec', 'usa', 'sweden', 'finland', 'russia', 'central']) }))
+    .mutation(async ({ ctx, input }) => {
+      const teamId = ctx.membership.teamId;
+      if (!teamId) throw badRequest('You do not manage a team');
+      await mutateLeague(ctx.db, input.leagueId, (L) => {
+        try {
+          assignScout(L.teams[teamId], input.scoutId, input.region);
         } catch (e) {
           throw badRequest((e as Error).message);
         }

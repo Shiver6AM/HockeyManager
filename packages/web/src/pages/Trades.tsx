@@ -511,7 +511,7 @@ function AssetPicker({
             <SortTh label="Type" k="type" sort={sort} className="hidden 2xl:table-cell" />
             <SortTh label="Age" k="age" sort={sort} className="num" />
             <SortTh label="OVR" k="overall" sort={sort} className="num" />
-            <th title="Scouts' grade for his ceiling (hover for the projected role)">Pot</th>
+            <SortTh label="Pot" k="pot" sort={sort} title="Scouts' grade for his ceiling (hover for the projected role)" />
             <SortTh label="AAV" k="aav" sort={sort} className="num" />
             <SortTh label="Yrs" k="years" sort={sort} className="num" />
             <SortTh label="Expiry" k="status" sort={sort} />
@@ -752,13 +752,13 @@ function BlockTab({ mine, onTradeFor }: { mine: Assets; onTradeFor: (teamId: str
               <table className="table">
                 <thead className="sticky top-0 z-10 bg-rink-900">
                   <tr>
-                    <th>Team</th>
+                    <SortTh label="Team" k="team" sort={sort} />
                     <SortTh label="Player" k="name" sort={sort} />
                     <SortTh label="Pos" k="pos" sort={sort} />
                     <SortTh label="Type" k="type" sort={sort} />
                     <SortTh label="Age" k="age" sort={sort} className="num" />
                     <SortTh label="OVR" k="overall" sort={sort} className="num" />
-                    <th>Potential</th>
+                    <SortTh label="Potential" k="pot" sort={sort} />
                     <SortTh label="AAV" k="aav" sort={sort} className="num" />
                     <SortTh label="Yrs" k="years" sort={sort} className="num" />
                     <SortTh label="Expiry" k="status" sort={sort} />

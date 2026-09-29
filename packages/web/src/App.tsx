@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { Spinner } from './components/ui';
 import { BoxScorePage } from './pages/BoxScore';
 import { DraftPage } from './pages/Draft';
+import { ScoutingPage } from './pages/Scouting';
 import { FreeAgentsPage } from './pages/FreeAgents';
 import { HistoryPage } from './pages/History';
 import { NewsPage } from './pages/News';
@@ -41,6 +42,7 @@ export function App() {
         <Route path="playoffs" element={<PlayoffsPage />} />
         <Route path="settings" element={<LeagueSettings />} />
         <Route path="draft" element={<DraftPage />} />
+        <Route path="scouting" element={<ScoutingPage />} />
         <Route path="re-sign" element={<ResignPage />} />
         <Route path="free-agents" element={<FreeAgentsPage />} />
         <Route path="player/:playerId" element={<PlayerPage />} />

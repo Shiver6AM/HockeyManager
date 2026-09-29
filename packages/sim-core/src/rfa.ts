@@ -19,6 +19,7 @@
  *
  * His own team can keep negotiating with him the whole time.
  */
+import { CONTRACT_MAX } from './farm';
 import { proSeasons } from './prospects';
 import { askingContract, BASE_CAP, capRoom, LEAGUE_MIN_SALARY, marketValue, qualifyingOffer, SUMMER_ROSTER_MAX } from './contracts';
 import { aiValuation, offerUtility } from './negotiation';
@@ -174,7 +175,7 @@ export function tenderOfferSheet(league: League, team: Team, p: Player, offer: C
   if (offer.years < 1 || offer.years > OFFER_SHEET_MAX_YEARS) throw new Error(`Offer sheets run 1 to ${OFFER_SHEET_MAX_YEARS} years`);
   if (offer.salary <= c.qualifyingOffer.salary) throw new Error('An offer sheet must beat his qualifying offer');
   if (offer.salary > capRoom(league, team)) throw new Error('Not enough cap room for that offer sheet');
-  if (team.roster.length >= SUMMER_ROSTER_MAX) throw new Error(`Your roster is full (${SUMMER_ROSTER_MAX}).`);
+  if (team.roster.length >= CONTRACT_MAX) throw new Error(`You're at the ${CONTRACT_MAX}-contract limit.`);
   if (!compensationPicks(league, team.id, offer.salary)) throw new Error('You no longer own the draft picks this offer sheet would cost');
   ((os.sheets ??= {})[team.id] ??= {})[p.id] = offer;
 }
@@ -207,7 +208,7 @@ function executeSheet(league: League, p: Player, c: RfaCase, match: boolean) {
   const from = league.teams[sheet.fromTeam];
   const picks = compensationPicks(league, from.id, sheet.offer.salary);
   // The offering team must still be able to complete it; otherwise the sheet is void.
-  const valid = !!picks && sheet.offer.salary <= capRoom(league, from) && from.roster.length < SUMMER_ROSTER_MAX;
+  const valid = !!picks && sheet.offer.salary <= capRoom(league, from) && from.roster.length < CONTRACT_MAX;
   if (!valid && !match) {
     delete c.sheet;
     return;

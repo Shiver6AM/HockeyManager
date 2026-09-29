@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { money } from '../format';
+import { useSort } from '../sort';
 import { useTRPC, type Outputs } from '../trpc';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Spinner } from './ui';
 
@@ -14,17 +15,17 @@ type Coach = Data['coaches'][number];
 type PoolCoach = Data['pool'][number];
 type Row = { playerId: string; skill: string };
 
-const GROUP_TONE: Record<string, string> = { offense: 'bg-goal', defense: 'bg-blueline', skating: 'bg-win' };
+const GROUP_TONE: Record<string, string> = { offense: 'bg-goal', defense: 'bg-blueline', skating: 'bg-win', goaltending: 'bg-warn' };
 
-function RatingBars({ ratings, specialties }: { ratings: Record<string, number>; specialties: string[] }) {
+function RatingBars({ ratings, specialties, goalie }: { ratings: Record<string, number>; specialties: string[]; goalie?: boolean }) {
   return (
     <div className="space-y-1">
-      {(['offense', 'defense', 'skating'] as const).map((g) => {
+      {(goalie ? (['goaltending'] as const) : (['offense', 'defense', 'skating'] as const)).map((g) => {
         const r = ratings[g];
         const spec = specialties.includes(g);
         return (
           <div key={g} className="flex items-center gap-2 text-xs">
-            <span className={cx('w-16 capitalize', spec ? 'font-semibold text-white' : 'text-ice-500')}>{g}</span>
+            <span className={cx('w-20 capitalize', spec ? 'font-semibold text-white' : 'text-ice-500')}>{g}</span>
             <div className="h-1.5 flex-1 rounded-full bg-rink-700">
               <div className={cx('h-1.5 rounded-full', spec ? GROUP_TONE[g] : 'bg-rink-500')} style={{ width: `${Math.max(4, ((r - 30) / 65) * 100)}%` }} />
             </div>
@@ -40,7 +41,7 @@ function Specialties({ list }: { list: string[] }) {
   return (
     <span className="flex flex-wrap gap-1">
       {list.map((g) => (
-        <Badge key={g} tone={g === 'offense' ? 'bad' : g === 'defense' ? 'info' : 'good'}>
+        <Badge key={g} tone={g === 'offense' ? 'bad' : g === 'defense' ? 'info' : g === 'goaltending' ? 'warn' : 'good'}>
           {g}
         </Badge>
       ))}
@@ -73,7 +74,7 @@ export function SkillsCoaches({ leagueId, teamId }: { leagueId: string; teamId: 
         ))}
         {!d.coaches.length && <Empty>No skills coaches yet.</Empty>}
       </div>
-      {d.isMine && <HirePool pool={d.pool} full={d.coaches.length >= d.maxCoaches} leagueId={leagueId} />}
+      {d.isMine && <HirePool pool={d.pool} full={d.coaches.filter((c) => c.kind !== 'goalie').length >= d.maxCoaches} leagueId={leagueId} />}
     </div>
   );
 }
@@ -106,7 +107,7 @@ function CoachCard({ c, d, leagueId }: { c: Coach; d: Data; leagueId: string }) 
 
   return (
     <Card
-      title={c.name}
+      title={c.kind === 'goalie' ? `${c.name} · goalie coach` : c.name}
       action={
         <span className="text-right text-xs text-ice-400">
           {money(c.salary)} · {c.yearsLeft} yr
@@ -130,7 +131,7 @@ function CoachCard({ c, d, leagueId }: { c: Coach; d: Data; leagueId: string }) 
           </div>
         )}
       </div>
-      <RatingBars ratings={c.ratings} specialties={c.specialties} />
+      <RatingBars ratings={c.ratings} specialties={c.specialties} goalie={c.kind === 'goalie'} />
 
       <p className="mt-4 mb-1.5 text-xs font-semibold tracking-wider text-ice-400 uppercase">Working with</p>
       {editing && d.isMine ? (
@@ -147,7 +148,7 @@ function CoachCard({ c, d, leagueId }: { c: Coach; d: Data; leagueId: string }) 
                 >
                   <option value="">Choose a player…</option>
                   {d.roster
-                    .filter((p) => !takenElsewhere.has(p.id) && (p.id === r.playerId || !rows.some((x) => x.playerId === p.id)))
+                    .filter((p) => (c.kind === 'goalie' ? p.pos === 'G' : true) && !takenElsewhere.has(p.id) && (p.id === r.playerId || !rows.some((x) => x.playerId === p.id)))
                     .map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.name} ({p.pos} {p.overall}, {p.age}y, {p.coachabilityLabel.toLowerCase()})
@@ -162,7 +163,7 @@ function CoachCard({ c, d, leagueId }: { c: Coach; d: Data; leagueId: string }) 
                 >
                   <option value="auto">Auto: his weakest</option>
                   {p &&
-                    (['offense', 'defense', 'skating'] as const).map((g) => {
+                    (['offense', 'defense', 'skating', 'goaltending'] as const).map((g) => {
                       const opts = d.skills.filter((s) => s.group === g && p.skills[s.id] !== undefined);
                       if (!opts.length) return null;
                       return (
@@ -184,7 +185,7 @@ function CoachCard({ c, d, leagueId }: { c: Coach; d: Data; leagueId: string }) 
             );
           })}
           <div className="flex flex-wrap items-center gap-2 pt-1">
-            {rows.length < d.maxPlayers && (
+            {rows.length < (c.kind === 'goalie' ? d.maxGoalies : d.maxPlayers) && (
               <Button variant="ghost" className="text-xs" onClick={() => setRows([...rows, { playerId: '', skill: 'auto' }])}>
                 + Add player
               </Button>
@@ -252,7 +253,22 @@ function HirePool({ pool, full, leagueId }: { pool: PoolCoach[]; full: boolean; 
   const qc = useQueryClient();
   const hire = useMutation(trpc.life.hireSkillsCoach.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));
   const [filter, setFilter] = useState<string>('all');
-  const shown = pool.filter((c) => filter === 'all' || (c.specialties as string[]).includes(filter));
+  const filteredPool = pool.filter((c) => (filter === 'all' ? true : filter === 'goalie' ? c.kind === 'goalie' : c.kind !== 'goalie' && (c.specialties as string[]).includes(filter)));
+  const { sorted: shown, Th } = useSort(
+    filteredPool,
+    {
+      name: (c) => c.name.split(' ').slice(-1)[0],
+      spec: (c) => c.specialties.length,
+      offense: (c) => c.ratings.offense,
+      defense: (c) => c.ratings.defense,
+      skating: (c) => c.ratings.skating,
+      goaltending: (c) => c.ratings.goaltending ?? null,
+      salary: (c) => c.salary,
+      yrs: (c) => c.yearsLeft,
+    },
+    { key: 'salary' },
+    'coach-pool',
+  );
   return (
     <Card
       title="Available skills coaches"
@@ -262,6 +278,7 @@ function HirePool({ pool, full, leagueId }: { pool: PoolCoach[]; full: boolean; 
           <option value="offense">Offense</option>
           <option value="defense">Defense</option>
           <option value="skating">Skating</option>
+          <option value="goalie">Goalie coaches</option>
         </select>
       }
     >
@@ -271,13 +288,14 @@ function HirePool({ pool, full, leagueId }: { pool: PoolCoach[]; full: boolean; 
         <table className="table">
           <thead>
             <tr>
-              <th>Coach</th>
-              <th>Specialties</th>
-              <th className="num">OFF</th>
-              <th className="num">DEF</th>
-              <th className="num">SKT</th>
-              <th className="num">Salary</th>
-              <th className="num">Yrs</th>
+              <Th k="name">Coach</Th>
+              <Th k="spec" title="Number of specialties">Specialties</Th>
+              <Th k="offense" className="num">OFF</Th>
+              <Th k="defense" className="num">DEF</Th>
+              <Th k="skating" className="num">SKT</Th>
+              <Th k="goaltending" className="num">GLT</Th>
+              <Th k="salary" className="num">Salary</Th>
+              <Th k="yrs" className="num">Yrs</Th>
               <th />
             </tr>
           </thead>
@@ -288,7 +306,7 @@ function HirePool({ pool, full, leagueId }: { pool: PoolCoach[]; full: boolean; 
                 <td>
                   <Specialties list={c.specialties} />
                 </td>
-                {(['offense', 'defense', 'skating'] as const).map((g) => (
+                {(['offense', 'defense', 'skating', 'goaltending'] as const).map((g) => (
                   <td key={g} className={cx('num', c.specialties.includes(g) ? 'font-semibold text-white' : 'text-ice-500')}>
                     {c.ratings[g]}
                   </td>
@@ -296,7 +314,12 @@ function HirePool({ pool, full, leagueId }: { pool: PoolCoach[]; full: boolean; 
                 <td className="num">{money(c.salary)}</td>
                 <td className="num">{c.yearsLeft}</td>
                 <td className="text-right">
-                  <Button className="px-2 py-0.5 text-xs" disabled={full || hire.isPending} onClick={() => hire.mutate({ leagueId, coachId: c.id })}>
+                  <Button
+                    className="px-2 py-0.5 text-xs"
+                    disabled={(full && c.kind !== 'goalie') || hire.isPending}
+                    title={c.kind === 'goalie' ? 'Replaces your current goalie coach' : undefined}
+                    onClick={() => hire.mutate({ leagueId, coachId: c.id })}
+                  >
                     Hire
                   </Button>
                 </td>
