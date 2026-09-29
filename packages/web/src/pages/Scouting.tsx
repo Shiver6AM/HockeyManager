@@ -4,7 +4,7 @@
  * your scouts see it.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ClassTable, ConfidenceBar } from '../components/ClassTable';
+import { ClassTable, ConfidenceBar, CssRankings } from '../components/ClassTable';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Spinner } from '../components/ui';
 import { money } from '../format';
 import { useSort } from '../sort';
@@ -67,6 +67,12 @@ export function ScoutingPage() {
 
       <Scouts d={d} labels={labels} />
 
+      {cls.data && (
+        <Card title={`Central Scouting rankings · ${cls.data.cssEdition}`}>
+          <CssRankings players={cls.data.players} leagueId={L.id} edition={cls.data.cssEdition} />
+        </Card>
+      )}
+
       <Card title="Draft class">
         {cls.data ? <ClassTable players={cls.data.players} leagueId={L.id} storageKey="scouting-class" /> : cls.isLoading ? <Spinner /> : <Empty>No draft class right now.</Empty>}
       </Card>
@@ -83,21 +89,29 @@ function Scouts({ d, labels }: { d: Data; labels: Record<string, string> }) {
   const release = useMutation(trpc.life.releaseScout.mutationOptions(done));
   const hire = useMutation(trpc.life.hireScout.mutationOptions(done));
   const full = d.scouts.length >= d.maxScouts;
+  const regionIds = Object.keys(labels);
   const { sorted: pool, Th } = useSort(
     d.pool,
-    { name: (s) => s.name, skill: (s) => s.skill, best: (s) => Math.max(...Object.values(s.familiarity)), salary: (s) => s.salary, yrs: (s) => s.yearsLeft },
+    {
+      name: (s) => s.name.split(' ').slice(-1)[0],
+      skill: (s) => s.skill,
+      best: (s) => Math.max(...Object.values(s.familiarity)),
+      salary: (s) => s.salary,
+      yrs: (s) => s.yearsLeft,
+      ...Object.fromEntries(regionIds.map((r) => [`r:${r}`, (s: Scout) => s.familiarity[r as keyof Scout['familiarity']]])),
+    },
     { key: 'skill' },
     'scout-pool',
   );
   return (
-    <div className="grid gap-5 xl:grid-cols-3">
-      <div className="space-y-5 xl:col-span-2">
+    <div className="space-y-5">
+      <div className="space-y-5">
         <Card title={`Your scouts (${d.scouts.length}/${d.maxScouts})`} action={<span className="text-xs text-ice-400">Payroll {money(d.payroll)}</span>}>
           <ErrorBox error={assign.error ?? release.error} />
           {d.scouts.length === 0 ? (
             <Empty>No scouts. Hire one below.</Empty>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               {d.scouts.map((s) => {
                 const settlement = Math.round((s.salary * Math.max(0, s.yearsLeft - 1)) / 2);
                 return (
@@ -159,13 +173,17 @@ function Scouts({ d, labels }: { d: Data; labels: Record<string, string> }) {
         <Card title="Scouts available">
           {full && <p className="mb-2 text-xs text-warn">Your staff is full ({d.maxScouts}). Let a scout go to hire another.</p>}
           <ErrorBox error={hire.error} />
-          <div className="-m-4 max-h-[28rem] overflow-auto">
-            <table className="table text-xs">
+          <div className="-mx-4 max-h-[32rem] overflow-y-auto">
+            <table className="table w-full text-xs">
               <thead className="sticky top-0 bg-rink-900">
                 <tr>
                   <Th k="name">Scout</Th>
                   <Th k="skill" className="num">Eval</Th>
-                  <Th k="best">Knows best</Th>
+                  {regionIds.map((r) => (
+                    <Th key={r} k={`r:${r}`} className="num" title={`Familiarity with ${labels[r]}`}>
+                      {labels[r].replace('Quebec & Maritimes', 'Quebec').replace('Western Canada', 'W. Canada').replace('United States', 'USA').replace('Central Europe', 'C. Europe')}
+                    </Th>
+                  ))}
                   <Th k="salary" className="num">Salary</Th>
                   <Th k="yrs" className="num">Yrs</Th>
                   <th />
@@ -176,7 +194,14 @@ function Scouts({ d, labels }: { d: Data; labels: Record<string, string> }) {
                   <tr key={s.id}>
                     <td className="font-semibold text-ice-50">{s.name}</td>
                     <td className="num">{s.skill}</td>
-                    <td className="text-ice-300">{topRegions(s, labels)}</td>
+                    {regionIds.map((r) => {
+                      const v = s.familiarity[r as keyof Scout['familiarity']];
+                      return (
+                        <td key={r} className={cx('num', v >= 70 ? 'font-semibold text-win' : v >= 40 ? 'text-ice-100' : 'text-ice-500')}>
+                          {v}
+                        </td>
+                      );
+                    })}
                     <td className="num">{money(s.salary)}</td>
                     <td className="num">{s.yearsLeft}</td>
                     <td className="text-right">
@@ -189,7 +214,7 @@ function Scouts({ d, labels }: { d: Data; labels: Record<string, string> }) {
               </tbody>
             </table>
           </div>
-          <p className="mt-6 text-[11px] text-ice-500">
+          <p className="mt-3 text-[11px] text-ice-500">
             <Badge tone="info">Tip</Badge> A scout who knows a region learns it about twice as fast as one who doesn't.
           </p>
         </Card>

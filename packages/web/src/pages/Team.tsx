@@ -40,7 +40,7 @@ export function TeamPage() {
         className="flex flex-wrap items-center gap-5 rounded-xl border border-rink-700 p-5"
         style={{ background: `linear-gradient(120deg, ${t.team.colors[0]}40, #0b1220 65%)` }}
       >
-        <TeamChip team={t.team} size="lg" />
+        <TeamChip team={t.team} size="hero" />
         <div className="min-w-0 flex-1">
           <h1 className="font-display text-2xl font-semibold tracking-wide text-white uppercase sm:text-3xl">
             {t.team.city} {t.team.name}

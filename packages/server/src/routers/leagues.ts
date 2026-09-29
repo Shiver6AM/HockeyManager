@@ -107,6 +107,10 @@ export const leaguesRouter = router({
     return {
       id: meta.id,
       name: meta.name,
+      /** Bumps on every saved change to the league: clients refresh their views when it moves. */
+      version: meta.version,
+      /** Every team (for logos and names wherever a team id shows up). */
+      teams: Object.values(L.teams).map(teamInfo),
       inviteCode: meta.invite_code,
       season: L.season,
       day: L.day,

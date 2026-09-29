@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { InterestPill, OfferForm, Priorities } from '../components/OfferForm';
 import { OfferSheetTargets } from '../components/RfaPanels';
 import { Badge, Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip } from '../components/ui';
-import { money, svPct } from '../format';
+import { ht, money, svPct } from '../format';
 import { useSort } from '../sort';
 import { useTRPC, type Outputs } from '../trpc';
 import { useLeague } from './LeagueLayout';
@@ -166,6 +166,8 @@ function FreeAgentTable({ d, open, setOpen }: { d: FAData; open: string | null; 
       name: (p) => p.lastName,
       pos: (p) => p.pos,
       age: (p) => p.age,
+      ht: (p) => p.height,
+      wt: (p) => p.weight,
       ovr: (p) => p.overall,
       pot: (p) => p.potentialValue,
       type: (p) => p.archetype,
@@ -184,7 +186,7 @@ function FreeAgentTable({ d, open, setOpen }: { d: FAData; open: string | null; 
     'free-agents',
   );
   const n = Object.entries(f).filter(([k, v]) => v !== (EMPTY as Record<string, unknown>)[k]).length;
-  const cols = 17 + (L.myTeamId ? 1 : 0);
+  const cols = 19 + (L.myTeamId ? 1 : 0);
   return (
     <Card title={`Available (${list.length}${list.length !== d.players.length ? ` of ${d.players.length}` : ''})`}>
       <div className="mb-3 grid grid-cols-2 gap-2 rounded-lg border border-rink-700 bg-rink-850 p-3 sm:grid-cols-4 lg:grid-cols-6">
@@ -268,6 +270,8 @@ function FreeAgentTable({ d, open, setOpen }: { d: FAData; open: string | null; 
                 <Th k="name">Player</Th>
                 <Th k="pos">Pos</Th>
                 <Th k="age" className="num">Age</Th>
+                <Th k="ht" className="num">Ht</Th>
+                <Th k="wt" className="num">Wt</Th>
                 <Th k="ovr" className="num">OVR</Th>
                 <Th k="pot">Pot</Th>
                 <Th k="type">Archetype</Th>
@@ -297,6 +301,8 @@ function FreeAgentTable({ d, open, setOpen }: { d: FAData; open: string | null; 
                     </td>
                     <td className="text-ice-400">{p.pos}</td>
                     <td className="num">{p.age}</td>
+                    <td className="num whitespace-nowrap">{ht(p.height)}</td>
+                    <td className="num">{p.weight}</td>
                     <td className="num">
                       <Rating value={p.overall} />
                     </td>

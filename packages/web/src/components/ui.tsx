@@ -1,6 +1,7 @@
 import { useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { errorMessage, onColor } from '../format';
+import { TeamLogo } from './TeamLogo';
+import { errorMessage } from '../format';
 
 export interface TeamLike {
   id: string;
@@ -48,17 +49,9 @@ export function Button({ variant = 'primary', className, ...rest }: ButtonHTMLAt
   );
 }
 
-export function TeamChip({ team, size = 'md' }: { team: TeamLike; size?: 'sm' | 'md' | 'lg' }) {
-  const dims = size === 'lg' ? 'h-10 w-10 text-sm' : size === 'sm' ? 'h-5 w-5 text-[8px]' : 'h-7 w-7 text-[10px]';
-  return (
-    <span
-      className={cx('inline-flex shrink-0 items-center justify-center rounded-md font-display font-semibold tracking-wide ring-1 ring-white/10', dims)}
-      style={{ background: team.colors[0], color: onColor(team.colors[0]), boxShadow: `inset 0 -3px 0 ${team.colors[1]}` }}
-      title={`${team.city} ${team.name}`}
-    >
-      {team.abbr}
-    </span>
-  );
+export function TeamChip({ team, size = 'md' }: { team: TeamLike; size?: 'sm' | 'md' | 'lg' | 'xl' | 'hero' }) {
+  const px = size === 'hero' ? 112 : size === 'xl' ? 72 : size === 'lg' ? 44 : size === 'sm' ? 20 : 28;
+  return <TeamLogo team={team} size={px} className="shrink-0 drop-shadow-sm" />;
 }
 
 export function TeamLink({ leagueId, team, full = false }: { leagueId: string; team: TeamLike; full?: boolean }) {

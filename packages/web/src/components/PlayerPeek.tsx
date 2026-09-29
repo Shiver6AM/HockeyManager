@@ -3,7 +3,7 @@
  * (special-teams role) skills and this season's stats, without leaving the page.
  */
 import { Link } from 'react-router-dom';
-import { gaa, signed, svPct, toi } from '../format';
+import { gaa, ht, signed, svPct, toi } from '../format';
 import type { Outputs } from '../trpc';
 import { Modal, PotentialBadge, Rating } from './ui';
 
@@ -72,6 +72,9 @@ export function PlayerPeek({ p, catalog, leagueId, onClose }: { p: P; catalog: C
           Overall <Rating value={p.overall} />
         </span>
         <span>Age {p.age}</span>
+        <span>
+          {ht(p.height)} · {p.weight} lb
+        </span>
         <PotentialBadge potential={p.potential} showLabel />
         <span title="How much he gets out of coaching">Coachability: {p.coachabilityLabel}</span>
         {p.contract && <span>{`$${(p.contract.salary / 1e6).toFixed(2)}M × ${p.contract.yearsLeft} yr`}</span>}

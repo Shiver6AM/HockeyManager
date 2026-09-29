@@ -144,6 +144,23 @@ describe('phase 12: background sims, contracts, farm, scouting', () => {
     expect(fa.players.some((p) => ids.has(p.id))).toBe(false);
   });
 
+  it('overview carries a change stamp (for auto-refresh) and every team; players have height and weight; the class has CSS ranks', async () => {
+    const a = await bob.leagues.overview({ leagueId });
+    expect(a.teams).toHaveLength(32);
+    await comm.sim.advance({ leagueId, target: { days: 1 } });
+    const b = await bob.leagues.overview({ leagueId });
+    expect(b.version).toBeGreaterThan(a.version);
+    const t = await bob.data.team({ leagueId, teamId: 'HAL' });
+    for (const p of t.players) {
+      expect(p.height).toBeGreaterThan(60);
+      expect(p.weight).toBeGreaterThan(140);
+    }
+    const cls = await bob.life.draftClass({ leagueId });
+    expect(['Preliminary', 'Midterm', 'Final']).toContain(cls!.cssEdition);
+    expect(cls!.players.every((p) => p.css && p.css.rank >= 1)).toBe(true);
+    expect(new Set(cls!.players.map((p) => p.css!.rank)).size).toBe(cls!.players.length);
+  });
+
   it('standings mark the wild-card spots; stats can be browsed all-time', async () => {
     const st = await bob.data.standings({ leagueId });
     const rows = (Array.isArray(st) ? st : (st as { rows: unknown[] }).rows) as Array<{ seed: string | null }>;

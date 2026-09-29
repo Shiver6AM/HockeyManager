@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Rating, Spinner, TeamChip } from '../components/ui';
 import { useTRPC } from '../trpc';
-import { ClassTable, GRADE_TONE } from '../components/ClassTable';
+import { ClassTable, CssRankings, GRADE_TONE } from '../components/ClassTable';
 import { useLeague } from './LeagueLayout';
 
 
@@ -49,6 +49,10 @@ export function DraftPage() {
         )}
       </div>
       <ErrorBox error={pick.error ?? saveList.error} />
+
+      <Card title="Central Scouting final rankings">
+        <CssRankings players={b.available} leagueId={L.id} edition="Final" top={16} />
+      </Card>
 
       <div className="grid gap-5 xl:grid-cols-3">
         <div className="space-y-5 xl:col-span-2">

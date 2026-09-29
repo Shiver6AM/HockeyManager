@@ -4,6 +4,7 @@ import { Badge, Button, Card, cx, Empty, ErrorBox, TeamChip } from '../component
 import { useTRPC } from '../trpc';
 import { useLeague } from './LeagueLayout';
 import { useSim } from '../sim';
+import { TeamTag } from '../components/TeamTag';
 
 const STAGES = [
   { id: 'review', label: 'Season review' },
@@ -166,7 +167,7 @@ export function SummerNews() {
         {x.name}
       </Link>
       <span className="text-xs text-ice-500">
-        {x.teamId} · {x.age}
+        <TeamTag id={x.teamId} /> · {x.age}
       </span>
       <span className="tabular w-16 text-right text-ice-300">
         {x.before} → <span className="text-white">{x.after}</span>

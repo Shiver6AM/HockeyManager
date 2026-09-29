@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
-import { createContext, useContext } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { createContext, useContext, useEffect, useRef } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { HeaderActions, SimProgress } from '../components/HeaderActions';
 import { NotificationBell } from '../components/NotificationBell';
@@ -17,10 +17,31 @@ export function useLeague(): Overview {
   return v;
 }
 
+/** A team by id (every team is in the overview), for logos and names. */
+export function useTeamById() {
+  const L = useLeague();
+  const byId = new Map(L.teams.map((t) => [t.id, t]));
+  return (id: string | null | undefined) => (id ? byId.get(id) : undefined);
+}
+
 export function LeagueLayout() {
   const { leagueId = '' } = useParams();
   const trpc = useTRPC();
-  const ov = useQuery({ ...trpc.leagues.overview.queryOptions({ leagueId }), refetchInterval: 5_000 });
+  const qc = useQueryClient();
+  const ov = useQuery({ ...trpc.leagues.overview.queryOptions({ leagueId }), refetchInterval: 4_000 });
+  // Whenever the league changes (someone sims, trades, signs…), refresh every view on
+  // screen: nobody should have to reload the page to see a co-commissioner's sim.
+  const seen = useRef<number | null>(null);
+  const overviewKey = trpc.leagues.overview.queryKey({ leagueId });
+  useEffect(() => {
+    const v = ov.data?.version;
+    if (v === undefined) return;
+    if (seen.current !== null && seen.current !== v) {
+      void qc.invalidateQueries({ predicate: (q) => JSON.stringify(q.queryKey) !== JSON.stringify(overviewKey) });
+    }
+    seen.current = v;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ov.data?.version, leagueId]);
   if (ov.isLoading) return <Spinner />;
   if (ov.error) return <div className="p-6"><ErrorBox error={ov.error} /></div>;
   const L = ov.data!;

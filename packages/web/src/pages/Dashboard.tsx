@@ -8,6 +8,7 @@ import { useLeague } from './LeagueLayout';
 import { useSim } from '../sim';
 import { NewsItemRow } from './News';
 import { OffseasonPanel, SummerNews } from './Offseason';
+import { TeamTag } from '../components/TeamTag';
 
 export function Dashboard() {
   const L = useLeague();
@@ -314,7 +315,7 @@ function LeadersMini() {
               <Link to={`/league/${L.id}/player/${r.id}`} className="flex-1 truncate hover:underline">
                 {r.name}
               </Link>
-              <span className="text-xs text-ice-400">{r.teamId}</span>
+              <TeamTag id={r.teamId} className="text-xs text-ice-400" />
               <span className="tabular w-8 text-right font-semibold text-white">{r.value}</span>
             </li>
           ))}
