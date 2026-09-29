@@ -28,7 +28,7 @@ export function FreeAgentsPage() {
         <h1 className="font-display text-2xl font-semibold tracking-wide text-white uppercase">Free agents</h1>
         <p className="text-sm text-ice-400">
           {d.bidding
-            ? `Blind bidding, round ${Math.min(d.faRound ?? 1, d.faRounds)} of ${d.faRounds}. Place sealed offers on as many players as you like. When the league advances, every player picks the best offer he received (money, term, contender, role), so nobody wins just by being online first. Players who don't sign lower their bar and their ask for the next round.`
+            ? `Day ${d.faDay} of ${d.faDays}. Make sealed offers on as many players as you like. A player listens for ${d.listenDays[0]}-${d.listenDays[1]} days from his first offer, then signs the best one he has (money, term, contender, role), so every manager has time to get an offer in. Offers stand until he decides; you can change or withdraw yours until then. If nothing is good enough, he turns them all down and comes back a little cheaper. On the last day, everyone with an offer decides.`
             : d.phase === 'offseason'
               ? d.canSign
                 ? 'Bidding is over. Negotiate with leftover free agents directly: they sign on the spot when they accept.'
@@ -43,7 +43,7 @@ export function FreeAgentsPage() {
             <Stat label="Payroll" value={money(d.payroll!)} />
             <Stat label="Contracts" value={`${d.rosterCount} / ${d.rosterMax}`} tone={d.rosterCount! >= d.rosterMax ? 'bad' : undefined} />
             {!d.bidding && d.active !== null && <Stat label="NHL roster (healthy)" value={`${d.active} / ${d.activeMax}`} />}
-            {d.bidding && <Stat label="Open bids" value={`${d.myBids.length} · ${money(myBidTotal)}`} />}
+            {d.bidding && <Stat label="Your offers" value={`${d.myBids.length} · ${money(myBidTotal)}`} />}
           </div>
           {d.bidding && myBidTotal > d.capRoom && (
             <p className="mt-3 text-sm text-warn">
@@ -55,7 +55,7 @@ export function FreeAgentsPage() {
       <ErrorBox error={withdraw.error} />
 
       {d.bidding && d.myBids.length > 0 && (
-        <Card title="Your sealed bids">
+        <Card title="Your offers">
           <ul className="space-y-1 text-sm">
             {d.myBids.map((b) => (
               <li key={b.playerId} className="flex items-center gap-3">
@@ -65,6 +65,9 @@ export function FreeAgentsPage() {
                 <span className="tabular text-white">
                   {money(b.offer.salary)} × {b.offer.years}y
                 </span>
+                {b.decidesIn !== null && (
+                  <span className="w-28 text-right text-xs text-ice-400">{b.decidesIn === 0 ? 'Decides today' : `Decides in ${b.decidesIn} day${b.decidesIn === 1 ? '' : 's'}`}</span>
+                )}
                 <Button variant="ghost" className="px-2 py-0.5 text-xs" onClick={() => withdraw.mutate({ leagueId: L.id, playerId: b.playerId })}>
                   Withdraw
                 </Button>
@@ -83,7 +86,7 @@ export function FreeAgentsPage() {
 
         <Card title="Signings so far">
           {d.results.length === 0 ? (
-            <Empty>{d.bidding ? 'Results appear after each round resolves.' : 'No bidding results yet.'}</Empty>
+            <Empty>{d.bidding ? 'Signings appear as players make up their minds.' : 'No free-agency signings yet.'}</Empty>
           ) : (
             <ul className="max-h-[48rem] space-y-2 overflow-y-auto text-sm">
               {d.results.map((r) => (
@@ -96,15 +99,44 @@ export function FreeAgentsPage() {
                     {money(r.offer.salary)} × {r.offer.years}y
                   </span>
                   <Badge tone={r.bidders > 1 ? 'warn' : 'neutral'}>
-                    R{r.round} · {r.bidders} bid{r.bidders === 1 ? '' : 's'}
+                    Day {r.round} · {r.bidders} offer{r.bidders === 1 ? '' : 's'}
                   </Badge>
                 </li>
               ))}
             </ul>
           )}
+          {d.holdouts.length > 0 && (
+            <div className="mt-4 border-t border-rink-700 pt-3">
+              <p className="mb-2 text-xs font-semibold tracking-wider text-ice-500 uppercase">Turned down every offer</p>
+              <ul className="space-y-1.5 text-sm">
+                {d.holdouts.map((h) => (
+                  <li key={`${h.day}-${h.playerId}`} className={cx('flex items-center gap-2', h.mine && 'font-semibold')}>
+                    <Link to={`/league/${L.id}/player/${h.playerId}`} className="flex-1 truncate text-ice-200 hover:underline">
+                      {h.name}
+                    </Link>
+                    {h.signed && <span className="text-[10px] text-ice-500 uppercase">since signed</span>}
+                    <Badge>
+                      Day {h.day} · {h.bidders} offer{h.bidders === 1 ? '' : 's'}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </Card>
       </div>
     </div>
+  );
+}
+
+/** Where a free agent stands: no offers yet, or listening and deciding in a few days. */
+function OfferStatus({ p }: { p: { decidesIn: number | null; offers: number; holdouts: number } }) {
+  if (p.decidesIn === null)
+    return <span className="text-ice-500">{p.holdouts ? 'Back on the market' : 'No offers yet'}</span>;
+  return (
+    <span className={cx('rounded px-1.5 py-0.5 font-semibold', p.decidesIn === 0 ? 'bg-goal/20 text-red-200' : p.decidesIn === 1 ? 'bg-warn/20 text-warn' : 'bg-blueline/20 text-blue-200')}>
+      {p.offers} offer{p.offers === 1 ? '' : 's'} · {p.decidesIn === 0 ? 'decides today' : `decides in ${p.decidesIn}d`}
+    </span>
   );
 }
 
@@ -181,12 +213,13 @@ function FreeAgentTable({ d, open, setOpen }: { d: FAData; open: string | null; 
       p: (p) => (p.pos === 'G' ? null : pts(p)),
       pm: (p) => p.skaterStats?.pm ?? null,
       career: (p) => p.careerGp,
+      status: (p) => (p.decidesIn === null ? 99 : p.decidesIn),
     },
     { key: 'ovr' },
     'free-agents',
   );
   const n = Object.entries(f).filter(([k, v]) => v !== (EMPTY as Record<string, unknown>)[k]).length;
-  const cols = 19 + (L.myTeamId ? 1 : 0);
+  const cols = 19 + (L.myTeamId ? 1 : 0) + (d.bidding ? 1 : 0);
   return (
     <Card title={`Available (${list.length}${list.length !== d.players.length ? ` of ${d.players.length}` : ''})`}>
       <div className="mb-3 grid grid-cols-2 gap-2 rounded-lg border border-rink-700 bg-rink-850 p-3 sm:grid-cols-4 lg:grid-cols-6">
@@ -267,7 +300,13 @@ function FreeAgentTable({ d, open, setOpen }: { d: FAData; open: string | null; 
           <table className="table">
             <thead className="sticky top-0 z-10 bg-rink-900">
               <tr>
+                {L.myTeamId && <th className="w-0" />}
                 <Th k="name">Player</Th>
+                {d.bidding && (
+                  <Th k="status" title="Each player listens to offers for a few days from the first one, then decides">
+                    Offers
+                  </Th>
+                )}
                 <Th k="pos">Pos</Th>
                 <Th k="age" className="num">Age</Th>
                 <Th k="ht" className="num">Ht</Th>
@@ -286,19 +325,37 @@ function FreeAgentTable({ d, open, setOpen }: { d: FAData; open: string | null; 
                 <Th k="pm" className="num">+/-</Th>
                 <Th k="career" className="num" title="Career NHL games">Career GP</Th>
                 <th />
-                {L.myTeamId && <th />}
               </tr>
             </thead>
             <tbody>
               {sorted.map((p) => (
                 <Fragment key={p.id}>
                   <tr className={cx(open === p.id && 'bg-rink-800/60')}>
+                    {L.myTeamId && (
+                      <td className="w-0 whitespace-nowrap">
+                        {d.bidding && (
+                          <Button variant={p.myBid ? 'secondary' : 'primary'} className="px-2 py-0.5 text-xs" onClick={() => setOpen(open === p.id ? null : p.id)}>
+                            {p.myBid ? `Bid: ${money(p.myBid.salary)} × ${p.myBid.years}y` : 'Bid'}
+                          </Button>
+                        )}
+                        {d.canSign && (
+                          <Button className="px-2 py-0.5 text-xs" disabled={p.attemptsLeft === 0} onClick={() => setOpen(open === p.id ? null : p.id)}>
+                            {p.attemptsLeft === 0 ? 'Not negotiating' : open === p.id ? 'Close' : 'Sign…'}
+                          </Button>
+                        )}
+                      </td>
+                    )}
                     <td className="whitespace-nowrap">
                       <Link to={`/league/${L.id}/player/${p.id}`} className="font-semibold text-ice-50 hover:underline">
                         {p.name}
                       </Link>
                       {p.injury && <span className="ml-1.5 text-[10px] text-red-300">INJ</span>}
                     </td>
+                    {d.bidding && (
+                      <td className="text-xs whitespace-nowrap">
+                        <OfferStatus p={p} />
+                      </td>
+                    )}
                     <td className="text-ice-400">{p.pos}</td>
                     <td className="num">{p.age}</td>
                     <td className="num whitespace-nowrap">{ht(p.height)}</td>
@@ -334,20 +391,6 @@ function FreeAgentTable({ d, open, setOpen }: { d: FAData; open: string | null; 
                     )}
                     <td className="num">{p.careerGp}</td>
                     <td className="text-[11px] whitespace-nowrap text-ice-500">{p.deal ? p.deal.term : <Priorities items={p.priorities} />}</td>
-                    {L.myTeamId && (
-                      <td className="text-right whitespace-nowrap">
-                        {d.bidding && (
-                          <Button variant={p.myBid ? 'secondary' : 'primary'} className="px-2 py-0.5 text-xs" onClick={() => setOpen(open === p.id ? null : p.id)}>
-                            {p.myBid ? `Bid: ${money(p.myBid.salary)} × ${p.myBid.years}y` : 'Bid'}
-                          </Button>
-                        )}
-                        {d.canSign && (
-                          <Button className="px-2 py-0.5 text-xs" disabled={p.attemptsLeft === 0} onClick={() => setOpen(open === p.id ? null : p.id)}>
-                            {p.attemptsLeft === 0 ? 'Not negotiating' : open === p.id ? 'Close' : 'Sign…'}
-                          </Button>
-                        )}
-                      </td>
-                    )}
                   </tr>
                   {open === p.id && p.deal && (d.bidding || d.canSign) && (
                     <tr>

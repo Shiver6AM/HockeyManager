@@ -531,10 +531,19 @@ export interface OffseasonState {
   resign: Record<PlayerId, boolean>;
   /** RFAs whose team extended a qualifying offer (keeps his rights on a 1-year deal). */
   qualified?: Record<PlayerId, boolean>;
-  /** Blind-bid free agency: current round (1-based) and sealed bids by team. */
+  /** Old saves: free agency ran in three bidding rounds (now days; see faDay). */
   faRound?: number;
+  /** Free agency day (1-based, up to FA_DAYS). */
+  faDay?: number;
+  /** Sealed offers by team. They stand until the player decides (or the team withdraws). */
   bids?: Record<TeamId, Record<PlayerId, ContractOffer>>;
+  /** The day each free agent with offers on the table will decide (he listens 3–5 days from the first offer). */
+  faClock?: Record<PlayerId, number>;
+  /** How many times each free agent has turned down every offer (he lowers his sights each time). */
+  faHoldouts?: Record<PlayerId, number>;
   faLog?: FaResult[];
+  /** Free agents who turned down every offer they had. */
+  faHoldoutLog?: FaHoldout[];
   /** Asking prices for this summer's free agents. */
   freeAgentAsks: Record<PlayerId, ContractOffer>;
   /** Each human team's ranked draft list, used when they're auto-picked for. */
@@ -670,12 +679,20 @@ export interface HallOfFamer {
   summary: string;
 }
 
+export interface FaHoldout {
+  day: number;
+  playerId: PlayerId;
+  /** Teams that had offers in (they come off the table). */
+  teamIds: TeamId[];
+}
+
 export interface FaResult {
+  /** Free agency day he signed (older saves: the bidding round). */
   round: number;
   playerId: PlayerId;
   teamId: TeamId;
   offer: ContractOffer;
-  /** How many teams bid on him that round. */
+  /** How many teams had offers in when he decided. */
   bidders: number;
 }
 

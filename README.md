@@ -258,7 +258,7 @@ anyone who hasn't acted gets sensible defaults.
 | **Season review** | Nothing changes yet, so final stats and awards can be browsed | Look around |
 | **Entry draft** | A new class of ~260 teenagers and an NHL-style lottery (two draws, max 10-spot jump); 7 rounds | Pick when you're on the clock, or rank a **draft list** that's used if you're away. Trades stay open, including this year's unused picks |
 | **Re-signing week** | Seven days of exclusive talks with your own pending UFAs and RFAs. Offers are answered by the player's agent the next day (close calls can take an extra day); AI teams re-sign theirs through the week | Make offers, accept counters, qualify RFAs, or let players go |
-| **Free agency** | Three **blind-bidding rounds**: every free agent takes the best offer he receives; AI teams bid too | Place sealed bids; leftover players sign at their ask during camp |
+| **Free agency** | Ten days of **sealed offers**: each free agent listens for 3–5 days from his first offer, then takes the best one or turns them all down; AI teams bid too | Make sealed offers; leftover players sign at their ask during camp |
 | **Training camp** | AI teams promote ready prospects and cut to 23 | Promote prospects, send down, release |
 | **New season** | Career stats archived, new schedule, cap grows 2.5% | — |
 
@@ -359,12 +359,16 @@ anyone who hasn't acted gets sensible defaults.
     offer file; the arbitrator awards a 1–2 year deal near market value. In training camp a
     team can walk away from an award of ~$4.5M or more, making him a UFA.
   - You can keep negotiating with your own unsigned RFA throughout.
-- **Blind-bid free agency:** managers in different time zones get the same shot,
-  because what counts is the best offer, not who clicked first. Teams under the
-  salary floor overpay to reach it.
+- **Sealed-offer free agency:** managers in different time zones get the same shot.
+  A free agent listens for 3–5 days from his first offer before deciding, and what
+  counts is the best offer, not who clicked first. The Free agents page shows how many
+  offers each player has and when he'll decide (the terms stay sealed). If nothing is
+  good enough he turns them all down, comes back a little cheaper and listens again.
+  Everyone with an offer decides on the last day. Teams under the salary floor overpay
+  to reach it.
 - **Extensions:** negotiate with players in the final year of their deal during
   the season. The new deal kicks in when the old one ends.
-- **Leftover free agents:** after the bidding rounds (training camp and in season),
+- **Leftover free agents:** after free agency (training camp and in season),
   **Sign** opens a negotiation; he signs on the spot when he accepts.
 - **Buyouts:** releasing a player under contract costs two-thirds of the remaining
   money (one-third if he's under 26), spread over twice the remaining years as dead cap.

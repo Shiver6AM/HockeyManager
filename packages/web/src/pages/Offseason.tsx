@@ -134,11 +134,20 @@ export function OffseasonPanel() {
                       ? L.resignDay < L.resignDays
                         ? `Next day (${L.resignDay}/${L.resignDays})`
                         : 'Open free agency'
-                      : 'Next stage'}
+                      : stage === 'free-agency' && L.faDay !== null
+                        ? L.faDay < L.faDays
+                          ? `Next day (FA ${L.faDay}/${L.faDays})`
+                          : 'Close free agency'
+                        : 'Next stage'}
             </Button>
             {(stage === 'review' || stage === 'draft' || stage === 're-sign') && (
               <Button variant="secondary" onClick={() => sim.start({ to: 'free-agency' })} disabled={sim.running || sim.starting}>
                 Sim to free agency
+              </Button>
+            )}
+            {stage === 'free-agency' && (
+              <Button variant="secondary" onClick={() => sim.start({ to: 'training-camp' })} disabled={sim.running || sim.starting}>
+                Sim to end of free agency
               </Button>
             )}
             <Button variant="ghost" onClick={() => sim.start({ to: 'next-season' })} disabled={sim.running || sim.starting}>

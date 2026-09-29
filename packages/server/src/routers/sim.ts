@@ -5,7 +5,7 @@ import { advancerProcedure, badRequest, commissionerProcedure, memberProcedure, 
 
 const target = z.union([
   z.object({ days: z.number().int().min(1).max(400) }),
-  z.object({ to: z.enum(['playoffs', 'end-of-season', 'next-season', 'trade-deadline', 'free-agency']) }),
+  z.object({ to: z.enum(['playoffs', 'end-of-season', 'next-season', 'trade-deadline', 'free-agency', 'training-camp']) }),
 ]);
 
 export const simRouter = router({

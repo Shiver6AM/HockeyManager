@@ -232,7 +232,7 @@ function executeSheet(league: League, p: Player, c: RfaCase, match: boolean) {
 }
 
 /** Settle sheets from the previous round whose decision was pending. */
-function settlePending(league: League) {
+export function settlePending(league: League) {
   for (const [id, c] of Object.entries(league.offseason?.rfa ?? {})) {
     if (c.status !== 'unsigned' || !c.sheet) continue;
     const p = league.players[id];

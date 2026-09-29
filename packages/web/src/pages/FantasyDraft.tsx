@@ -225,6 +225,7 @@ function Available({ b, canPick, onPick, onList }: { b: Board; canPick: boolean;
         <table className="table">
           <thead className="sticky top-0 z-10 bg-rink-900">
             <tr>
+              <th className="w-0" />
               <Th k="name">Player</Th>
               <Th k="pos">Pos</Th>
               <Th k="age" className="num">Age</Th>
@@ -237,12 +238,23 @@ function Available({ b, canPick, onPick, onList }: { b: Board; canPick: boolean;
               <Th k="value" className="num" title="How the AI rates him for your team: ability, upside for young players, age and salary">
                 Value
               </Th>
-              <th />
             </tr>
           </thead>
           <tbody>
             {sorted.slice(0, n).map((p) => (
               <tr key={p.id}>
+                <td className="w-0 whitespace-nowrap">
+                  {canPick && (
+                    <Button className="px-2 py-0.5 text-xs" disabled={!!p.problem} title={p.problem ?? undefined} onClick={() => onPick(p.id)}>
+                      Draft
+                    </Button>
+                  )}
+                  {b.me && !canPick && !listed.has(p.id) && (
+                    <Button variant="ghost" className="px-2 py-0.5 text-xs" onClick={() => onList(p.id)}>
+                      + List
+                    </Button>
+                  )}
+                </td>
                 <td className="whitespace-nowrap">
                   <Link to={`/league/${L.id}/player/${p.id}`} className="text-ice-50 hover:underline">
                     {p.name}
@@ -262,18 +274,6 @@ function Available({ b, canPick, onPick, onList }: { b: Board; canPick: boolean;
                 <td className="num">{p.contract ? money(p.contract.salary) : '—'}</td>
                 <td className="num">{p.contract?.yearsLeft ?? '—'}</td>
                 <td className="num text-ice-300">{p.value.toFixed(1)}</td>
-                <td className="text-right whitespace-nowrap">
-                  {canPick && (
-                    <Button className="px-2 py-0.5 text-xs" disabled={!!p.problem} title={p.problem ?? undefined} onClick={() => onPick(p.id)}>
-                      Draft
-                    </Button>
-                  )}
-                  {b.me && !canPick && !listed.has(p.id) && (
-                    <Button variant="ghost" className="px-2 py-0.5 text-xs" onClick={() => onList(p.id)}>
-                      + List
-                    </Button>
-                  )}
-                </td>
               </tr>
             ))}
           </tbody>

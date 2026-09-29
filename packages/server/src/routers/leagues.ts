@@ -1,4 +1,4 @@
-import { cleanSliders, createLeague, fantasyOnClock, RESIGN_DAYS, SIM_SLIDERS, slider, tradeDeadline, type AdvanceMode, type SimSlider } from '@hockey-gm/sim-core';
+import { cleanSliders, createLeague, FA_DAYS, faDayOf, fantasyOnClock, RESIGN_DAYS, SIM_SLIDERS, slider, tradeDeadline, type AdvanceMode, type SimSlider } from '@hockey-gm/sim-core';
 import { TRPCError } from '@trpc/server';
 import { randomBytes, randomInt } from 'node:crypto';
 import { z } from 'zod';
@@ -130,6 +130,8 @@ export const leaguesRouter = router({
       offseasonStage: L.offseason?.stage ?? null,
       resignDay: L.offseason?.stage === 're-sign' ? (L.offseason.resignDay ?? RESIGN_DAYS) : null,
       resignDays: RESIGN_DAYS,
+      faDay: L.offseason?.stage === 'free-agency' ? faDayOf(L.offseason) : null,
+      faDays: FA_DAYS,
       /** A new league that hasn't played a season yet. */
       freshStart: !!L.freshStart,
       /** The fantasy draft, while it's on. */
