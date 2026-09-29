@@ -142,7 +142,7 @@ function reached(L: League, t: AdvanceTarget, j: SimJob, triggeredBy: string, st
     case 'end-of-season':
       return L.phase === 'offseason';
     case 'free-agency':
-      return L.phase !== 'offseason' || (!!L.offseason && L.offseason.stage !== 'draft' && L.offseason.stage !== 're-sign');
+      return L.phase !== 'offseason' || (!!L.offseason && !['fantasy-draft', 'draft', 're-sign'].includes(L.offseason.stage));
     case 'next-season':
       return startPhase === 'offseason' ? L.phase === 'regular-season' : j.phaseChanges.includes('offseason') && L.phase === 'regular-season';
   }
@@ -151,7 +151,7 @@ function reached(L: League, t: AdvanceTarget, j: SimJob, triggeredBy: string, st
 function checkTarget(L: League, t: AdvanceTarget) {
   if (L.phase === 'offseason') {
     if ('to' in t && t.to !== 'next-season' && t.to !== 'free-agency') throw new Error('The season is over. Advance through the offseason instead.');
-    if ('to' in t && t.to === 'free-agency' && L.offseason && L.offseason.stage !== 'draft' && L.offseason.stage !== 're-sign') throw new Error('Free agency is already open');
+    if ('to' in t && t.to === 'free-agency' && L.offseason && !['fantasy-draft', 'draft', 're-sign'].includes(L.offseason.stage)) throw new Error('Free agency is already open');
     return;
   }
   if ('to' in t && t.to === 'free-agency') throw new Error('Free agency opens in the offseason');
@@ -217,7 +217,8 @@ export async function startAdvance(
   return { job, finished };
 }
 
-const SAVE_EVERY_MS = 2500;
+/** Progress is shown from memory; the league is saved at phase changes and every few seconds. */
+const SAVE_EVERY_MS = 6000;
 const yieldToServer = () => new Promise<void>((r) => setImmediate(r));
 
 async function runJob(db: Db, job: SimJob, L: League, version: number, triggeredBy: string) {

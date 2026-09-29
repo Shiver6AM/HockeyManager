@@ -26,7 +26,7 @@ describe('phase 12: background sims, contracts, farm, scouting', () => {
     scheduler = new Scheduler(db);
     comm = await register('commish12');
     bob = await register('bob12');
-    ({ id: leagueId } = await comm.leagues.create({ name: 'Phase Twelve' }));
+    ({ id: leagueId } = await comm.leagues.create({ name: 'Phase Twelve', start: 'season' }));
     const ov = await comm.leagues.overview({ leagueId });
     await bob.leagues.join({ inviteCode: ov.inviteCode });
     await bob.leagues.claimTeam({ leagueId, teamId: 'HAL' });

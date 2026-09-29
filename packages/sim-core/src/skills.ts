@@ -19,6 +19,7 @@ import { age, overall, overallWeights } from './ratings';
 import { clamp, deriveSeed, Rng } from './rng';
 import { ROLE_LABEL, ROLES, roleSkill, type Role } from './systems';
 import type { GoalieRatings, League, Player, PlayerId, SkaterRatings, Team } from './types';
+import { slider } from './sliders';
 
 export type SkillGroup = 'offense' | 'defense' | 'skating' | 'goaltending';
 /** Groups skills coaches specialize in (goaltending is the goalie coach's job). */
@@ -331,7 +332,7 @@ export function trainingRate(league: League, coach: SkillsCoach, p: Player, s: T
   const ageF = a <= 21 ? 1.25 : a <= 24 ? 1.12 : a <= 27 ? 1 : a <= 30 ? 0.8 : a <= 33 ? 0.62 : 0.45;
   const v = skillValue(p, s);
   const room = clamp((97 - v) / 35, 0.12, 1);
-  let rate = SKILLS.basePerDay * coachF * learnF * ageF * room;
+  let rate = SKILLS.basePerDay * coachF * learnF * ageF * room * slider(league, 'coaching');
   if (isRole(s)) {
     rate *= SKILLS.roleFactor;
     if ((p.roleTraining?.[s] ?? 0) >= SKILLS.roleCap) rate = 0;

@@ -25,6 +25,7 @@ import { deriveSeed, Rng } from './rng';
 import { healthyRoster } from './roster';
 import type { League, NeedTag, Player, PlayerId, Team, TeamId, TradeAsset, TradeProposal } from './types';
 import { assetFits, BLOCK_DISCOUNT, NEED_BONUS, tradeBlock } from './block';
+import { slider } from './sliders';
 
 export const TRADE = {
   /** AI wants to come out ahead by this much (ratio of value received to value given). */
@@ -499,7 +500,7 @@ export function aiTradeDay(league: League): TradeProposal | null {
   if (league.phase !== 'regular-season' || !tradeWindowOpen(league).open) return null;
   const rng = new Rng(deriveSeed(league.seed, `ai-trade:${league.season}:${league.day}`));
   const deadline = tradeDeadline(league);
-  const chance = deadline - league.day <= 7 ? 0.7 : 0.18;
+  const chance = Math.min(1, (deadline - league.day <= 7 ? 0.7 : 0.18) * slider(league, 'trades'));
   if (!rng.chance(chance)) return null;
   const ai = Object.values(league.teams).filter((t) => t.controller.kind === 'ai');
   const buyers = ai.filter((t) => t.controller.kind === 'ai' && t.controller.strategy === 'contend');

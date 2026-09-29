@@ -29,6 +29,23 @@ const positional = (slot: Slot, p: Player) => {
  * skill for the team's systems (e.g. the power-play formation's slots).
  */
 export function autoLines(roster: Player[], tactics: Tactics = DEFAULT_TACTICS): Lines {
+  // AI teams rebuild lines before every game, but the result only depends on
+  // who's available, their ratings and the team's systems, so identical inputs
+  // reuse the last answer.
+  const key =
+    JSON.stringify(tactics) +
+    '#' +
+    roster.map((p) => `${p.id}:${p.pos}:${JSON.stringify(p.skater ?? p.goalie)}:${p.roleTraining ? JSON.stringify(p.roleTraining) : ''}`).join('|');
+  const hit = linesCache.get(key);
+  if (hit) return structuredClone(hit);
+  const lines = buildAutoLines(roster, tactics);
+  if (linesCache.size > 400) linesCache.clear();
+  linesCache.set(key, structuredClone(lines));
+  return lines;
+}
+const linesCache = new Map<string, Lines>();
+
+function buildAutoLines(roster: Player[], tactics: Tactics): Lines {
   const byOvr = (a: Player, b: Player) => overall(b) - overall(a);
   const skaters = roster.filter((p) => p.pos !== 'G');
   const forwards = skaters.filter((p) => p.pos !== 'D').sort(byOvr);

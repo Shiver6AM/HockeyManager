@@ -64,6 +64,13 @@ import {
   ACTIVE_MAX,
   affiliateLabel,
   signProspectToFarm,
+  fantasyOnClock,
+  overall,
+  fantasyAvailable,
+  fantasyPick,
+  fantasyPickProblem,
+  fantasyValue,
+  FANTASY_ROUNDS,
   centralScouting,
   autoLines,
   healthyRoster,
@@ -73,7 +80,7 @@ import { mutateLeague } from '../advance';
 import { dealTerms } from '../deal';
 import { deliver } from '../notify';
 import { readLeague } from '../state';
-import { badRequest, memberProcedure, router, type Membership } from '../trpc';
+import { advancerProcedure, badRequest, memberProcedure, router, type Membership } from '../trpc';
 import { publicPlayer, teamInfo } from '../views';
 
 /** Letter grade from a scout's ceiling estimate. */
@@ -133,6 +140,16 @@ export function classView(L: League, viewerTeam: string | null, p: Player, draft
   };
 }
 
+/** Tell the manager now on the clock (fantasy or entry draft). */
+async function notifyClock(q: Parameters<typeof deliver>[0], leagueId: string, L: League, except?: string) {
+  const f = L.fantasy && !L.fantasy.done ? fantasyOnClock(L) : null;
+  const e = !f && L.offseason?.stage === 'draft' ? onTheClock(L) : null;
+  const clock = f ?? e;
+  if (!clock || clock.teamId === except || L.teams[clock.teamId].controller.kind !== 'human') return;
+  const text = f ? `You're on the clock in the fantasy draft: round ${clock.round}, pick #${clock.overall}.` : `You're on the clock: round ${clock.round}, pick #${clock.overall}.`;
+  await deliver(q, leagueId, [{ teamId: clock.teamId, kind: 'draft', text, link: f ? '/fantasy' : '/draft' }]);
+}
+
 function requireTeam(m: Membership): string {
   if (!m.teamId) throw badRequest('You do not manage a team');
   return m.teamId;
@@ -166,7 +183,9 @@ export const offseasonRouter = router({
     return {
       season: os.season,
       stage: os.stage,
-      stages: OFFSEASON_STAGES.map((s) => ({ id: s, label: STAGE_LABELS[s] })),
+      stages: (L.fantasy ? (['fantasy-draft', ...OFFSEASON_STAGES] as const) : OFFSEASON_STAGES).map((s) => ({ id: s, label: STAGE_LABELS[s] })),
+      /** A new league: no season has been played yet. */
+      fresh: !!L.freshStart,
       draft: {
         done: d.current >= d.picks.length,
         current: d.current,
@@ -193,6 +212,104 @@ export const offseasonRouter = router({
           points: r.career.reduce((s, c) => s + (c.skater ? c.skater.g + c.skater.a : 0), 0),
         })),
     };
+  }),
+
+  /**
+   * Commissioner: get a draft going (the fantasy draft, or the entry draft at a
+   * draft start). Picks run until a manager is on the clock.
+   */
+  proceed: advancerProcedure.mutation(async ({ ctx, input }) =>
+    mutateLeague(ctx.db, input.leagueId, async (L, q) => {
+      const stage = L.offseason?.stage;
+      if (L.phase !== 'offseason' || (stage !== 'fantasy-draft' && stage !== 'draft')) throw badRequest('There is no draft to start');
+      const step = offseasonStep(L, { force: false });
+      await notifyClock(q, input.leagueId, L);
+      return { to: step.to, note: step.note };
+    }),
+  ),
+
+  fantasyBoard: memberProcedure.query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    const f = L.fantasy;
+    if (!f) return null;
+    const my = ctx.membership.teamId;
+    const team = my ? L.teams[my] : null;
+    const clock = fantasyOnClock(L);
+    const nameOf = (id: string) => `${L.players[id]?.firstName} ${L.players[id]?.lastName}`;
+    const mine = team ? team.roster.map((id) => L.players[id]).filter(Boolean) : [];
+    const count = (g: string) => mine.filter((p) => (g === 'G' ? p.pos === 'G' : g === 'D' ? p.pos === 'D' : p.pos !== 'G' && p.pos !== 'D')).length;
+    return {
+      started: f.started,
+      done: !!f.done,
+      current: f.current,
+      total: f.picks.length,
+      rounds: FANTASY_ROUNDS,
+      then: f.then,
+      onTheClock: clock ? { ...clock, team: teamInfo(L.teams[clock.teamId]), isMe: clock.teamId === my } : null,
+      myNextPick: my ? (f.picks.slice(f.current).find((p) => p.teamId === my) ?? null) : null,
+      auto: my ? !!f.auto[my] : false,
+      myList: my ? (f.lists?.[my] ?? []).filter((id) => L.players[id]?.inFantasyPool) : [],
+      me: team
+        ? {
+            capRoom: capRoom(L, team),
+            payroll: payroll(L, team),
+            counts: { F: count('F'), D: count('D'), G: count('G') },
+            picksLeft: f.picks.slice(f.current).filter((p) => p.teamId === my).length,
+            roster: mine.map((p) => ({ ...publicPlayer(L, p), potential: scouting(L, my, p) })).sort((a, b) => b.overall - a.overall),
+          }
+        : null,
+      recent: f.picks
+        .slice(Math.max(0, f.current - 40), f.current)
+        .reverse()
+        .map((p) => ({ ...p, team: teamInfo(L.teams[p.teamId]), name: p.playerId ? nameOf(p.playerId) : null, pos: p.playerId ? L.players[p.playerId].pos : null, ovr: p.playerId ? overall(L.players[p.playerId]) : null })),
+      available: fantasyAvailable(L)
+        .map((p) => ({
+          ...publicPlayer(L, p),
+          ...scouting(L, my, p),
+          potentialValue: scoutedPotential(L, my ?? 'league', p),
+          value: Math.round(fantasyValue(L, my ?? Object.keys(L.teams)[0], p) * 10) / 10,
+          problem: my ? fantasyPickProblem(L, my, p) : null,
+        }))
+        .sort((a, b) => b.value - a.value),
+    };
+  }),
+
+  fantasyPick: memberProcedure.input(z.object({ playerId: z.string() })).mutation(async ({ ctx, input }) => {
+    const teamId = requireTeam(ctx.membership);
+    return mutateLeague(ctx.db, input.leagueId, async (L, q) => {
+      mustBeStage(L, 'fantasy-draft');
+      try {
+        fantasyPick(L, teamId, input.playerId);
+      } catch (e) {
+        throw badRequest((e as Error).message);
+      }
+      const step = offseasonStep(L, { force: false });
+      await notifyClock(q, input.leagueId, L, teamId);
+      return { next: step.to };
+    });
+  }),
+
+  /** Let the AI pick for me for the rest of the fantasy draft (or stop it). */
+  setFantasyAuto: memberProcedure.input(z.object({ enabled: z.boolean() })).mutation(async ({ ctx, input }) => {
+    const teamId = requireTeam(ctx.membership);
+    return mutateLeague(ctx.db, input.leagueId, async (L, q) => {
+      mustBeStage(L, 'fantasy-draft');
+      L.fantasy!.auto[teamId] = input.enabled;
+      if (input.enabled && L.fantasy!.started && fantasyOnClock(L)?.teamId === teamId) {
+        offseasonStep(L, { force: false });
+        await notifyClock(q, input.leagueId, L, teamId);
+      }
+      return { ok: true };
+    });
+  }),
+
+  setFantasyList: memberProcedure.input(z.object({ playerIds: z.array(z.string()).max(200) })).mutation(async ({ ctx, input }) => {
+    const teamId = requireTeam(ctx.membership);
+    await mutateLeague(ctx.db, input.leagueId, (L) => {
+      mustBeStage(L, 'fantasy-draft');
+      (L.fantasy!.lists ??= {})[teamId] = input.playerIds.filter((id) => L.players[id]?.inFantasyPool);
+    });
+    return { ok: true };
   }),
 
   draftBoard: memberProcedure.query(async ({ ctx, input }) => {
@@ -258,7 +375,7 @@ export const offseasonRouter = router({
     const team = L.teams[my];
     // RFAs with an open case are shown in their own list (offer sheets, arbitration).
     const ids = Object.keys(os.expiring).filter((id) => L.players[id]?.teamId === my && !os.rfa?.[id]);
-    const closed = os.stage !== 'draft' && os.stage !== 're-sign';
+    const closed = !['fantasy-draft', 'draft', 're-sign'].includes(os.stage);
     const committed = team.roster
       .filter((id) => !os.expiring[id])
       .reduce((s, id) => s + (L.players[id].contract?.salary ?? 0), 0) + deadCapFor(L, team);
@@ -271,7 +388,7 @@ export const offseasonRouter = router({
     const mine = <T extends { teamId: string }>(x: T | undefined) => (x && x.teamId === my ? x : null);
     return {
       stage: os.stage,
-      open: os.stage === 'draft' || os.stage === 're-sign',
+      open: ['fantasy-draft', 'draft', 're-sign'].includes(os.stage),
       /** Day of the re-signing week (null during the draft), and its length. */
       resignDay: os.stage === 're-sign' ? (os.resignDay ?? RESIGN_DAYS) : null,
       resignDays: RESIGN_DAYS,

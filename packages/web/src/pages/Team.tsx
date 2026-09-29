@@ -90,10 +90,19 @@ export function TeamPage() {
       {tab === 'roster' && <Roster t={t} season={statsSeason} setSeason={setStatsSeason} />}
       {tab === 'contracts' && <ContractsTab leagueId={L.id} teamId={t.team.id} />}
       {tab === 'prospects' && <Prospects t={t} />}
-      {tab === 'systems' && <TacticsPanel t={t} leagueId={L.id} />}
+      {tab === 'systems' && (t.hasLines ? <TacticsPanel t={t} leagueId={L.id} /> : <Card><Empty>Systems are set once the roster is built.</Empty></Card>)}
       {tab === 'coaching' && <SkillsCoaches leagueId={L.id} teamId={t.team.id} />}
       {tab === 'front office' && <FrontOffice leagueId={L.id} teamId={t.team.id} />}
-      {tab === 'lines' && (t.isMine ? <LinesEditor t={t} /> : <LinesView t={t} />)}
+      {tab === 'lines' &&
+        (!t.hasLines ? (
+          <Card>
+            <Empty>No lines yet: the roster is being built in the fantasy draft.</Empty>
+          </Card>
+        ) : t.isMine ? (
+          <LinesEditor t={t} />
+        ) : (
+          <LinesView t={t} />
+        ))}
       {tab === 'schedule' && (
         <div className="grid gap-5 lg:grid-cols-2">
           <Card title="Recent results">

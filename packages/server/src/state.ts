@@ -79,13 +79,18 @@ function remember(id: string, version: number, league: League) {
  * The simulation only needs final scores after a game is played.
  */
 export async function extractBoxScores(q: Queryable, league: League, games: ScheduledGame[]) {
-  for (const g of games) {
-    if (!g.result?.box) continue;
-    await q.query(
-      'insert into box_scores (league_id, season, game_id, box) values ($1, $2, $3, $4) on conflict do nothing',
-      [league.id, league.season, g.id, JSON.stringify(g.result.box)],
-    );
-    (g.result as { box: BoxScore | null }).box = null;
+  // Batched: one round trip per 40 games instead of one per game (it adds up
+  // against a hosted database over a season of 1,312 games).
+  const withBox = games.filter((g) => g.result?.box);
+  for (let i = 0; i < withBox.length; i += 40) {
+    const chunk = withBox.slice(i, i + 40);
+    const params: unknown[] = [];
+    const rows = chunk.map((g, j) => {
+      params.push(league.id, league.season, g.id, JSON.stringify(g.result!.box));
+      return `($${j * 4 + 1}, $${j * 4 + 2}, $${j * 4 + 3}, $${j * 4 + 4})`;
+    });
+    await q.query(`insert into box_scores (league_id, season, game_id, box) values ${rows.join(', ')} on conflict do nothing`, params);
+    for (const g of chunk) (g.result as { box: BoxScore | null }).box = null;
   }
 }
 

@@ -13,6 +13,7 @@ import { clamp, Rng } from './rng';
 import { CHEMISTRY, SLOT_BASIS, slotBonusOf, unitChemistry } from './chemistry';
 import { completeLines } from './lines';
 import { defensiveDrive, goalieQuality, offensiveDrive } from './ratings';
+import { slider } from './sliders';
 import {
   combine,
   DEFAULT_TACTICS,
@@ -156,6 +157,8 @@ interface GP {
   /** Rating adjustments while on the ice this shift (slot fit, chemistry, system fit). */
   oB: number;
   dB: number;
+  /** This player's box-score line (skaters). */
+  st?: SkaterGameLine;
 }
 
 interface Side {
@@ -190,6 +193,8 @@ interface Side {
   goalieStartGoals: number;
   /** Players knocked out of this game by injury. */
   out: Set<PlayerId>;
+  /** Every dressed skater (for substitutions). */
+  dressed: PlayerId[];
 }
 
 export interface GameContext {
@@ -241,6 +246,16 @@ export function simulateGame(
   const rng = new Rng(seed);
   const playoff = !!ctx.playoff;
   const T = TUNING;
+  // Commissioner sliders (all 1 by default, which leaves every number untouched).
+  const K = {
+    injuries: slider(league, 'injuryRate'),
+    injuryLength: slider(league, 'injuryLength'),
+    scoring: slider(league, 'scoring'),
+    penalties: slider(league, 'penalties'),
+    fights: slider(league, 'fights'),
+    random: slider(league, 'randomness'),
+  };
+  const homeIce = slider(league, 'homeIce') === 1 ? T.homeIce : 1 + (T.homeIce - 1) * slider(league, 'homeIce');
   const skaters: Record<PlayerId, SkaterGameLine> = {};
   const goalies: Record<PlayerId, GoalieGameLine> = {};
   const gp: Record<PlayerId, GP> = {};
@@ -253,7 +268,7 @@ export function simulateGame(
     for (const id of [...L.forwards.flat(), ...L.defense.flat()]) {
       const p = league.players[id];
       const s = p.skater!;
-      const form = rng.normal(0, T.formSd.skater * (1.4 - p.hidden.consistency));
+      const form = rng.normal(0, T.formSd.skater * (1.4 - p.hidden.consistency) * K.random);
       gp[id] = {
         id,
         pos: p.pos,
@@ -278,10 +293,11 @@ export function simulateGame(
         dB: 0,
       };
       skaters[id] = newSkaterLine();
+      gp[id].st = skaters[id];
     }
     for (const id of L.goalies) {
       const p = league.players[id];
-      const form = rng.normal(0, T.formSd.goalie * (1.4 - p.hidden.consistency));
+      const form = rng.normal(0, T.formSd.goalie * (1.4 - p.hidden.consistency) * K.random);
       gp[id] = {
         id, pos: 'G', off: 0, def: 0, shoot: 0, pass: 0, support: 0, check: 0, disc: 0, fo: 0, block: 0,
         gq: goalieQuality(p.goalie!) + form - (backToBack ? 1.5 : 0),
@@ -309,11 +325,13 @@ export function simulateGame(
       fIdx: 0, dIdx: 0, fLeft: 45, dLeft: 50, fTime: [0, 0, 0, 0], dTime: [0, 0, 0], esTime: 0, ppClock: 0,
       onIce: [], off: 0, def: 0, support: 0, block: 0, line: newTeamLine(), goalieStartGoals: 0,
       out: new Set(),
+      dressed: [...lines.forwards.flat(), ...lines.defense.flat()],
     };
   };
   const home = makeSide('home', homeTeam, !!ctx.homeBackToBack);
   const away = makeSide('away', awayTeam, !!ctx.awayBackToBack);
   const other = (s: Side) => (s === home ? away : home);
+  const sides = [home, away] as const;
   // Line chemistry doesn't change during a game.
   const chemCache = new Map<string, number>();
   const chemOf = (s: Side, ids: PlayerId[], defense: boolean) => {
@@ -383,7 +401,27 @@ export function simulateGame(
     return best;
   };
 
-  const unitCache = new Map<string, { sys: SystemEffect; oB: number[]; dB: number[] }>();
+  type UnitEff = { sys: SystemEffect; oB: number[]; dB: number[]; slotOf: Map<PlayerId, Slot> };
+  const unitCache = new Map<string, UnitEff>();
+  /** Effects of units exactly as listed in the lines, keyed by the lines' own arrays. */
+  const listedCache = new Map<PlayerId[], Map<string, UnitEff>>();
+  /** A forward line plus a defense pair, built once per game so it can key the cache. */
+  const evUnits = new Map<Side, PlayerId[][]>();
+  const evUnit = (s: Side, f: number, d: number) => {
+    let m = evUnits.get(s);
+    if (!m) evUnits.set(s, (m = []));
+    const k = f * 8 + d;
+    return (m[k] ??= [...s.lines.forwards[f], ...s.lines.defense[d]]);
+  };
+  const distinct = (ids: PlayerId[]) => {
+    for (let i = 1; i < ids.length; i++) for (let j = 0; j < i; j++) if (ids[i] === ids[j]) return false;
+    return true;
+  };
+  const makeEff = (s: Side, sit: 'EV' | 'PP' | 'SH', base: number, chosen: PlayerId[], slots: Slot[] | null): UnitEff => {
+    const slotOf = new Map<PlayerId, Slot>();
+    if (slots) chosen.forEach((id, i) => slots[i] && slotOf.set(id, slots[i]));
+    return { ...unitEffect(s, sit, base, chosen, slots), slotOf };
+  };
   const unitEffect = (s: Side, sit: 'EV' | 'PP' | 'SH', base: number, chosen: PlayerId[], slots: Slot[] | null) => {
     const L = s.lines;
     const unit = chosen.map((id) => gp[id]);
@@ -457,7 +495,7 @@ export function simulateGame(
         slots = PK3_SLOTS;
       }
     } else if (base >= 5) {
-      ids = s.goaliePulled ? L.extraAttacker!.slice(0, 5) : [...L.forwards[s.fIdx], ...L.defense[s.dIdx]];
+      ids = s.goaliePulled ? L.extraAttacker!.slice(0, 5) : evUnit(s, s.fIdx, s.dIdx);
       if (s.goaliePulled) slots = EXTRA_ATTACKER_SLOTS.slice(0, 5);
     } else if (base === 4) {
       ids = L.fourOnFour![s.fIdx % 2];
@@ -467,41 +505,52 @@ export function simulateGame(
       slots = THREE_SLOTS;
     }
     // Anyone in the box or hurt is replaced by the next available skater of the same kind.
-    const unavailable = new Set([...s.box.map((b) => b.id), ...s.out]);
-    if (s.goaliePulled) {
-      const extra = [...L.extraAttacker!, ...L.forwards[0], ...L.forwards[1]].find((id) => !ids.includes(id) && !unavailable.has(id));
-      if (extra) ids = [...ids, extra];
-    }
-    const dressed = [...L.forwards.flat(), ...L.defense.flat()];
-    const chosen: PlayerId[] = [];
-    for (const id of ids) {
-      if (!unavailable.has(id) && !chosen.includes(id)) {
-        chosen.push(id);
-        continue;
+    // (Common case, nobody missing: the unit takes the ice as listed.)
+    let chosen: PlayerId[];
+    if (!s.goaliePulled && s.box.length === 0 && s.out.size === 0 && distinct(ids)) {
+      chosen = ids;
+    } else {
+      const unavailable = new Set([...s.box.map((b) => b.id), ...s.out]);
+      if (s.goaliePulled) {
+        const extra = [...L.extraAttacker!, ...L.forwards[0], ...L.forwards[1]].find((id) => !ids.includes(id) && !unavailable.has(id));
+        if (extra) ids = [...ids, extra];
       }
-      const isD = league.players[id].pos === 'D';
-      const free = (x: PlayerId) => !unavailable.has(x) && !chosen.includes(x) && !ids.includes(x);
-      const sub =
-        dressed.find((x) => free(x) && (league.players[x].pos === 'D') === isD) ??
-        dressed.find((x) => free(x)) ??
-        dressed.find((x) => !unavailable.has(x) && !chosen.includes(x));
-      if (sub) chosen.push(sub);
+      const dressed = s.dressed;
+      chosen = [];
+      for (const id of ids) {
+        if (!unavailable.has(id) && !chosen.includes(id)) {
+          chosen.push(id);
+          continue;
+        }
+        const isD = league.players[id].pos === 'D';
+        const free = (x: PlayerId) => !unavailable.has(x) && !chosen.includes(x) && !ids.includes(x);
+        const sub =
+          dressed.find((x) => free(x) && (league.players[x].pos === 'D') === isD) ??
+          dressed.find((x) => free(x)) ??
+          dressed.find((x) => !unavailable.has(x) && !chosen.includes(x));
+        if (sub) chosen.push(sub);
+      }
     }
     for (const p of s.onIce) {
       touch(p);
       p.on = false;
     }
     s.onIce = chosen.map((id) => gp[id]);
-    s.slotOf = new Map();
-    if (slots) chosen.forEach((id, i) => slots![i] && s.slotOf.set(id, slots![i]));
     // How well this unit fits the team's systems, its players' spots and its chemistry.
     // A unit's effect is the same every time it takes the ice, so it's computed once per game.
-    const ukey = `${s.key}|${sit}|${base}|${s.goaliePulled ? 1 : 0}|${sit === 'SH' ? other(s).tactics.pp : ''}|${chosen.join(',')}`;
-    let eff = unitCache.get(ukey);
-    if (!eff) {
-      eff = unitEffect(s, sit, base, chosen, slots);
-      unitCache.set(ukey, eff);
+    const small = `${sit}|${base}|${s.goaliePulled ? 1 : 0}|${sit === 'SH' ? other(s).tactics.pp : ''}`;
+    let eff: UnitEff | undefined;
+    if (chosen === ids) {
+      let m = listedCache.get(ids);
+      if (!m) listedCache.set(ids, (m = new Map()));
+      eff = m.get(small);
+      if (!eff) m.set(small, (eff = makeEff(s, sit, base, chosen, slots)));
+    } else {
+      const ukey = `${s.key}|${small}|${chosen.join(',')}`;
+      eff = unitCache.get(ukey);
+      if (!eff) unitCache.set(ukey, (eff = makeEff(s, sit, base, chosen, slots)));
     }
+    s.slotOf = eff.slotOf;
     s.sys = eff.sys;
     s.onIce.forEach((p, i) => {
       p.oB = eff!.oB[i];
@@ -524,9 +573,34 @@ export function simulateGame(
     s.block = blk / k;
   };
 
+  // Shot-attempt rates only change when the units on the ice (or their fatigue),
+  // the score, the strength or the goalie change, i.e. whenever the ice is
+  // refreshed, so they're computed then rather than every second.
+  let homeRate = 0;
+  let awayRate = 0;
   const refreshBoth = () => {
     setOnIce(home);
     setOnIce(away);
+    homeRate = attemptRate(home);
+    awayRate = attemptRate(away);
+  };
+  /** Same units, updated fatigue (the 15-second re-check when nothing else changed). */
+  const refreshFatigue = (s: Side) => {
+    let off = 0, def = 0, sup = 0, blk = 0;
+    for (const p of s.onIce) {
+      touch(p);
+      p.on = true;
+      const f = fat(p);
+      off += p.off + p.oB - f;
+      def += p.def + p.dB - f;
+      sup += p.support + p.oB - f;
+      blk += p.block + p.dB - f;
+    }
+    const k = s.onIce.length;
+    s.off = off / k;
+    s.def = def / k;
+    s.support = sup / k;
+    s.block = blk / k;
   };
 
   // ---- Faceoffs ----
@@ -551,7 +625,7 @@ export function simulateGame(
     const key = strengthKey(s);
     const base = T.attemptsPer60[key] ?? T.attemptsPer60['5v5'];
     let r = (base / 3600) * Math.exp((T.driveEffect * (s.off - o.def)) / 10) * s.sys.att * o.sys.oppAtt;
-    if (s === home) r *= T.homeIce;
+    if (s === home) r *= homeIce;
     if (period >= 2 && period <= 3) {
       const diff = s.line.goals - o.line.goals;
       const d = clamp(diff, -2, 2);
@@ -654,6 +728,7 @@ export function simulateGame(
     if (shooter.pos === 'D') pGoal *= T.defenseShotFactor;
     if (rebound) pGoal *= T.reboundBoost;
     pGoal *= s.sys.shq * o.sys.oppShq;
+    pGoal *= K.scoring;
     pGoal = clamp(pGoal, 0.01, 0.6);
     if (rng.chance(pGoal)) {
       creditGoal(s, shooter, rebound);
@@ -713,6 +788,7 @@ export function simulateGame(
     }
     s.out.add(victim);
     const inj = sampleInjury(rng);
+    if (K.injuryLength !== 1) inj.days = Math.max(1, Math.round(inj.days * K.injuryLength));
     injuries.push({ period, time: clock, teamId: s.team.id, playerId: victim, type: inj.type, severity: inj.severity, days: inj.days });
     return true;
   };
@@ -790,22 +866,48 @@ export function simulateGame(
     refreshBoth();
     faceoff();
     const len = periodLength(period);
+    // Event rates that are constant through the period.
+    const hP = ((T.penaltiesPer60 * K.penalties) / 3600) * (overtime ? 0.5 : 1);
+    const injR = (T.injuries.skatersPerTeamGame * K.injuries) / 3600;
+    const gInjR = (T.injuries.goaliesPerTeamGame * K.injuries) / 3600;
+    const aP = hP;
+    const hitR = T.hitsPer60 / 3600;
+    const stopR = T.randomStoppagesPer60 / 3600;
+    const fightR = overtime ? 0 : (T.fightsPerGame * K.fights) / 3600;
+    const otherR = hP + aP + 2 * hitR + stopR + fightR + 2 * injR + 2 * gInjR;
     while (clock < len) {
       clock++;
       gameT++;
       // Ice time
-      for (const s of [home, away]) {
-        for (const p of s.onIce) skaters[p.id].toi++;
+      for (const s of sides) {
+        for (const p of s.onIce) p.st!.toi++;
         if (s.goalieIn) goalies[s.goalie].toi++;
       }
-      let needRefresh = false;
-      for (const s of [home, away]) {
-        if (tickBox(s)) needRefresh = true;
-        if (tickShifts(s)) needRefresh = true;
-        if (updateGoaliePull(s)) needRefresh = true;
+      // A side re-picks its unit when its own line changes, or when either
+      // side's strength changes (penalties, pulled goalie); otherwise the same
+      // players stay out there and only their fatigue is updated.
+      const boxH = tickBox(home);
+      const shiftH = tickShifts(home);
+      const pullH = updateGoaliePull(home);
+      const boxA = tickBox(away);
+      const shiftA = tickShifts(away);
+      const pullA = updateGoaliePull(away);
+      const strength = boxH || pullH || boxA || pullA;
+      const fullH = strength || shiftH;
+      const fullA = strength || shiftA;
+      if (fullH || fullA) {
+        if (fullH) setOnIce(home);
+        else refreshFatigue(home);
+        if (fullA) setOnIce(away);
+        else refreshFatigue(away);
+        homeRate = attemptRate(home);
+        awayRate = attemptRate(away);
+      } else if (gameT % 15 === 0) {
+        refreshFatigue(home);
+        refreshFatigue(away);
+        homeRate = attemptRate(home);
+        awayRate = attemptRate(away);
       }
-      // Re-evaluate on-ice fatigue every 15 seconds so long shifts hurt.
-      if (needRefresh || gameT % 15 === 0) refreshBoth();
 
       if (lastWasRebound) {
         const s = lastWasRebound;
@@ -820,16 +922,9 @@ export function simulateGame(
       }
 
       // One event per second at most: pick which (if any) happens.
-      const hA = attemptRate(home);
-      const aA = attemptRate(away);
-      const hP = (T.penaltiesPer60 / 3600) * (overtime ? 0.5 : 1);
-      const injR = T.injuries.skatersPerTeamGame / 3600;
-      const gInjR = T.injuries.goaliesPerTeamGame / 3600;
-      const aP = hP;
-      const hitR = T.hitsPer60 / 3600;
-      const stopR = T.randomStoppagesPer60 / 3600;
-      const fightR = overtime ? 0 : T.fightsPerGame / 3600;
-      const total = hA + aA + hP + aP + 2 * hitR + stopR + fightR + 2 * injR + 2 * gInjR;
+      const hA = homeRate;
+      const aA = awayRate;
+      const total = hA + aA + otherR;
       let u = rng.next();
       if (u >= total) continue;
       let shooterSide: Side | null = null;

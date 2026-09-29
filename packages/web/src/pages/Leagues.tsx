@@ -14,6 +14,8 @@ export function LeaguesPage() {
   const leagues = useQuery(trpc.leagues.mine.queryOptions());
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
+  const [start, setStart] = useState<'re-sign' | 'draft' | 'season'>('re-sign');
+  const [fantasy, setFantasy] = useState(false);
   const create = useMutation(trpc.leagues.create.mutationOptions({ onSuccess: (r) => nav(`/league/${r.id}/teams`) }));
   const join = useMutation(trpc.leagues.join.mutationOptions({ onSuccess: (r) => nav(`/league/${r.id}/teams`) }));
   const logout = useMutation(trpc.auth.logout.mutationOptions({ onSuccess: () => qc.clear() }));
@@ -68,13 +70,40 @@ export function LeaguesPage() {
             className="space-y-3"
             onSubmit={(e) => {
               e.preventDefault();
-              create.mutate({ name });
+              create.mutate({ name, start, fantasy });
             }}
           >
             <Field label="League name" value={name} onChange={setName} placeholder="e.g. Friday Night Hockey" />
-            <p className="text-xs text-ice-400">
-              Generates 32 teams and a full 82-game schedule. You'll be the commissioner; pick your advance mode in settings.
-            </p>
+            <fieldset className="space-y-1.5">
+              <legend className="mb-1 text-[11px] font-semibold tracking-wider text-ice-500 uppercase">Start</legend>
+              {(
+                [
+                  ['re-sign', 'Offseason: the week before free agency', 'The draft just happened. Re-sign your players, then chase free agents.'],
+                  ['draft', 'Offseason: the entry draft', 'Start on draft day, then re-sign and free agency.'],
+                  ['season', 'Opening night', 'Rosters are set; the 82-game season starts right away.'],
+                ] as const
+              ).map(([v, label, help]) => (
+                <label key={v} className="flex cursor-pointer items-start gap-2 rounded-md p-1.5 hover:bg-rink-850">
+                  <input type="radio" name="start" className="mt-1" checked={start === v} onChange={() => setStart(v)} />
+                  <span>
+                    <span className="text-sm text-ice-100">{label}</span>
+                    {v === 're-sign' && <span className="ml-1.5 text-[11px] text-ice-500">(default)</span>}
+                    <span className="block text-xs text-ice-500">{help}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+            <label className="flex cursor-pointer items-start gap-2 rounded-md border border-rink-700 p-2 hover:bg-rink-850">
+              <input type="checkbox" className="mt-1" checked={fantasy} onChange={(e) => setFantasy(e.target.checked)} />
+              <span>
+                <span className="text-sm text-ice-100">Fantasy draft</span>
+                <span className="block text-xs text-ice-500">
+                  Every player goes into one pool and the 32 teams draft new rosters (23 rounds, snake order) before the league starts. Managers claim teams
+                  first, then the commissioner starts the draft.
+                </span>
+              </span>
+            </label>
+            <p className="text-xs text-ice-400">Generates 32 teams. You'll be the commissioner; pick your advance mode in settings.</p>
             <ErrorBox error={create.error} />
             <Button type="submit" disabled={create.isPending || name.trim().length < 3}>
               {create.isPending ? 'Generating league…' : 'Create league'}

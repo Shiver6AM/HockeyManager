@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 141 tests: sim determinism, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 150 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -78,6 +78,38 @@ game. Membership, ready flags and the advance audit log are ordinary tables.
 leave the server. Scouting will reveal estimates of them in a later phase.
 
 ## Multiplayer
+
+### Starting a league
+
+When you create a league you pick where it begins:
+
+- **Offseason: the week before free agency** (default). The entry draft has just
+  happened; managers claim teams, re-sign the players they want to keep, then bid in
+  free agency.
+- **Offseason: the entry draft.** Claim teams, set draft lists, and the commissioner
+  starts the draft from the Draft page.
+- **Opening night.** Rosters are set and the 82-game season starts right away.
+
+Offseason starts are fresh: nobody has played yet, so there's no development or
+retirement pass and no season's books to close. The draft order runs from the weakest
+roster to the strongest (with the lottery), and the draft class has played a junior
+season that every team's scouts have watched.
+
+**Fantasy draft** (optional): every signed player goes into one pool and the 32 teams
+draft new rosters, 23 rounds, snake order. Players keep their contracts, so the cap
+matters, and every roster must end up able to dress 12 F, 6 D and 2 G. Managers claim
+teams, the commissioner starts the draft, AI teams pick automatically, and managers pick
+when they're on the clock (or let the AI pick for them, wish list first). Afterwards farm
+teams are stocked, leftovers become free agents, and the league moves on to the chosen
+start point.
+
+### Commissioner sliders
+
+*League → Simulation sliders* has multipliers on key parts of the sim, 1.0× being the
+calibrated default: injury frequency and length, scoring, penalties, fighting, home-ice
+advantage, night-to-night randomness, young-player development, veteran decline, the
+skills-coaching effect, retirements and AI trade activity. All at 1.0× gives exactly the
+default simulation.
 
 ### Advancing the league
 

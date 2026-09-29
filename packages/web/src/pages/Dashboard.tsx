@@ -16,6 +16,32 @@ export function Dashboard() {
     <div className="grid gap-5 lg:grid-cols-3">
       <div className="space-y-5 lg:col-span-2">
         {L.champion && <ChampionBanner />}
+        {L.fantasy && (
+          <Link
+            to={`/league/${L.id}/fantasy`}
+            className="block rounded-xl border border-blueline/50 bg-blueline/10 p-4 hover:bg-blueline/15"
+          >
+            <p className="font-display text-lg font-semibold tracking-wide text-white uppercase">Fantasy draft</p>
+            <p className="text-sm text-ice-300">
+              {!L.fantasy.started
+                ? 'Every player is in the pool. Claim a team, then the commissioner starts the draft.'
+                : L.fantasy.onClock === L.myTeamId
+                  ? "You're on the clock!"
+                  : `Pick ${L.fantasy.current + 1} of ${L.fantasy.total}.`}{' '}
+              <span className="text-blue-300">Go to the draft →</span>
+            </p>
+          </Link>
+        )}
+        {L.freshStart && !L.fantasy && L.phase === 'offseason' && L.offseasonStage && (
+          <div className="rounded-xl border border-rink-600 bg-rink-900 p-4 text-sm text-ice-300">
+            <p className="font-display text-lg font-semibold tracking-wide text-white uppercase">A new league</p>
+            {L.offseasonStage === 're-sign'
+              ? 'The league opens the week before free agency. The draft just happened: re-sign the players you want to keep, then bid on free agents.'
+              : L.offseasonStage === 'draft'
+                ? 'The league opens on draft day. Claim a team; the commissioner starts the draft from the Draft page.'
+                : 'The league opens in the offseason.'}
+          </div>
+        )}
         {L.phase === 'offseason' ? (
           <>
             <OffseasonPanel />

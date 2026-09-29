@@ -1,4 +1,4 @@
-import { generateLeague, RESIGN_DAYS, tradeDeadline, type AdvanceMode } from '@hockey-gm/sim-core';
+import { cleanSliders, createLeague, fantasyOnClock, RESIGN_DAYS, SIM_SLIDERS, slider, tradeDeadline, type AdvanceMode, type SimSlider } from '@hockey-gm/sim-core';
 import { TRPCError } from '@trpc/server';
 import { randomBytes, randomInt } from 'node:crypto';
 import { z } from 'zod';
@@ -64,13 +64,22 @@ export const leaguesRouter = router({
   }),
 
   create: authedProcedure
-    .input(z.object({ name: z.string().trim().min(3).max(60), advance: advanceModeSchema.optional() }))
+    .input(
+      z.object({
+        name: z.string().trim().min(3).max(60),
+        advance: advanceModeSchema.optional(),
+        /** Where the league begins (default: the offseason, the week before free agency). */
+        start: z.enum(['re-sign', 'draft', 'season']).default('re-sign'),
+        /** Redistribute every player in a fantasy draft first. */
+        fantasy: z.boolean().default(false),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const advance: AdvanceMode = input.advance ?? { mode: 'commissioner' };
       validateAdvance(advance);
       const id = newId('lg');
       const seed = randomInt(1, 2 ** 31 - 1);
-      const league = generateLeague({ seed, name: input.name, advance });
+      const league = createLeague({ seed, name: input.name, advance, start: input.start, fantasy: input.fantasy });
       league.id = id;
       await ctx.db.tx(async (q) => {
         await q.query(
@@ -121,6 +130,18 @@ export const leaguesRouter = router({
       offseasonStage: L.offseason?.stage ?? null,
       resignDay: L.offseason?.stage === 're-sign' ? (L.offseason.resignDay ?? RESIGN_DAYS) : null,
       resignDays: RESIGN_DAYS,
+      /** A new league that hasn't played a season yet. */
+      freshStart: !!L.freshStart,
+      /** The fantasy draft, while it's on. */
+      fantasy:
+        L.fantasy && !L.fantasy.done
+          ? {
+              started: L.fantasy.started,
+              current: L.fantasy.current,
+              total: L.fantasy.picks.length,
+              onClock: fantasyOnClock(L)?.teamId ?? null,
+            }
+          : null,
       /** Trade deadline (regular season): the day, and days left (0 = deadline day). */
       tradeDeadlineDay: L.phase === 'regular-season' ? tradeDeadline(L) : null,
       daysToDeadline: L.phase === 'regular-season' ? tradeDeadline(L) - L.day : null,
@@ -225,6 +246,22 @@ export const leaguesRouter = router({
         link: '/',
       },
     ]);
+    return { ok: true };
+  }),
+
+  /** Commissioner sliders: current values and their ranges. */
+  simSettings: memberProcedure.query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    return {
+      sliders: (Object.keys(SIM_SLIDERS) as SimSlider[]).map((key) => ({ key, ...SIM_SLIDERS[key], value: slider(L, key) })),
+      canEdit: ctx.membership.isCommissioner,
+    };
+  }),
+
+  updateSimSettings: commissionerProcedure.input(z.object({ sim: z.record(z.string(), z.number()) })).mutation(async ({ ctx, input }) => {
+    await mutateLeague(ctx.db, input.leagueId, (L) => {
+      L.settings.sim = cleanSliders(input.sim);
+    });
     return { ok: true };
   }),
 

@@ -14,6 +14,7 @@ export function DraftPage() {
   const board = useQuery({ ...trpc.offseason.draftBoard.queryOptions({ leagueId: L.id }), refetchInterval: 4000 });
   const pick = useMutation(trpc.offseason.makePick.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));
   const saveList = useMutation(trpc.offseason.setDraftList.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));
+  const start = useMutation(trpc.offseason.proceed.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));
   const [round, setRound] = useState<number | null>(null);
   const b = board.data;
   const byId = useMemo(() => new Map(b?.available.map((p) => [p.id, p]) ?? []), [b]);
@@ -48,7 +49,20 @@ export function DraftPage() {
           )
         )}
       </div>
-      <ErrorBox error={pick.error ?? saveList.error} />
+      <ErrorBox error={pick.error ?? saveList.error ?? start.error} />
+      {!done && b.current === 0 && inDraftStage && L.freshStart && (
+        <Card>
+          <p className="text-sm text-ice-200">
+            The draft hasn't started. Managers: claim your team first, and set your draft list if you like. Once it starts, picks run automatically for AI
+            teams and stop whenever a manager is on the clock.
+          </p>
+          {L.canAdvance && (
+            <Button className="mt-3" disabled={start.isPending} onClick={() => start.mutate({ leagueId: L.id })}>
+              {start.isPending ? 'Starting…' : 'Start the draft'}
+            </Button>
+          )}
+        </Card>
+      )}
 
       <Card title="Central Scouting final rankings">
         <CssRankings players={b.available} leagueId={L.id} edition="Final" top={16} />

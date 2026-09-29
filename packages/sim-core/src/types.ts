@@ -95,6 +95,8 @@ export interface Player {
   minorTeam?: { season: number; league: string; team: string };
   /** Signed but assigned to the team's AHL affiliate (farm team). */
   farm?: boolean;
+  /** Waiting to be picked in a new league's fantasy draft. */
+  inFantasyPool?: boolean;
   /** Height in inches and weight in pounds (derived from his frame when missing; see body.ts). */
   height?: number;
   weight?: number;
@@ -217,6 +219,8 @@ export interface LeagueSettings {
   talentAnchor?: number;
   /** Standard deviation of that same group at creation (keeps the star/depth spread stable). */
   talentSpread?: number;
+  /** Commissioner sliders (multipliers; see sliders.ts). */
+  sim?: Partial<Record<string, number>>;
   /**
    * The same anchors for skaters and goalies separately (the best 21 skaters and
    * 2 goalies per team). Goalies are anchored on their own so the size of the
@@ -438,6 +442,10 @@ export interface League {
   goalieCoachPool?: SkillsCoach[];
   /** Next draft's class, generated when the season starts so scouts can watch it. */
   draftClass?: { season: number; ids: PlayerId[] };
+  /** A new league's fantasy draft (see start.ts). */
+  fantasy?: FantasyDraft;
+  /** Created at an offseason start: no season has been played yet (no books to close). */
+  freshStart?: boolean;
   /** Scouting knowledge by team (see scouting.ts). */
   scouting?: Record<TeamId, TeamScouting>;
   /** Area scouts on the job market. */
@@ -458,7 +466,26 @@ export interface League {
   retired?: Record<PlayerId, RetiredPlayer>;
 }
 
-export type OffseasonStage = 'draft' | 're-sign' | 'free-agency' | 'training-camp';
+export type OffseasonStage = 'fantasy-draft' | 'draft' | 're-sign' | 'free-agency' | 'training-camp';
+
+/** A new league's fantasy draft: every signed player in one pool, snake order. */
+export interface FantasyDraft {
+  /** The commissioner has started it (picks run until a manager is on the clock). */
+  started: boolean;
+  /** Round-1 order (reversed in even rounds). */
+  order: TeamId[];
+  picks: Array<{ round: number; overall: number; teamId: TeamId; playerId: PlayerId | null }>;
+  current: number;
+  /** Everyone who went into the pool. */
+  pool: PlayerId[];
+  /** Where the league goes after the last pick. */
+  then: 're-sign' | 'draft' | 'season';
+  /** Managers who let the AI pick for them. */
+  auto: Record<TeamId, boolean>;
+  /** Managers' ranked wish lists (used when they're picked for). */
+  lists?: Record<TeamId, PlayerId[]>;
+  done?: boolean;
+}
 
 export interface DraftPick {
   round: number;
