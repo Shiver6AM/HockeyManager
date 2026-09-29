@@ -174,12 +174,13 @@ function teamsPlayingOn(league: League, day: number): Set<TeamId> {
 }
 
 /** Leagues saved before staff/finances existed get them on first use. */
-export function ensureLeagueLife(league: League) {
+export function ensureLeagueLife(league: League, opts: { farm?: boolean } = {}) {
   const teams = Object.values(league.teams);
   if (teams.some((t) => !t.staff)) initStaff(league);
   if (teams.some((t) => !t.finances)) initFinances(league);
   if (teams.some((t) => !t.skillsCoaches || !t.goalieCoach)) initSkillsCoaches(league);
-  if (teams.some((t) => !t.farmStocked)) initFarm(league);
+  // (Not while a fantasy draft is still filling rosters: farms are stocked after it.)
+  if (opts.farm !== false && !(league.fantasy && !league.fantasy.done) && teams.some((t) => !t.farmStocked)) initFarm(league);
   if (teams.some((t) => !t.scouts)) initScouts(league);
   ensureDraftClass(league);
   refillStaffPool(league); // no-op unless the job market is thin

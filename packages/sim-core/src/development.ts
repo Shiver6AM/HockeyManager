@@ -8,6 +8,7 @@ import { clamp, deriveSeed, Rng } from './rng';
 import { age, ARCHETYPE_CEILING, goalieQuality, overall, skaterOverall } from './ratings';
 import { coachDevMultiplier } from './staff';
 import type { GoalieRatings, League, Player, SkaterRatings } from './types';
+import { slider } from './sliders';
 
 export const DEV_TUNING = {
   /** Share of the gap to potential closed per year, by (effective) age. */
@@ -60,8 +61,8 @@ export function developPlayer(league: League, p: Player, u: Usage): [number, num
   const effAge = newAge - (p.pos === 'G' ? T.goalieAgeShift : 0);
 
   const rate = effAge <= 18 ? T.growth[18] : (T.growth[effAge] ?? 0);
-  let delta = Math.max(0, p.hidden.potential - before) * rate * usageFactor(p, u) * coachDevMultiplier(league, p.teamId ?? p.prospectOf);
-  if (effAge >= T.declineStart) delta -= T.declineBase + (effAge - T.declineStart) * T.declinePerYear;
+  let delta = Math.max(0, p.hidden.potential - before) * rate * usageFactor(p, u) * coachDevMultiplier(league, p.teamId ?? p.prospectOf) * slider(league, 'development');
+  if (effAge >= T.declineStart) delta -= (T.declineBase + (effAge - T.declineStart) * T.declinePerYear) * slider(league, 'aging');
   delta += rng.normal(0, T.noise);
   if (effAge <= 24 && rng.chance(T.breakoutChance)) {
     delta += rng.int(3, 6);

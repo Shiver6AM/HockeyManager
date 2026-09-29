@@ -71,7 +71,7 @@ describe('node-postgres driver end to end', () => {
     const anon = await caller();
     const a = await caller((await anon.auth.register({ username: 'pg_alice', password: 'correct-horse', displayName: 'Alice' })).token);
     const b = await caller((await anon.auth.register({ username: 'pg_bob', password: 'correct-horse', displayName: 'Bob' })).token);
-    const { id: leagueId } = await a.leagues.create({ name: 'Postgres League' });
+    const { id: leagueId } = await a.leagues.create({ name: 'Postgres League', start: 'season' });
     await b.leagues.join({ inviteCode: (await a.leagues.overview({ leagueId })).inviteCode });
     await a.leagues.claimTeam({ leagueId, teamId: 'HAL' });
     await b.leagues.claimTeam({ leagueId, teamId: 'QUE' });

@@ -427,7 +427,10 @@ export const dataRouter = router({
         })
         .sort((a, b) => b.overall - a.overall),
       phase: L.phase,
-      lines: completeLines(t.lines, nhlRoster(L, t), t.tactics ?? DEFAULT_TACTICS),
+      // (No lines yet while a fantasy draft is still filling the roster.)
+      lines: t.lines.forwards.length ? completeLines(t.lines, nhlRoster(L, t), t.tactics ?? DEFAULT_TACTICS) : t.lines,
+      /** Lines can be edited once there's a roster to dress. */
+      hasLines: t.lines.forwards.length > 0,
       affiliate: affiliateLabel(L, t),
       contracts: t.roster.length,
       contractMax: CONTRACT_MAX,
@@ -471,7 +474,7 @@ export const dataRouter = router({
     if (!t) throw new TRPCError({ code: 'NOT_FOUND', message: 'No such team' });
     const isMine = ctx.membership.teamId === t.id;
     const first = capSeason(L);
-    const beforeRollover = L.phase === 'offseason' && (!L.offseason || L.offseason.stage === 'draft' || L.offseason.stage === 're-sign');
+    const beforeRollover = L.phase === 'offseason' && (!L.offseason || ['fantasy-draft', 'draft', 're-sign'].includes(L.offseason.stage));
     const seasons = Array.from({ length: 7 }, (_, i) => first + i);
     const players = t.roster
       .map((id) => L.players[id])

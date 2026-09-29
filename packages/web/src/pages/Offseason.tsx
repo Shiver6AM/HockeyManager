@@ -160,7 +160,7 @@ export function SummerNews() {
   const trpc = useTRPC();
   const os = useQuery(trpc.offseason.overview.queryOptions({ leagueId: L.id }));
   const o = os.data;
-  if (!o) return null;
+  if (!o || o.fresh) return null;
   const row = (x: (typeof o.risers)[number]) => (
     <li key={x.id} className="flex items-center gap-2 text-sm">
       <Link to={`/league/${L.id}/player/${x.id}`} className="flex-1 truncate hover:underline">

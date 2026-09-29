@@ -41,16 +41,19 @@ import { age, overall } from './ratings';
 import { deriveSeed, Rng } from './rng';
 import { aiRosterMoves, ensureBodies, freeAgents, healthyRoster, isFreeAgent } from './roster';
 import { standings } from './league';
-import { closeBooks, setOwnerGoals } from './finances';
+import { closeBooks, newFinances, setOwnerGoals } from './finances';
+import { fantasyOnClock, finishFantasy, runFantasy } from './start';
 import { considerForHallOfFame, newsFromTransactions } from './news';
 import { offseasonSkillsCoaches } from './skills';
 import { affiliateLabel, capHit, CONTRACT_MAX, contractCount, FARM_TARGET, farmRoster, nhlRoster, sendDown, trimContracts } from './farm';
 import { offseasonStaff } from './staff';
 import { buildSchedule } from './schedule';
 import type { CareerLine, ContractOffer, FaResult, League, OffseasonStage, Player, PlayerId, StandingsRow, Team, TeamId } from './types';
+import { slider } from './sliders';
 
 export const OFFSEASON_STAGES: OffseasonStage[] = ['draft', 're-sign', 'free-agency', 'training-camp'];
 export const STAGE_LABELS: Record<OffseasonStage, string> = {
+  'fantasy-draft': 'Fantasy draft',
   draft: 'Entry draft',
   're-sign': 'Re-sign players',
   'free-agency': 'Free agency',
@@ -166,7 +169,7 @@ export function startOffseason(league: League, st: StandingsRow[]) {
     if (league.retired?.[p.id] || p.draftClass !== undefined) continue;
     const signed = !!p.contract || !!p.prospectOf;
     const contractLeft = p.contract && p.contract.yearsLeft > 1;
-    const chance = retirementChance(p, age(p, league.season) + 1, signed) * (contractLeft ? 0.5 : 1);
+    const chance = Math.min(1, retirementChance(p, age(p, league.season) + 1, signed) * (contractLeft ? 0.5 : 1) * slider(league, 'retirement'));
     if (rng.chance(chance)) retire(league, p);
   }
 
@@ -257,6 +260,12 @@ function offseasonStepInner(league: League, opts: { force: boolean }): StepResul
   const os = league.offseason;
   const from = os.stage;
   switch (os.stage) {
+    case 'fantasy-draft': {
+      const made = runFantasy(league, { force: opts.force });
+      if (fantasyOnClock(league)) return { from, to: 'fantasy-draft', note: `${made} fantasy picks made; a manager is on the clock` };
+      const next = finishFantasy(league);
+      return { from, to: next, note: 'The fantasy draft is complete' };
+    }
     case 'draft': {
       const made = runDraft(league, { force: opts.force });
       if (os.draft.current < os.draft.picks.length) return { from, to: 'draft', note: `${made} picks made; a manager is on the clock` };
@@ -308,7 +317,7 @@ export function advanceToNextSeason(league: League): StepResult[] {
   return out;
 }
 
-function finishDraft(league: League) {
+export function finishDraft(league: League) {
   // Undrafted players go back to junior and out of the league's world.
   const drafted = new Set(league.offseason!.draft.picks.map((p) => p.playerId));
   for (const id of league.offseason!.draft.classIds) {
@@ -938,7 +947,11 @@ function startNewSeason(league: League) {
   const fa = freeAgents(league).sort((a, b) => overall(b) - overall(a));
   for (const p of fa.slice(120)) delete league.players[p.id];
 
-  closeBooks(league);
+  if (league.freshStart) {
+    // No season was played before this one: nothing to close.
+    for (const t of Object.values(league.teams)) t.finances = newFinances(league.season + 1);
+    league.freshStart = undefined;
+  } else closeBooks(league);
   offseasonStaff(league);
   offseasonSkillsCoaches(league);
   offseasonScouts(league);

@@ -54,7 +54,7 @@ describe('multiplayer league flow', () => {
   });
 
   it('creates a league and lets others join by invite code', async () => {
-    ({ id: leagueId } = await comm.leagues.create({ name: 'Friday Night League' }));
+    ({ id: leagueId } = await comm.leagues.create({ name: 'Friday Night League', start: 'season' }));
     const ov = await comm.leagues.overview({ leagueId });
     expect(ov.isCommissioner).toBe(true);
     await bob.leagues.join({ inviteCode: ov.inviteCode.toLowerCase() });
@@ -417,7 +417,7 @@ describe('persistence', () => {
       db = await createDb(dir);
       scheduler = new Scheduler(db);
       const a = await register('persist');
-      const { id } = await a.leagues.create({ name: 'Durable League' });
+      const { id } = await a.leagues.create({ name: 'Durable League', start: 'season' });
       await a.sim.advance({ leagueId: id, target: { days: 2 } });
       await db.close();
 
@@ -439,7 +439,7 @@ describe('trades API', () => {
     scheduler = new Scheduler(db);
     const a = await register('trader_a');
     const b = await register('trader_b');
-    const { id: leagueId } = await a.leagues.create({ name: 'Trade League' });
+    const { id: leagueId } = await a.leagues.create({ name: 'Trade League', start: 'season' });
     const { inviteCode } = await a.leagues.overview({ leagueId });
     await b.leagues.join({ inviteCode });
     await a.leagues.claimTeam({ leagueId, teamId: 'HAL' });

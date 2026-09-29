@@ -31,3 +31,5 @@ export * from './leagues';
 export * from './scouting';
 export * from './body';
 export * from './css';
+export * from './start';
+export * from './sliders';

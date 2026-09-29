@@ -28,7 +28,7 @@ const isF = (p: Player) => p.pos === 'C' || p.pos === 'LW' || p.pos === 'RW';
 
 /** Unsigned, not a prospect, not retired, not in a class that hasn't been drafted yet. */
 export function isFreeAgent(league: League, p: Player): boolean {
-  if (p.teamId !== null || p.prospectOf || p.draftClass !== undefined || league.retired?.[p.id]) return false;
+  if (p.teamId !== null || p.prospectOf || p.draftClass !== undefined || p.inFantasyPool || league.retired?.[p.id]) return false;
   const d = league.offseason?.draft;
   if (d && d.current < d.picks.length && d.classIds.includes(p.id)) return false;
   return true;

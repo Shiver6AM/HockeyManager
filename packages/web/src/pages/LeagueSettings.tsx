@@ -22,6 +22,7 @@ export function LeagueSettings() {
       <div className="space-y-5">
         <AdvanceSettings />
         <TradeSettings />
+        <SimSliders />
         <Card title="Invite managers">
           <p className="text-sm text-ice-300">Share this code. Friends create an account, choose “Join a league”, and pick a team.</p>
           <p className="mt-3 inline-block rounded-lg border border-dashed border-rink-500 bg-rink-850 px-4 py-2 font-mono text-2xl tracking-[0.3em] text-white">
@@ -309,6 +310,77 @@ function History() {
           </p>
         </div>
       ))}
+    </Card>
+  );
+}
+
+/** Advanced: commissioner sliders on key simulation variables. */
+function SimSliders() {
+  const L = useLeague();
+  const trpc = useTRPC();
+  const qc = useQueryClient();
+  const q = useQuery(trpc.leagues.simSettings.queryOptions({ leagueId: L.id }));
+  const save = useMutation(trpc.leagues.updateSimSettings.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));
+  const [draft, setDraft] = useState<Record<string, number> | null>(null);
+  if (!q.data) return null;
+  const values = draft ?? Object.fromEntries(q.data.sliders.map((s) => [s.key, s.value]));
+  const changed = q.data.sliders.filter((s) => values[s.key] !== 1).length;
+  const dirty = !!draft && q.data.sliders.some((s) => draft[s.key] !== s.value);
+  const groups = [...new Set(q.data.sliders.map((s) => s.group))];
+  const edit = q.data.canEdit;
+  return (
+    <Card title="Simulation sliders (advanced)" action={changed ? <span className="text-xs text-warn">{changed} changed from default</span> : undefined}>
+      <p className="-mt-1 mb-3 text-xs text-ice-400">
+        Multipliers on key parts of the simulation. 1.0× is the default, tuned to play like the NHL. Changes apply from the next day simmed (development,
+        decline and retirements each summer).{!edit && ' Only the commissioner can change these.'}
+      </p>
+      <div className="space-y-4">
+        {groups.map((g) => (
+          <div key={g}>
+            <h4 className="mb-1.5 text-[11px] font-semibold tracking-wider text-ice-500 uppercase">{g}</h4>
+            <div className="space-y-2.5">
+              {q.data.sliders
+                .filter((s) => s.group === g)
+                .map((s) => {
+                  const v = values[s.key];
+                  return (
+                    <label key={s.key} className="block" title={s.help}>
+                      <span className="flex items-baseline justify-between text-sm">
+                        <span className="text-ice-100">{s.label}</span>
+                        <span className={cx('tabular text-xs font-semibold', v === 1 ? 'text-ice-400' : 'text-warn')}>
+                          {v === 0 ? 'Off' : `${v.toFixed(2).replace(/0$/, '')}×`}
+                        </span>
+                      </span>
+                      <input
+                        type="range"
+                        className="w-full accent-blue-500"
+                        min={s.min}
+                        max={s.max}
+                        step={s.step}
+                        value={v}
+                        disabled={!edit}
+                        onChange={(e) => setDraft({ ...values, [s.key]: Number(e.target.value) })}
+                      />
+                      <span className="block text-[11px] text-ice-500">{s.help}</span>
+                    </label>
+                  );
+                })}
+            </div>
+          </div>
+        ))}
+      </div>
+      {edit && (
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button disabled={!dirty || save.isPending} onClick={() => save.mutate({ leagueId: L.id, sim: values }, { onSuccess: () => setDraft(null) })}>
+            {save.isPending ? 'Saving…' : 'Save sliders'}
+          </Button>
+          <Button variant="ghost" disabled={!changed && !dirty} onClick={() => setDraft(Object.fromEntries(q.data!.sliders.map((s) => [s.key, 1])))}>
+            Reset to defaults
+          </Button>
+          {save.isSuccess && !dirty && <span className="text-xs text-win">Saved</span>}
+          <ErrorBox error={save.error} />
+        </div>
+      )}
     </Card>
   );
 }

@@ -22,6 +22,7 @@ import { TeamPage } from './pages/Team';
 import { TeamsPage } from './pages/Teams';
 import { TradesPage } from './pages/Trades';
 import { useTRPC } from './trpc';
+import { FantasyDraftPage } from './pages/FantasyDraft';
 
 export function App() {
   const trpc = useTRPC();
@@ -42,6 +43,7 @@ export function App() {
         <Route path="playoffs" element={<PlayoffsPage />} />
         <Route path="settings" element={<LeagueSettings />} />
         <Route path="draft" element={<DraftPage />} />
+        <Route path="fantasy" element={<FantasyDraftPage />} />
         <Route path="scouting" element={<ScoutingPage />} />
         <Route path="re-sign" element={<ResignPage />} />
         <Route path="free-agents" element={<FreeAgentsPage />} />

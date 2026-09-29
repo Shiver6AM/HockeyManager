@@ -450,13 +450,18 @@ function topAvg(players: Player[], role: Role, n: number): number {
 export function fillSlots(slots: Slot[], pool: Player[], prefer?: (slot: Slot, p: Player) => number): string[] {
   const out: string[] = new Array(slots.length);
   const used = new Set<string>();
-  const order = slots.map((s, i) => ({ s, i })).sort((a, b) => {
-    const spread = (x: Slot) => {
-      const v = pool.map((p) => roleSkill(p, x.role)).sort((m, n) => n - m);
-      return (v[0] ?? 0) - (v[Math.min(v.length - 1, 3)] ?? 0);
-    };
-    return spread(b.s) - spread(a.s);
-  });
+  // How much the best candidate beats the 4th best at each slot (computed once per slot).
+  const spreadOf = new Map<Role, number>();
+  const spread = (x: Slot) => {
+    let v = spreadOf.get(x.role);
+    if (v === undefined) {
+      const xs = pool.map((p) => roleSkill(p, x.role)).sort((m, n) => n - m);
+      v = (xs[0] ?? 0) - (xs[Math.min(xs.length - 1, 3)] ?? 0);
+      spreadOf.set(x.role, v);
+    }
+    return v;
+  };
+  const order = slots.map((s, i) => ({ s, i })).sort((a, b) => spread(b.s) - spread(a.s));
   for (const { s, i } of order) {
     let best: Player | null = null;
     let bestV = -Infinity;
