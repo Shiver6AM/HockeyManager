@@ -41,6 +41,10 @@ import {
   type League,
   type TeamFinances,
   cssEdition,
+  cssUpdate,
+  scoutTargets,
+  scoutConfidence,
+  assignScoutTargets,
 } from '@hockey-gm/sim-core';
 import { z } from 'zod';
 import { mutateLeague } from '../advance';
@@ -268,10 +272,26 @@ export const lifeRouter = router({
     const conf = (r: Region) => (isMine ? Math.round(regionConfidence(L, t.id, r) * 100) / 100 : null);
     const classIds = L.draftClass?.ids ?? L.offseason?.draft.classIds ?? [];
     const inRegion = (r: Region) => classIds.filter((id) => L.players[id] && L.players[id].draftClass !== undefined && playerRegion(L, L.players[id]) === r).length;
-    const scoutView = (sc: Scout) => ({ ...sc, region: where.get(sc.id) ?? null, ratePerDay: where.get(sc.id) ? Math.round(scoutRate(t, sc, where.get(sc.id)!) * 100) / 100 : null });
+    const scoutView = (sc: Scout) => {
+      const targets = isMine ? scoutTargets(L, sc) : [];
+      return {
+        ...sc,
+        region: where.get(sc.id) ?? null,
+        ratePerDay: where.get(sc.id) ? Math.round(scoutRate(t, sc, where.get(sc.id)!) * 100) / 100 : null,
+        /** Prospects he's following (with your confidence in each). */
+        following:
+          sc.assignment === 'players' && sc.targets
+            ? {
+                league: sc.targets.league,
+                players: targets.map((p) => ({ id: p.id, name: `${p.firstName} ${p.lastName}`, pos: p.pos, confidence: Math.round(scoutConfidence(L, t.id, p) * 100) / 100 })),
+              }
+            : null,
+      };
+    };
     return {
       isMine,
       maxScouts: SCOUTING.maxScouts,
+      maxTargets: SCOUTING.maxTargets,
       headScout: t.staff?.scout ?? null,
       draftSeason: L.draftClass?.season ?? L.offseason?.draft.season ?? null,
       regions: REGIONS.map((r) => ({ ...r, confidence: conf(r.id), prospects: inRegion(r.id) })),
@@ -291,8 +311,11 @@ export const lifeRouter = router({
     const my = ctx.membership.teamId;
     return {
       season: d.season,
-      /** Which Central Scouting list is out: preliminary, midterm or final. */
+      /** Which Central Scouting list is out ("Preliminary", "Update 4", "Final") and when it was published. */
       cssEdition: cssEdition(L),
+      cssUpdate: cssUpdate(L),
+      /** Prospects my scouts are following. */
+      targeted: my ? (L.teams[my].scouts ?? []).flatMap((sc) => (sc.assignment === 'players' ? (sc.targets?.ids ?? []) : [])) : [],
       players: d.ids
         .map((id) => L.players[id])
         .filter((p) => p && p.draftClass !== undefined)
@@ -324,6 +347,22 @@ export const lifeRouter = router({
       }
     });
   }),
+
+  /** Send a scout to follow specific prospects (up to 10, all in one league). */
+  assignScoutTargets: memberProcedure
+    .input(z.object({ scoutId: z.string(), league: z.string(), playerIds: z.array(z.string()).min(1).max(10) }))
+    .mutation(async ({ ctx, input }) => {
+      const teamId = ctx.membership.teamId;
+      if (!teamId) throw badRequest('You do not manage a team');
+      await mutateLeague(ctx.db, input.leagueId, (L) => {
+        try {
+          assignScoutTargets(L, L.teams[teamId], input.scoutId, input.league, input.playerIds);
+        } catch (e) {
+          throw badRequest((e as Error).message);
+        }
+      });
+      return { ok: true };
+    }),
 
   assignScout: memberProcedure
     .input(z.object({ scoutId: z.string(), region: z.enum(['auto', 'west', 'ontario', 'quebec', 'usa', 'sweden', 'finland', 'russia', 'central']) }))

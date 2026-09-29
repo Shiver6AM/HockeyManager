@@ -44,6 +44,12 @@ export interface HiddenTraits {
     loyalty: number; // prefers staying with current team
     ambition: number; // wants to win / play for a contender
   };
+  /**
+   * Sleeper: a late bloomer whose ceiling scouts badly underrate. The number is
+   * how many points of potential they miss while he's a teenager (the disguise
+   * fades by about 21, as he develops).
+   */
+  sleeper?: number;
 }
 
 export interface Contract {
@@ -442,6 +448,8 @@ export interface League {
   goalieCoachPool?: SkillsCoach[];
   /** Next draft's class, generated when the season starts so scouts can watch it. */
   draftClass?: { season: number; ids: PlayerId[] };
+  /** Central Scouting's latest published list (see css.ts). */
+  css?: { season: number; index: number; ranks: Record<PlayerId, number>; prev?: Record<PlayerId, number> };
   /** A new league's fantasy draft (see start.ts). */
   fantasy?: FantasyDraft;
   /** Created at an offseason start: no season has been played yet (no books to close). */

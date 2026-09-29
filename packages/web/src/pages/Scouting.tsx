@@ -1,12 +1,14 @@
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
 /**
  * Amateur scouting: send your area scouts to regions, watch your knowledge of
  * each region grow over the season, and browse next summer's draft class as
  * your scouts see it.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ClassTable, ConfidenceBar, CssRankings } from '../components/ClassTable';
-import { Badge, Button, Card, cx, Empty, ErrorBox, Spinner } from '../components/ui';
-import { money } from '../format';
+import { ClassTable, ConfidenceBar, CssRankings, type ClassPlayer } from '../components/ClassTable';
+import { Badge, Button, Card, cx, Empty, ErrorBox, Modal, Spinner } from '../components/ui';
+import { dayLabel, money } from '../format';
 import { useSort } from '../sort';
 import { useTRPC, type Outputs } from '../trpc';
 import { useLeague } from './LeagueLayout';
@@ -65,22 +67,27 @@ export function ScoutingPage() {
         </div>
       </Card>
 
-      <Scouts d={d} labels={labels} />
+      <Scouts d={d} labels={labels} cls={cls.data?.players ?? []} />
 
       {cls.data && (
         <Card title={`Central Scouting rankings · ${cls.data.cssEdition}`}>
-          <CssRankings players={cls.data.players} leagueId={L.id} edition={cls.data.cssEdition} />
+          <CssRankings
+            players={cls.data.players}
+            leagueId={L.id}
+            edition={cls.data.cssEdition}
+            updatedOn={cls.data.cssUpdate.day !== null ? dayLabel(L.season, cls.data.cssUpdate.day, { month: 'short', day: 'numeric' }) : null}
+          />
         </Card>
       )}
 
       <Card title="Draft class">
-        {cls.data ? <ClassTable players={cls.data.players} leagueId={L.id} storageKey="scouting-class" /> : cls.isLoading ? <Spinner /> : <Empty>No draft class right now.</Empty>}
+        {cls.data ? <ClassTable players={cls.data.players} leagueId={L.id} storageKey="scouting-class" targeted={new Set(cls.data.targeted)} /> : cls.isLoading ? <Spinner /> : <Empty>No draft class right now.</Empty>}
       </Card>
     </div>
   );
 }
 
-function Scouts({ d, labels }: { d: Data; labels: Record<string, string> }) {
+function Scouts({ d, labels, cls }: { d: Data; labels: Record<string, string>; cls: ClassPlayer[] }) {
   const L = useLeague();
   const trpc = useTRPC();
   const qc = useQueryClient();
@@ -88,6 +95,8 @@ function Scouts({ d, labels }: { d: Data; labels: Record<string, string> }) {
   const assign = useMutation(trpc.life.assignScout.mutationOptions(done));
   const release = useMutation(trpc.life.releaseScout.mutationOptions(done));
   const hire = useMutation(trpc.life.hireScout.mutationOptions(done));
+  const target = useMutation(trpc.life.assignScoutTargets.mutationOptions(done));
+  const [picking, setPicking] = useState<Scout | null>(null);
   const full = d.scouts.length >= d.maxScouts;
   const regionIds = Object.keys(labels);
   const { sorted: pool, Th } = useSort(
@@ -106,6 +115,19 @@ function Scouts({ d, labels }: { d: Data; labels: Record<string, string> }) {
   return (
     <div className="space-y-5">
       <div className="space-y-5">
+        {picking && (
+          <TargetPicker
+            scout={picking}
+            cls={cls}
+            max={d.maxTargets}
+            saving={target.isPending}
+            error={target.error}
+            onClose={() => setPicking(null)}
+            onSave={(league, ids) =>
+              target.mutate({ leagueId: L.id, scoutId: picking.id, league, playerIds: ids }, { onSuccess: () => setPicking(null) })
+            }
+          />
+        )}
         <Card title={`Your scouts (${d.scouts.length}/${d.maxScouts})`} action={<span className="text-xs text-ice-400">Payroll {money(d.payroll)}</span>}>
           <ErrorBox error={assign.error ?? release.error} />
           {d.scouts.length === 0 ? (
@@ -137,13 +159,40 @@ function Scouts({ d, labels }: { d: Data; labels: Record<string, string> }) {
                           </div>
                         ))}
                     </div>
+                    {s.following && (
+                      <div className="mt-2 rounded-md bg-rink-800/60 p-2">
+                        <p className="mb-1 flex items-center justify-between text-[11px] text-ice-400">
+                          <span>
+                            Following {s.following.players.length} in the {s.following.league}
+                          </span>
+                          {d.isMine && (
+                            <button className="text-blue-300 hover:underline" onClick={() => setPicking(s)}>
+                              Edit
+                            </button>
+                          )}
+                        </p>
+                        <ul className="space-y-0.5">
+                          {s.following.players.map((p) => (
+                            <li key={p.id} className="flex items-center gap-1.5 text-[11px]">
+                              <Link to={`/league/${L.id}/player/${p.id}`} className="min-w-0 flex-1 truncate text-ice-100 hover:underline">
+                                {p.name} <span className="text-ice-500">{p.pos}</span>
+                              </Link>
+                              <ConfidenceBar value={p.confidence} />
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                     {d.isMine && (
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         <select
                           className="slot w-auto py-0.5 text-xs"
                           value={s.assignment}
-                          onChange={(e) => assign.mutate({ leagueId: L.id, scoutId: s.id, region: e.target.value as 'auto' })}
+                          onChange={(e) =>
+                            e.target.value === 'players' ? setPicking(s) : assign.mutate({ leagueId: L.id, scoutId: s.id, region: e.target.value as 'auto' })
+                          }
                         >
+                          <option value="players">Specific prospects…{s.following ? ` (${s.following.players.length} in the ${s.following.league})` : ''}</option>
                           <option value="auto">Auto (head scout decides){s.assignment === 'auto' && s.region ? `: ${labels[s.region]}` : ''}</option>
                           {Object.keys(labels).map((r) => (
                             <option key={r} value={r}>
@@ -220,5 +269,100 @@ function Scouts({ d, labels }: { d: Data; labels: Record<string, string> }) {
         </Card>
       )}
     </div>
+  );
+}
+
+/** Pick up to 10 draft-eligible prospects in one league for a scout to follow. */
+function TargetPicker({
+  scout,
+  cls,
+  max,
+  saving,
+  error,
+  onClose,
+  onSave,
+}: {
+  scout: Scout;
+  cls: ClassPlayer[];
+  max: number;
+  saving: boolean;
+  error: unknown;
+  onClose: () => void;
+  onSave: (league: string, ids: string[]) => void;
+}) {
+  const leagues = [...new Set(cls.map((p) => p.league))].sort();
+  const [league, setLeague] = useState(scout.following?.league ?? leagues[0] ?? '');
+  const [ids, setIds] = useState<string[]>(scout.following?.players.map((p) => p.id) ?? []);
+  const inLeague = cls.filter((p) => p.league === league).sort((a, b) => (a.css?.rank ?? 999) - (b.css?.rank ?? 999));
+  const toggle = (id: string) => setIds(ids.includes(id) ? ids.filter((x) => x !== id) : ids.length >= max ? ids : [...ids, id]);
+  return (
+    <Modal title={`${scout.name}: follow specific prospects`} onClose={onClose}>
+      <p className="mb-3 text-sm text-ice-300">
+        Send him to watch up to {max} prospects in one league. He learns about each of them much faster than he would covering a whole region (the fewer
+        he follows, the faster), but nobody else in the region.
+      </p>
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <select
+          className="slot w-auto"
+          value={league}
+          onChange={(e) => {
+            setLeague(e.target.value);
+            setIds([]);
+          }}
+        >
+          {leagues.map((l) => (
+            <option key={l} value={l}>
+              {l} ({cls.filter((p) => p.league === l).length} prospects)
+            </option>
+          ))}
+        </select>
+        <span className={cx('text-sm', ids.length >= max ? 'text-warn' : 'text-ice-400')}>
+          {ids.length}/{max} chosen
+        </span>
+      </div>
+      <div className="max-h-[26rem] overflow-y-auto rounded-lg border border-rink-700">
+        <table className="table text-sm">
+          <thead className="sticky top-0 bg-rink-900">
+            <tr>
+              <th />
+              <th>Prospect</th>
+              <th>Pos</th>
+              <th>Club</th>
+              <th className="num">GP</th>
+              <th className="num">P</th>
+              <th className="num" title="Central Scouting rank">CSS</th>
+              <th>Your confidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            {inLeague.map((p) => (
+              <tr key={p.id} className={cx('cursor-pointer', ids.includes(p.id) && 'bg-blueline/10')} onClick={() => toggle(p.id)}>
+                <td>
+                  <input type="checkbox" checked={ids.includes(p.id)} readOnly disabled={!ids.includes(p.id) && ids.length >= max} />
+                </td>
+                <td className="whitespace-nowrap text-ice-50">{p.name}</td>
+                <td className="text-ice-400">{p.pos}</td>
+                <td className="text-xs text-ice-300">{p.club}</td>
+                <td className="num">{p.stats?.gp ?? 0}</td>
+                <td className="num">{p.pos === 'G' ? '—' : (p.stats?.g ?? 0) + (p.stats?.a ?? 0)}</td>
+                <td className="num">{p.css?.rank ?? '—'}</td>
+                <td>
+                  <ConfidenceBar value={p.confidence} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ErrorBox error={error} />
+      <div className="mt-3 flex gap-2">
+        <Button disabled={!ids.length || saving} onClick={() => onSave(league, ids)}>
+          {saving ? 'Saving…' : `Follow ${ids.length} prospect${ids.length === 1 ? '' : 's'}`}
+        </Button>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+      </div>
+    </Modal>
   );
 }

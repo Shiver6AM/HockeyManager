@@ -28,18 +28,34 @@ export function ConfidenceBar({ value }: { value: number }) {
 
 const pts = (p: ClassPlayer) => (p.stats ? p.stats.g + p.stats.a : null);
 
+/** ▲3 / ▼2 since Central Scouting's previous update. */
+export function CssMove({ css }: { css: ClassPlayer['css'] }) {
+  if (!css || css.prevRank === null) return null;
+  const d = css.prevRank - css.rank;
+  if (d === 0) return <span className="text-[10px] text-ice-600">–</span>;
+  return (
+    <span className={cx('tabular text-[10px] font-semibold', d > 0 ? 'text-win' : 'text-red-300')} title={`Was #${css.prevRank} in the previous update`}>
+      {d > 0 ? '▲' : '▼'}
+      {Math.abs(d)}
+    </span>
+  );
+}
+
 export function ClassTable({
   players,
   leagueId,
   action,
   storageKey,
   maxRows = 150,
+  targeted,
 }: {
   players: ClassPlayer[];
   leagueId: string;
   action?: (p: ClassPlayer) => ReactNode;
   storageKey: string;
   maxRows?: number;
+  /** Prospects your scouts are following (marked in the table). */
+  targeted?: Set<string>;
 }) {
   const [pos, setPos] = useState('All');
   const [region, setRegion] = useState('All');
@@ -134,6 +150,11 @@ export function ClassTable({
                   <Link to={`/league/${leagueId}/player/${p.id}`} className="text-ice-50 hover:underline">
                     {p.name}
                   </Link>
+                  {targeted?.has(p.id) && (
+                    <span className="ml-1.5 rounded bg-blueline/20 px-1 text-[10px] text-blue-200" title="One of your scouts is following him">
+                      followed
+                    </span>
+                  )}
                 </td>
                 <td className="text-ice-400">{p.pos}</td>
                 <td className="num">{p.age}</td>
@@ -167,7 +188,8 @@ export function ClassTable({
                       <span className="ml-1 text-[10px] text-ice-500">
                         {p.css.list.startsWith('NA') ? 'NA' : 'INT'}
                         {p.css.list.endsWith('goalies') ? ' G' : ''} {p.css.listRank}
-                      </span>
+                      </span>{' '}
+                      <CssMove css={p.css} />
                     </>
                   ) : (
                     '—'
@@ -191,7 +213,20 @@ export function ClassTable({
 const CSS_LISTS = ['NA skaters', 'Intl skaters', 'NA goalies', 'Intl goalies'] as const;
 
 /** Central Scouting's four lists, side by side. */
-export function CssRankings({ players, leagueId, edition, top = 32 }: { players: ClassPlayer[]; leagueId: string; edition?: string; top?: number }) {
+export function CssRankings({
+  players,
+  leagueId,
+  edition,
+  updatedOn,
+  top = 32,
+}: {
+  players: ClassPlayer[];
+  leagueId: string;
+  edition?: string;
+  /** When this update was published (a date label). */
+  updatedOn?: string | null;
+  top?: number;
+}) {
   const [n, setN] = useState(top);
   const lists = CSS_LISTS.map((list) => ({
     list,
@@ -203,10 +238,11 @@ export function CssRankings({ players, leagueId, edition, top = 32 }: { players:
   return (
     <div>
       <p className="-mt-1 mb-3 text-xs text-ice-400">
-        The league's Central Scouting Service ranks every draft-eligible prospect, the same list for all 32 teams.
-        {edition ? ` This is the ${edition.toLowerCase()} edition` : ''}
-        {edition === 'Preliminary' ? ': the midterm rankings come out in January and the final list after the season.' : edition === 'Midterm' ? ': the final list comes out after the season.' : '.'} It
-        sees every league but isn't perfect; your own scouts can know better where they've spent time.
+        The league's Central Scouting Service ranks every draft-eligible prospect, the same list for all 32 teams.{' '}
+        {edition === 'Final'
+          ? 'These are the final rankings.'
+          : `It updates every two weeks through the season as prospects play and its scouts see more (${edition === 'Preliminary' ? 'this is the preliminary list' : `this is ${edition?.toLowerCase()}`}${updatedOn ? `, published ${updatedOn}` : ''}); the final list comes out after the season.`}{' '}
+        Arrows show movement since the previous update. It sees every league but isn't perfect; your own scouts can know better where they've spent time.
       </p>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {lists.map(({ list, rows }) => (
@@ -221,6 +257,9 @@ export function CssRankings({ players, leagueId, edition, top = 32 }: { players:
                 {rows.map((p) => (
                   <li key={p.id} className="flex items-baseline gap-2">
                     <span className="tabular w-5 shrink-0 text-right text-ice-500">{p.css!.listRank}</span>
+                    <span className="w-6 shrink-0 text-center">
+                      <CssMove css={p.css} />
+                    </span>
                     <Link to={`/league/${leagueId}/player/${p.id}`} className="min-w-0 flex-1 truncate text-ice-100 hover:underline" title={`${p.name} · ${p.pos} · ${p.league} (${p.club}) · #${p.css!.rank} overall`}>
                       {p.name}
                     </Link>

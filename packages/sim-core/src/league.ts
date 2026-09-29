@@ -1,5 +1,6 @@
 import { playoffMvp, regularSeasonAwards } from './awards';
 import { initScouts, scoutingDay } from './scouting';
+import { publishCss } from './css';
 import { ensureDraftClass } from './draft';
 import { recordChemistry } from './chemistry';
 import { initSkillsCoaches, trainingDay } from './skills';
@@ -221,6 +222,7 @@ function simDayInner(league: League): ScheduledGame[] {
     else if (league.day === deadline + 1) addNews(league, 'trade', 'The trade deadline has passed. Rosters are set for the stretch run.');
     if (league.day > lastDay(league)) startPlayoffs(league);
     else if (league.trades?.length) invalidateStale(league);
+    publishCss(league); // Central Scouting's list every two weeks, and the final one at season's end
     return played;
   }
 

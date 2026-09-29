@@ -71,6 +71,28 @@ describe('phase 14: start points, fantasy draft, sliders', () => {
     expect(live.phase).toBe('regular-season');
   });
 
+  it('scouts can follow specific prospects; Central Scouting publishes updates with movement', async () => {
+    const { id: leagueId } = await comm.leagues.create({ name: 'Scouting League', start: 'season' });
+    await comm.leagues.claimTeam({ leagueId, teamId: 'HAL' });
+    await comm.sim.advance({ leagueId, target: { days: 30 } });
+    const cls = (await comm.life.draftClass({ leagueId }))!;
+    expect(cls.cssUpdate.index).toBeGreaterThanOrEqual(2);
+    expect(cls.players.some((p) => p.css?.prevRank && p.css.prevRank !== p.css.rank)).toBe(true);
+    const lg = cls.players[0].league;
+    const picks = cls.players.filter((p) => p.league === lg).slice(0, 4).map((p) => p.id);
+    const sc = (await comm.life.scouting({ leagueId, teamId: 'HAL' })).scouts[0];
+    await expect(comm.life.assignScoutTargets({ leagueId, scoutId: sc.id, league: lg, playerIds: [...picks, cls.players.find((p) => p.league !== lg)!.id] })).rejects.toThrow();
+    await comm.life.assignScoutTargets({ leagueId, scoutId: sc.id, league: lg, playerIds: picks });
+    const s = await comm.life.scouting({ leagueId, teamId: 'HAL' });
+    const me = s.scouts.find((x) => x.id === sc.id)!;
+    expect(me.assignment).toBe('players');
+    expect(me.following!.players.map((p) => p.id)).toEqual(picks);
+    expect((await comm.life.draftClass({ leagueId }))!.targeted).toEqual(picks);
+    // Back to a region clears the list.
+    await comm.life.assignScout({ leagueId, scoutId: sc.id, region: 'auto' });
+    expect((await comm.life.scouting({ leagueId, teamId: 'HAL' })).scouts.find((x) => x.id === sc.id)!.following).toBeNull();
+  });
+
   it('commissioner sliders: readable by everyone, editable by the commissioner, clamped', async () => {
     const { id: leagueId } = await comm.leagues.create({ name: 'Slider League', start: 'season' });
     const ov = await comm.leagues.overview({ leagueId });

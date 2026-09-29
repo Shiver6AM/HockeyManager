@@ -52,7 +52,39 @@ export function generateDraftClass(league: League, season: number, size = 32 * D
     p.draftClass = season;
     out.push(p);
   }
+  addSleepers(league, season, out);
   return out;
+}
+
+/**
+ * A few late bloomers in every class: modest now, with modest numbers and
+ * modest scouting reports, but a real ceiling. Scouts (and Central Scouting)
+ * miss most of it while he's a teenager; it shows as he develops.
+ */
+export function addSleepers(league: League, season: number, cls: Player[]) {
+  const rng = new Rng(deriveSeed(league.seed, `sleepers:${season}`));
+  const n = rng.int(3, 7);
+  const candidates = rng.shuffle(cls.filter((p) => p.hidden.potential <= 68 && p.pos !== 'G' && ARCHETYPE_CEILING[p.archetype] === undefined));
+  for (const p of candidates.slice(0, n)) {
+    const was = p.hidden.potential;
+    const ceiling = Math.round(clamp(rng.normal(81, 4), 74, 90));
+    p.hidden.potential = ceiling;
+    // Scouts see roughly what they'd have seen before: the ceiling he seemed to have.
+    p.hidden.sleeper = ceiling - was;
+  }
+}
+
+/** How much of a sleeper's ceiling scouts still miss (fades from full at 19 to none at 22). */
+export function sleeperMask(league: League, p: Player): number {
+  const s = p.hidden.sleeper;
+  if (!s || s <= 0) return 0; // (negative: already revealed)
+  const a = age(p, league.season);
+  return a <= 19 ? s : a >= 22 ? 0 : s * ((22 - a) / 3);
+}
+
+/** The ceiling a scout can see: the real one, minus what a sleeper hides. */
+export function apparentPotential(league: League, p: Player): number {
+  return p.hidden.potential - sleeperMask(league, p);
 }
 
 /** A team's scouts' read on a player's ceiling. Each team's error is different, but repeatable. */
@@ -60,9 +92,9 @@ export function scoutedPotential(league: League, teamId: TeamId, p: Player): num
   const young = age(p, league.season) <= 21;
   const rng = new Rng(deriveSeed(league.seed, `scout:${teamId}:${p.id}`));
   // Draft-eligible players: the error shrinks as the team's scouts get to know his region.
-  if (isDraftClass(league, p)) return Math.round(p.hidden.potential + rng.normal(0, 1) * draftScoutSd(league, teamId, p));
+  if (isDraftClass(league, p)) return Math.round(apparentPotential(league, p) + rng.normal(0, 1) * draftScoutSd(league, teamId, p));
   // Better head scouts make smaller (but still repeatable) errors.
-  return Math.round(p.hidden.potential + rng.normal(0, scoutingError(league, teamId, young)));
+  return Math.round(apparentPotential(league, p) + rng.normal(0, scoutingError(league, teamId, young)));
 }
 
 /** Scouts' projection, in terms of the role he'd fill at his position. */
