@@ -49,8 +49,8 @@ export function Button({ variant = 'primary', className, ...rest }: ButtonHTMLAt
   );
 }
 
-export function TeamChip({ team, size = 'md' }: { team: TeamLike; size?: 'sm' | 'md' | 'lg' | 'xl' }) {
-  const px = size === 'xl' ? 72 : size === 'lg' ? 44 : size === 'sm' ? 20 : 28;
+export function TeamChip({ team, size = 'md' }: { team: TeamLike; size?: 'sm' | 'md' | 'lg' | 'xl' | 'hero' }) {
+  const px = size === 'hero' ? 112 : size === 'xl' ? 72 : size === 'lg' ? 44 : size === 'sm' ? 20 : 28;
   return <TeamLogo team={team} size={px} className="shrink-0 drop-shadow-sm" />;
 }
 
