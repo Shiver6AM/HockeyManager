@@ -4,6 +4,7 @@
  * execution that pauses whenever a human manager is on the clock.
  */
 import { draftScoutSd, isDraftClass } from './scouting';
+import { addNews } from './news';
 import { archetypeForCeiling, generatePlayer } from './generate';
 import { scoutingError } from './staff';
 import { clamp, deriveSeed, Rng } from './rng';
@@ -115,7 +116,11 @@ export function projectionLabel(scouted: number, pos?: string): string {
  * Draft order: non-playoff teams go through the lottery (two draws, a team can
  * jump at most 10 spots); playoff teams follow by round eliminated, then points.
  */
-export function buildDraftOrder(league: League, st: StandingsRow[], season: number): { order: TeamId[]; lottery: DraftState['lottery'] } {
+export function buildDraftOrder(
+  league: League,
+  st: StandingsRow[],
+  season: number,
+): { order: TeamId[]; lottery: DraftState['lottery']; preOrder: TeamId[]; odds: Array<[TeamId, number]> } {
   const rng = new Rng(deriveSeed(league.seed, `lottery:${season}`));
   const po = league.playoffs;
   const playoffTeams = new Set(po?.rounds[0].flatMap((s) => [s.high, s.low]) ?? []);
@@ -150,7 +155,12 @@ export function buildDraftOrder(league: League, st: StandingsRow[], season: numb
   }
   const pts = new Map(st.map((r) => [r.teamId, r.pts]));
   const playoffOrder = [...playoffTeams].sort((a, b) => (exitRound.get(a) ?? 0) - (exitRound.get(b) ?? 0) || pts.get(a)! - pts.get(b)!);
-  return { order: [...order, ...playoffOrder], lottery };
+  return {
+    order: [...order, ...playoffOrder],
+    lottery,
+    preOrder: [...nonPlayoff, ...playoffOrder],
+    odds: nonPlayoff.map((t, i) => [t, LOTTERY_ODDS[i] ?? 0.5]),
+  };
 }
 
 /** Make sure this season's draft class exists (it plays all season so scouts can watch it). */
@@ -162,20 +172,171 @@ export function ensureDraftClass(league: League) {
   league.draftClass = { season: league.season, ids: prospects.map((p) => p.id) };
 }
 
-export function createDraft(league: League, st: StandingsRow[], season: number): { state: DraftState; prospects: Player[] } {
+/**
+ * Set up the draft. With `lotteryPending`, the first round starts in
+ * pre-lottery order (worst record first) and the lottery is drawn later
+ * (holdLottery); its result is decided now, from the final standings.
+ */
+export function createDraft(
+  league: League,
+  st: StandingsRow[],
+  season: number,
+  opts: { lotteryPending?: boolean } = {},
+): { state: DraftState; prospects: Player[] } {
   const existing = league.draftClass?.season === season ? league.draftClass.ids.map((id) => league.players[id]).filter(Boolean) : null;
   const prospects = existing?.length ? existing : generateDraftClass(league, season);
-  const { order, lottery } = buildDraftOrder(league, st, season);
+  const { order, lottery, preOrder, odds } = buildDraftOrder(league, st, season);
+  const pending = !!opts.lotteryPending && lottery.length > 0;
+  const picks = picksInOrder(league, season, pending ? preOrder : order);
+  // These picks are now real; their ownership lives in the draft itself.
+  for (const key of Object.keys(league.pickOwners ?? {})) if (key.startsWith(`${season}:`)) delete league.pickOwners![key];
+  const state: DraftState = { season, classIds: prospects.map((p) => p.id), picks, current: 0, lottery: pending ? [] : lottery, lotteryOdds: odds };
+  if (opts.lotteryPending) {
+    state.lotteryHeld = false;
+    state.lotteryPlan = { order, lottery };
+  }
+  return { state, prospects };
+}
+
+function picksInOrder(league: League, season: number, order: TeamId[], owners?: Map<string, TeamId>): DraftPick[] {
   const picks: DraftPick[] = [];
   for (let round = 1; round <= DRAFT_ROUNDS; round++) {
     for (const teamId of order) {
-      const owner = league.pickOwners?.[`${season}:${round}:${teamId}`] ?? teamId;
+      const owner = owners?.get(`${round}:${teamId}`) ?? league.pickOwners?.[`${season}:${round}:${teamId}`] ?? teamId;
       picks.push({ round, overall: picks.length + 1, teamId: owner, originalTeamId: teamId, playerId: null });
     }
   }
-  // These picks are now real; their ownership lives in the draft itself.
-  for (const key of Object.keys(league.pickOwners ?? {})) if (key.startsWith(`${season}:`)) delete league.pickOwners![key];
-  return { state: { season, classIds: prospects.map((p) => p.id), picks, current: 0, lottery }, prospects };
+  return picks;
+}
+
+/** Draw the lottery: the draft order moves to its result (traded picks stay with whoever owns them). */
+export function holdLottery(league: League, opts: { live?: boolean; now?: number } = {}) {
+  const d = league.offseason?.draft;
+  if (!d || d.lotteryHeld !== false) throw new Error('The lottery has already been drawn');
+  if (d.current > 0) throw new Error('The draft has started');
+  const plan = d.lotteryPlan!;
+  const owners = new Map(d.picks.map((p) => [`${p.round}:${p.originalTeamId}`, p.teamId]));
+  d.picks = picksInOrder(league, d.season, plan.order, owners);
+  d.lottery = plan.lottery;
+  d.lotteryHeld = true;
+  delete d.lotteryPlan;
+  if (opts.live) d.lotteryShow = opts.now ?? Date.now();
+  const winners = plan.lottery.map(([t, from, to]) => `${league.teams[t].city} ${league.teams[t].name} (#${from} to #${to})`);
+  addNews(league, 'draft', winners.length ? `Draft lottery: ${winners.join('; ')}.` : 'Draft lottery: the order holds; no team moved up.', plan.lottery.map(([t]) => t));
+}
+
+/** How long the live lottery reveal lasts (ms), so the draft waits for it. */
+export function lotteryShowLength(league: League): number {
+  const n = league.offseason?.draft.lotteryOdds?.length ?? 16;
+  return 3000 + Math.max(0, n - 2) * 1800 + 2 * 5000;
+}
+
+/** Time per pick, and how long an AI team takes (between 90 seconds and the full clock). */
+export const DRAFT_CLOCK = { perPick: 180_000, aiMin: 90_000 };
+
+function aiDelay(league: League, d: DraftState, min = DRAFT_CLOCK.aiMin, max = DRAFT_CLOCK.perPick): number {
+  const rng = new Rng(deriveSeed(league.seed, `pick-time:${d.season}:${d.current}`));
+  return Math.round(min + rng.next() * (max - min));
+}
+
+const isAi = (league: League, teamId: TeamId) => league.teams[teamId]?.controller.kind !== 'human';
+
+/** Start the clock for the pick now on the clock (or clear it when the draft is over). */
+export function resetDraftClock(league: League, now: number) {
+  const d = league.offseason?.draft;
+  if (!d) return;
+  const pick = onTheClock(league);
+  if (!pick) {
+    delete d.clock;
+    return;
+  }
+  const perPick = d.clock?.perPick ?? DRAFT_CLOCK.perPick;
+  d.clock = {
+    perPick,
+    pick: d.current,
+    teamId: pick.teamId,
+    deadline: now + perPick,
+    aiAt: isAi(league, pick.teamId) ? now + aiDelay(league, d, Math.min(DRAFT_CLOCK.aiMin, perPick / 2), perPick) : null,
+  };
+}
+
+/** Start the timed draft (the lottery must have been drawn). */
+export function startDraftClock(league: League, now: number) {
+  const d = league.offseason?.draft;
+  if (!d) throw new Error('There is no draft');
+  if (d.lotteryHeld === false) throw new Error('The lottery has not been drawn yet');
+  if (d.clock) return;
+  // A live lottery draw finishes first.
+  const start = d.lotteryShow ? Math.max(now, d.lotteryShow + lotteryShowLength(league)) : now;
+  resetDraftClock(league, start);
+}
+
+/**
+ * Keep the clock in step with the draft after anything else changed it: a pick
+ * was made, or the pick on the clock was traded. A pick traded to an AI team
+ * is made within a minute (never past the original deadline); one traded to a
+ * manager gives him at least a minute.
+ */
+export function syncDraftClock(league: League, now: number) {
+  const d = league.offseason?.draft;
+  const c = d?.clock;
+  if (!d || !c) return;
+  const pick = onTheClock(league);
+  if (!pick) {
+    delete d.clock;
+    return;
+  }
+  if (c.pick !== d.current) return resetDraftClock(league, now);
+  if (c.teamId === pick.teamId) return;
+  c.teamId = pick.teamId;
+  if (c.paused) {
+    c.paused.aiLeft = isAi(league, pick.teamId) ? Math.min(c.paused.left, aiDelay(league, d, 20_000, 60_000)) : null;
+    c.paused.left = Math.max(c.paused.left, 60_000);
+    return;
+  }
+  if (isAi(league, pick.teamId)) {
+    c.aiAt = Math.min(Math.max(c.deadline, now + 20_000), now + aiDelay(league, d, 20_000, 60_000));
+  } else {
+    c.aiAt = null;
+    c.deadline = Math.max(c.deadline, now + 60_000);
+  }
+}
+
+/** When the clock next needs attention (ms since epoch), or null. */
+export function draftClockDue(league: League): number | null {
+  const c = league.offseason?.stage === 'draft' ? league.offseason.draft.clock : undefined;
+  if (!c || c.paused) return null;
+  return c.aiAt ?? c.deadline;
+}
+
+/**
+ * Run the clock: an AI team whose time has come makes its pick; a manager who
+ * ran out of time gets his list's (or scouts') top choice. Returns picks made.
+ */
+export function draftTick(league: League, now: number): number {
+  const d = league.offseason?.draft;
+  if (!d?.clock) return 0;
+  syncDraftClock(league, now);
+  let made = 0;
+  while (d.clock && !d.clock.paused) {
+    const due = d.clock.aiAt ?? d.clock.deadline;
+    if (now < due) break;
+    autoPick(league);
+    made++;
+    resetDraftClock(league, now);
+  }
+  return made;
+}
+
+export function pauseDraftClock(league: League, now: number, paused: boolean) {
+  const c = league.offseason?.draft.clock;
+  if (!c) throw new Error('The draft clock is not running');
+  if (paused && !c.paused) c.paused = { left: Math.max(0, c.deadline - now), aiLeft: c.aiAt == null ? null : Math.max(0, c.aiAt - now) };
+  if (!paused && c.paused) {
+    c.deadline = now + c.paused.left;
+    c.aiAt = c.paused.aiLeft == null ? null : now + c.paused.aiLeft;
+    delete c.paused;
+  }
 }
 
 export function availableProspects(league: League): Player[] {

@@ -137,7 +137,7 @@ export function ClassTable({
               <Th k="ppg" className="num" title="Points per game">P/GP</Th>
               <Th k="ovr" className="num" title="Current ability (only once scouted)">OVR</Th>
               <Th k="grade" className="num" title="Your scouts' read on his ceiling">Grade</Th>
-              <Th k="css" className="num" title="Central Scouting consensus rank (and his rank on its North American or international list)">CSS</Th>
+              <Th k="css" className="num" title="Central Scouting consensus rank across the whole class (hover a rank for his North American or international list rank)">CSS</Th>
               <th>Projection</th>
               <Th k="conf">Confidence</Th>
               <Th k="style">Style</Th>
@@ -185,12 +185,7 @@ export function ClassTable({
                 <td className="num whitespace-nowrap" title={p.css ? `Central Scouting: #${p.css.rank} overall · #${p.css.listRank} ${p.css.list}` : undefined}>
                   {p.css ? (
                     <>
-                      <span className="font-semibold text-ice-50">{p.css.rank}</span>
-                      <span className="ml-1 text-[10px] text-ice-500">
-                        {p.css.list.startsWith('NA') ? 'NA' : 'INT'}
-                        {p.css.list.endsWith('goalies') ? ' G' : ''} {p.css.listRank}
-                      </span>{' '}
-                      <CssMove css={p.css} />
+                      <span className="font-semibold text-ice-50">#{p.css.rank}</span> <CssMove css={p.css} />
                     </>
                   ) : (
                     '—'
@@ -228,6 +223,8 @@ export function CssRankings({
   top?: number;
 }) {
   const [n, setN] = useState(top);
+  const [view, setView] = useState<'overall' | 'lists'>('overall');
+  const overallRows = players.filter((p) => p.css).sort((a, b) => a.css!.rank - b.css!.rank).slice(0, n * 2);
   const lists = CSS_LISTS.map((list) => ({
     list,
     rows: players
@@ -244,6 +241,35 @@ export function CssRankings({
           : `It updates every two weeks through the season as prospects play and its scouts see more (${edition === 'Preliminary' ? 'this is the preliminary list' : `this is ${edition?.toLowerCase()}`}${updatedOn ? `, published ${updatedOn}` : ''}); the final list comes out after the season.`}{' '}
         Arrows show movement since the previous update. It sees every league but isn't perfect; your own scouts can know better where they've spent time.
       </p>
+      <div className="mb-3 flex rounded-md bg-rink-800 p-0.5 text-xs sm:w-fit">
+        {(
+          [
+            ['overall', 'Overall ranking'],
+            ['lists', 'By list (North American / International)'],
+          ] as const
+        ).map(([k, label]) => (
+          <button key={k} onClick={() => setView(k)} className={cx('rounded px-2.5 py-1 font-semibold', view === k ? 'bg-rink-600 text-white' : 'text-ice-400')}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {view === 'overall' ? (
+        <ol className="grid gap-x-6 gap-y-0.5 text-xs sm:grid-cols-2 xl:grid-cols-4" style={{ gridAutoFlow: 'row' }}>
+          {overallRows.map((p) => (
+            <li key={p.id} className="flex items-baseline gap-2">
+              <span className="tabular w-7 shrink-0 text-right font-semibold text-ice-200">{p.css!.rank}</span>
+              <span className="w-6 shrink-0 text-center">
+                <CssMove css={p.css} />
+              </span>
+              <Link to={`/league/${leagueId}/player/${p.id}`} className="min-w-0 flex-1 truncate text-ice-100 hover:underline" title={`${p.name} · ${p.pos} · ${p.league} (${p.club}) · #${p.css!.listRank} ${p.css!.list}`}>
+                {p.name}
+              </Link>
+              <span className="shrink-0 text-ice-500">{p.pos}</span>
+              <span className="w-16 shrink-0 truncate text-right text-ice-500">{p.league}</span>
+            </li>
+          ))}
+        </ol>
+      ) : (
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {lists.map(({ list, rows }) => (
           <div key={list} className="min-w-0">
@@ -272,6 +298,7 @@ export function CssRankings({
           </div>
         ))}
       </div>
+      )}
       {n < 100 && (
         <button className="mt-3 text-xs text-blue-300 hover:underline" onClick={() => setN(n + 32)}>
           Show more

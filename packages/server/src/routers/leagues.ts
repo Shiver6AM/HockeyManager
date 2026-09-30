@@ -1,4 +1,5 @@
-import { cleanSliders, createLeague, FA_DAYS, faDayOf, fantasyOnClock, RESIGN_DAYS, SIM_SLIDERS, slider, tradeDeadline, type AdvanceMode, type SimSlider } from '@hockey-gm/sim-core';
+import { cleanSliders, createLeague, FA_DAYS, faDayOf, fantasyOnClock, lotteryShowLength, RESIGN_DAYS, SIM_SLIDERS, slider, tradeDeadline, type AdvanceMode, type League, type SimSlider } from '@hockey-gm/sim-core';
+import { simcastSummary } from '../simcast';
 import { TRPCError } from '@trpc/server';
 import { randomBytes, randomInt } from 'node:crypto';
 import { z } from 'zod';
@@ -126,6 +127,10 @@ export const leaguesRouter = router({
       lastRegularDay,
       gamesToday,
       phase: L.phase,
+      /** Where the league is, in a few words ("Pre-draft", "Free agency · day 3 of 10", "Playoffs · round 2"). */
+      stageLabel: stageLabel(L),
+      /** A game being simcast right now (the league can't sim until it ends). */
+      simcast: simcastSummary(input.leagueId),
       /** Offseason stage and, during the re-signing week, which day it is. */
       offseasonStage: L.offseason?.stage ?? null,
       resignDay: L.offseason?.stage === 're-sign' ? (L.offseason.resignDay ?? RESIGN_DAYS) : null,
@@ -273,3 +278,36 @@ export const leaguesRouter = router({
     return { inviteCode: code };
   }),
 });
+
+/** A granular description of where the league is in its year. */
+export function stageLabel(L: League): string {
+  if (L.fantasy && !L.fantasy.done) return L.fantasy.started ? `Fantasy draft · pick ${L.fantasy.current + 1} of ${L.fantasy.picks.length}` : 'Pre-draft (fantasy)';
+  if (L.phase === 'regular-season') {
+    if (L.day === 0) return 'Opening night';
+    const d = tradeDeadline(L) - L.day;
+    if (d > 0 && d <= 7) return `Regular season · deadline in ${d}d`;
+    if (d === 0) return 'Trade deadline day';
+    return d < 0 ? 'Regular season · stretch run' : 'Regular season';
+  }
+  if (L.phase === 'playoffs') {
+    const rounds = L.playoffs?.rounds ?? [];
+    const r = rounds.length;
+    return ['Playoffs', 'Playoffs · first round', 'Playoffs · second round', 'Conference finals', 'Championship final'][r] ?? 'Playoffs';
+  }
+  const os = L.offseason;
+  if (!os) return 'Season review';
+  switch (os.stage) {
+    case 'fantasy-draft':
+      return 'Fantasy draft';
+    case 'draft':
+      if (os.draft.lotteryHeld === false || (os.draft.lotteryShow && Date.now() < os.draft.lotteryShow + lotteryShowLength(L))) return 'Draft lottery';
+      return os.draft.current === 0 && !os.draft.clock ? 'Pre-draft' : `Entry draft · pick ${Math.min(os.draft.current + 1, os.draft.picks.length)} of ${os.draft.picks.length}`;
+    case 're-sign':
+      return `Re-signing window · day ${os.resignDay ?? RESIGN_DAYS} of ${RESIGN_DAYS}`;
+    case 'free-agency':
+      return `Free agency · day ${faDayOf(os)} of ${FA_DAYS}`;
+    case 'training-camp':
+      return 'Pre-season · training camp';
+  }
+  return 'Offseason';
+}

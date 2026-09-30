@@ -113,7 +113,7 @@ describe('restricted free agents', () => {
       const G = generateLeague({ seed, humans: { HAL: 'me' } });
       advanceToEndOfSeason(G);
       offseasonStep(G, { force: true }); // -> draft
-      offseasonStep(G, { force: true }); // -> re-sign
+      while (G.offseason!.stage === 'draft') offseasonStep(G, { force: true }); // lottery, then the draft -> re-sign
       // RFAs who won't simply accept their qualifying offer (the interesting cases).
       const ids = Object.keys(G.offseason!.expiring).filter(
         (id) => G.players[id]?.teamId === 'HAL' && G.players[id].contract?.expiresAs === 'RFA' && qoResponse(G, G.players[id]) !== 'accept',

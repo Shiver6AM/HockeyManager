@@ -1,4 +1,5 @@
 /** Name pools for generated players, grouped by nationality. */
+import { EXTRA_FIRST, EXTRA_LAST, FAMOUS } from './nameParts';
 
 export interface NamePool {
   nationality: string;
@@ -148,6 +149,13 @@ export const NAME_POOLS: NamePool[] = [
     ],
   },
 ];
+
+// Thousands more names (see nameParts.ts), and no famous hockey names.
+for (const pool of NAME_POOLS) {
+  const fix = (n: string) => n.replace(/-(\w)/g, (_, c: string) => `-${c.toUpperCase()}`);
+  pool.first = [...new Set([...pool.first, ...(EXTRA_FIRST[pool.nationality] ?? [])])];
+  pool.last = [...new Set([...pool.last, ...(EXTRA_LAST[pool.nationality] ?? []).map(fix)])].filter((n) => !FAMOUS.has(n));
+}
 
 /** Fictional franchises, grouped by conference and division. Rename freely. */
 export interface FranchiseDef {

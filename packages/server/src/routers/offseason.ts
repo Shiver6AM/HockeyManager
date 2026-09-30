@@ -25,6 +25,10 @@ import {
   withdrawBid,
   freeAgents,
   makePick,
+  holdLottery,
+  lotteryShowLength,
+  pauseDraftClock,
+  startDraftClock,
   offseasonStep,
   onTheClock,
   OFFSEASON_STAGES,
@@ -85,9 +89,9 @@ import {
   healthyRoster,
 } from '@hockey-gm/sim-core';
 import { z } from 'zod';
-import { mutateLeague } from '../advance';
+import { mutateLeague, noteDraftClock } from '../advance';
 import { dealTerms } from '../deal';
-import { deliver } from '../notify';
+import { deliver, deliverAll } from '../notify';
 import { readLeague } from '../state';
 import { advancerProcedure, badRequest, memberProcedure, router, type Membership } from '../trpc';
 import { publicPlayer, teamInfo } from '../views';
@@ -179,6 +183,7 @@ export const offseasonRouter = router({
     const L = await readLeague(ctx.db, input.leagueId);
     const os = L.offseason;
     if (L.phase !== 'offseason' || !os) return null;
+    noteDraftClock(ctx.db, input.leagueId, L); // (picks the clock back up after a server restart)
     const my = ctx.membership.teamId;
     const d = os.draft;
     const clock = onTheClock(L);
@@ -206,6 +211,22 @@ export const offseasonRouter = router({
         onTheClock: clock ? { ...clock, team: teamInfo(L.teams[clock.teamId]), isMe: clock.teamId === my } : null,
         myNextPick: myPicks.find((p) => !p.playerId) ?? null,
         lottery: d.lottery.map(([t, from, to]) => ({ team: teamInfo(L.teams[t]), from, to })),
+        /** False until the lottery is drawn. */
+        lotteryHeld: d.lotteryHeld !== false,
+        /** A live draw: when it started, and how long the reveal runs (ms). */
+        lotteryShow: d.lotteryShow ? { startedAt: d.lotteryShow, length: lotteryShowLength(L) } : null,
+        /** Lottery teams, worst record first, with their odds and (once drawn) where they pick. */
+        lotteryTeams: (d.lotteryOdds ?? []).map(([t, odds], i) => ({
+          team: teamInfo(L.teams[t]),
+          seed: i + 1,
+          odds,
+          pick: d.lotteryHeld === false ? null : d.picks.findIndex((p) => p.round === 1 && p.originalTeamId === t) + 1,
+          ownedBy: d.picks.find((p) => p.round === 1 && p.originalTeamId === t && p.teamId !== t)?.teamId ?? null,
+        })),
+        started: !!d.clock || d.current > 0,
+        clock: d.clock
+          ? { deadline: d.clock.deadline, perPick: d.clock.perPick, paused: d.clock.paused ? d.clock.paused.left : null, serverNow: Date.now() }
+          : null,
       },
       myExpiringCount: my ? Object.keys(os.expiring).filter((id) => L.players[id]?.teamId === my).length : 0,
       myUndecided: my ? Object.keys(os.expiring).filter((id) => L.players[id]?.teamId === my && os.resign[id] === undefined).length : 0,
@@ -329,6 +350,7 @@ export const offseasonRouter = router({
     const L = await readLeague(ctx.db, input.leagueId);
     const d = L.offseason?.draft;
     if (!d) return null;
+    noteDraftClock(ctx.db, input.leagueId, L);
     const my = ctx.membership.teamId;
     const taken = new Set(d.picks.map((p) => p.playerId).filter(Boolean));
     const list = (my && L.offseason?.draftLists?.[my]) || [];
@@ -350,17 +372,65 @@ export const offseasonRouter = router({
     };
   }),
 
+  /** Commissioner: draw the lottery, simmed (result at once) or live (revealed pick by pick for everyone). */
+  holdLottery: advancerProcedure.input(z.object({ live: z.boolean() })).mutation(async ({ ctx, input }) =>
+    mutateLeague(ctx.db, input.leagueId, async (L, q) => {
+      mustBeStage(L, 'draft');
+      try {
+        holdLottery(L, { live: input.live, now: Date.now() });
+      } catch (e) {
+        throw badRequest((e as Error).message);
+      }
+      await deliverAll(q, input.leagueId, 'draft', input.live ? 'The draft lottery draw is on now. Watch it live.' : 'The draft lottery has been drawn.', '/draft');
+      return { ok: true };
+    }),
+  ),
+
+  /**
+   * Commissioner: run the draft. 'start' starts the clock (3 minutes a pick);
+   * 'skip' has AI teams pick until a manager is on the clock; 'finish' sims
+   * the rest (managers get their lists' or scouts' choices); pause/resume.
+   */
+  draftControl: advancerProcedure
+    .input(z.object({ action: z.enum(['start', 'skip', 'finish', 'pause', 'resume']) }))
+    .mutation(async ({ ctx, input }) =>
+      mutateLeague(ctx.db, input.leagueId, async (L, q) => {
+        mustBeStage(L, 'draft');
+        const d = L.offseason!.draft;
+        const now = Date.now();
+        try {
+          if (input.action === 'start') {
+            if (d.clock) throw new Error('The draft is already under way');
+            startDraftClock(L, now);
+          } else if (input.action === 'pause' || input.action === 'resume') {
+            pauseDraftClock(L, now, input.action === 'pause');
+          } else {
+            if (d.lotteryHeld === false) holdLottery(L);
+            if (!d.clock && input.action === 'skip') startDraftClock(L, now);
+            offseasonStep(L, { force: input.action === 'finish', now });
+          }
+        } catch (e) {
+          throw badRequest((e as Error).message);
+        }
+        await notifyClock(q, input.leagueId, L);
+        return { stage: L.offseason?.stage ?? null };
+      }),
+    ),
+
   makePick: memberProcedure.input(z.object({ playerId: z.string() })).mutation(async ({ ctx, input }) => {
     const teamId = requireTeam(ctx.membership);
     return mutateLeague(ctx.db, input.leagueId, async (L, q) => {
       mustBeStage(L, 'draft');
+      const d = L.offseason!.draft;
+      if (d.lotteryHeld === false) throw badRequest('The lottery has not been drawn yet');
       try {
         makePick(L, teamId, input.playerId);
       } catch (e) {
         throw badRequest((e as Error).message);
       }
-      // Keep the draft moving until the next human is on the clock.
-      const step = offseasonStep(L, { force: false });
+      // The next pick's clock starts now (the draft is timed from here if it wasn't already).
+      if (!d.clock && onTheClock(L)) startDraftClock(L, Date.now());
+      const step = onTheClock(L) ? { to: 'draft' } : offseasonStep(L, { force: false });
       const next = onTheClock(L);
       if (next && next.teamId !== teamId && L.teams[next.teamId].controller.kind === 'human') {
         await deliver(q, input.leagueId, [{ teamId: next.teamId, kind: 'draft', text: `You're on the clock: round ${next.round}, pick #${next.overall}.`, link: '/draft' }]);

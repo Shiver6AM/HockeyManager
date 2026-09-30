@@ -115,11 +115,23 @@ export function TradesPage() {
     if (partner && loadedFor.current === partner) saveDeal(L.id, partner, { give, get });
   }, [give, get, partner, L.id]);
 
+  // A remembered deal can go stale (a player traded or released since): drop what's no longer there.
+  const pruneTo = (data: Assets | undefined, set: (f: (xs: Asset[]) => Asset[]) => void) => {
+    if (!data) return;
+    const ok = new Set([...data.players.map((p) => p.id), ...data.prospects.map((p) => p.id), ...data.picks.map((p) => p.key)]);
+    set((xs) => {
+      const kept = xs.filter((a) => ok.has(keyOf(a)));
+      return kept.length === xs.length ? xs : kept;
+    });
+  };
   const status = useQuery(trpc.trades.status.queryOptions({ leagueId: L.id }));
   const teams = useQuery(trpc.leagues.teams.queryOptions({ leagueId: L.id }));
+  const partners = useQuery(trpc.trades.partners.queryOptions({ leagueId: L.id }));
   const mine = useQuery({ ...trpc.trades.assets.queryOptions({ leagueId: L.id, teamId: L.myTeamId ?? '', fitsFor: partner || undefined }), enabled: !!L.myTeamId });
   const theirs = useQuery({ ...trpc.trades.assets.queryOptions({ leagueId: L.id, teamId: partner, fitsFor: L.myTeamId ?? undefined }), enabled: !!partner });
   const list = useQuery({ ...trpc.trades.list.queryOptions({ leagueId: L.id }), refetchInterval: 6000 });
+  useEffect(() => pruneTo(mine.data, setGive), [mine.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => pruneTo(theirs.data, setGet), [theirs.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const dealInput = useDebounced({ leagueId: L.id, partner, give, get });
   const evalQ = useQuery({ ...trpc.trades.evaluate.queryOptions(dealInput), enabled: !!partner && !!L.myTeamId && give.length + get.length > 0 });
   const isAi = theirs.data?.controller === 'ai';
@@ -190,182 +202,188 @@ export function TradesPage() {
         </div>
       </div>
 
-      <TradeLists
-        incoming={list.data?.incoming ?? []}
-        outgoing={list.data?.outgoing ?? []}
-        approval={list.data?.awaitingApproval ?? []}
-        onRespond={(tradeId, accept) => respond.mutate({ leagueId: L.id, tradeId, accept })}
-        onWithdraw={(tradeId) => withdraw.mutate({ leagueId: L.id, tradeId })}
-        onReview={(tradeId, approve) => review.mutate({ leagueId: L.id, tradeId, approve })}
-      />
-      <ErrorBox error={respond.error ?? withdraw.error ?? review.error} />
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_21rem]">
+        <div className="min-w-0 space-y-5">
+        <TradeLists
+          incoming={list.data?.incoming ?? []}
+          outgoing={list.data?.outgoing ?? []}
+          approval={list.data?.awaitingApproval ?? []}
+          onRespond={(tradeId, accept) => respond.mutate({ leagueId: L.id, tradeId, accept })}
+          onWithdraw={(tradeId) => withdraw.mutate({ leagueId: L.id, tradeId })}
+          onReview={(tradeId, approve) => review.mutate({ leagueId: L.id, tradeId, approve })}
+        />
+        <ErrorBox error={respond.error ?? withdraw.error ?? review.error} />
 
-      {tab === 'block' ? (
-        <BlockTab mine={mine.data} onTradeFor={tradeFor} />
-      ) : (
-        <>
-          <label className="block text-sm text-ice-300">
-            Trade with{' '}
-            <span className="inline-block w-80 max-w-full align-middle">
-            <select className="slot" value={partner} onChange={(e) => setParams(e.target.value ? { with: e.target.value } : {})}>
+        {tab === 'block' ? (
+          <BlockTab mine={mine.data} onTradeFor={tradeFor} />
+        ) : (
+          <>
+            <label className="block text-sm text-ice-300">
+              Trade with{' '}
+              <span className="inline-block w-80 max-w-full align-middle">
+              <select className="slot" value={partner} onChange={(e) => setParams(e.target.value ? { with: e.target.value } : {})}>
               <option value="">Choose a team…</option>
-              {teams.data
-                ?.filter((t) => t.id !== L.myTeamId)
+              {(partners.data ?? [])
+                .filter((t) => t.team.id !== L.myTeamId)
                 .map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.city} {t.name} {t.manager ? `(${t.manager})` : '(AI)'}
+                  <option key={t.team.id} value={t.team.id}>
+                    {t.rank}. {t.team.city} {t.team.name} · {t.w}-{t.l}-{t.otl}, {t.pts} pts · {t.goal ?? '—'}
+                    {t.manager ? ` (${t.manager})` : ''}
                   </option>
                 ))}
             </select>
-            </span>
-          </label>
+              </span>
+            </label>
 
-          {!partner && (
-            <Card>
-              <Empty>
-                Choose a team to trade with, or browse every team's{' '}
-                <button className="text-blue-300 hover:underline" onClick={() => setTab('block')}>
-                  trade block
-                </button>
-                .
-              </Empty>
-            </Card>
-          )}
-
-          {partner && theirs.data && (
-            <>
-              <Card title="Trade preview">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <PreviewSide title={`You give · ${mine.data.team.city}`} data={mine.data} assets={give} onRemove={(a) => toggle('give', a)} />
-                  <PreviewSide title={`You get · ${theirs.data.team.city}`} data={theirs.data} assets={get} onRemove={(a) => toggle('get', a)} />
-                </div>
-                <div className="mt-4 flex flex-wrap items-center gap-4 border-t border-rink-700 pt-4">
-                  <div className="min-w-64 flex-1">
-                    {give.length + get.length === 0 ? (
-                      <p className="text-sm text-ice-400">Tick players, prospects or picks on either side below; they'll collect here.</p>
-                    ) : v?.error ? (
-                      <p className="text-sm text-red-300">{v.error}</p>
-                    ) : isAi && v?.verdict ? (
-                      <div>
-                        <div className="mb-1 flex justify-between text-xs text-ice-400">
-                          <span>{theirs.data.team.city}'s interest</span>
-                          <span className={cx(v.verdict.accept ? 'text-win' : v.verdict.meter >= 0.85 ? 'text-warn' : 'text-ice-400')}>{v.verdict.reason}</span>
-                        </div>
-                        <div className="h-2 rounded-full bg-rink-700">
-                          <div
-                            className={cx('h-2 rounded-full transition-all', v.verdict.accept ? 'bg-win' : v.verdict.meter >= 0.85 ? 'bg-warn' : 'bg-goal')}
-                            style={{ width: `${Math.round(v.verdict.meter * 100)}%` }}
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-ice-300">A manager runs {theirs.data.team.city}; they'll see your proposal and can accept or decline.</p>
-                    )}
-                    {v && !v.error && (
-                      <p className="mt-2 text-xs text-ice-400">
-                        Cap: you {v.myCapChange >= 0 ? '+' : '−'}
-                        {money(Math.abs(v.myCapChange))} · them {v.theirCapChange >= 0 ? '+' : '−'}
-                        {money(Math.abs(v.theirCapChange))}
-                      </p>
-                    )}
-                  </div>
-                  {isAi && (
-                    <Button variant="secondary" disabled={!status.data.open || ask.isFetching} onClick={() => ask.refetch()}>
-                      What would they want?
-                    </Button>
-                  )}
-                  <Button
-                    disabled={!status.data.open || propose.isPending || !!v?.error || give.length + get.length === 0}
-                    onClick={() => propose.mutate({ leagueId: L.id, partner, give, get })}
-                  >
-                    {isAi ? 'Make the trade' : 'Send proposal'}
-                  </Button>
-                </div>
-                {ask.data !== undefined && ask.isFetched && (
-                  <p className="mt-3 text-sm text-ice-200">
-                    {ask.data ? (
-                      <>
-                        They'd do it if you add <span className="font-semibold text-white">{ask.data.map((x) => x.label).join(' + ')}</span>.{' '}
-                        <Button
-                          variant="ghost"
-                          className="px-2 py-0.5 text-xs"
-                          onClick={() => setGive([...give, ...ask.data!.map((x) => (x.kind === 'pick' ? { kind: 'pick' as const, key: x.key } : { kind: 'player' as const, id: x.id }))])}
-                        >
-                          Add {ask.data.length > 1 ? 'them' : 'it'}
-                        </Button>
-                      </>
-                    ) : (
-                      'Nothing from your side gets this done. Try asking for less.'
-                    )}
-                  </p>
-                )}
-                {last && (
-                  <p
-                    className={cx(
-                      'mt-3 rounded-md px-3 py-2 text-sm',
-                      last.status === 'completed' ? 'bg-win/15 text-win' : last.status === 'rejected' ? 'bg-goal/10 text-red-200' : 'bg-blueline/15 text-blue-200',
-                    )}
-                  >
-                    {last.status === 'completed'
-                      ? 'Trade completed!'
-                      : last.status === 'pending'
-                        ? 'Proposal sent.'
-                        : last.status === 'awaiting-approval'
-                          ? 'Accepted. Waiting for the commissioner to approve.'
-                          : `Declined: ${last.note}`}
-                  </p>
-                )}
-                <div className="mt-2">
-                  <ErrorBox error={propose.error} />
-                </div>
+            {!partner && (
+              <Card>
+                <Empty>
+                  Choose a team to trade with, or browse every team's{' '}
+                  <button className="text-blue-300 hover:underline" onClick={() => setTab('block')}>
+                    trade block
+                  </button>
+                  .
+                </Empty>
               </Card>
+            )}
 
-              <BlockSummary data={theirs.data} />
+            {partner && theirs.data && (
+              <>
+                <Card title="Trade preview">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <PreviewSide title={`You give · ${mine.data.team.city}`} data={mine.data} assets={give} onRemove={(a) => toggle('give', a)} />
+                    <PreviewSide title={`You get · ${theirs.data.team.city}`} data={theirs.data} assets={get} onRemove={(a) => toggle('get', a)} />
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center gap-4 border-t border-rink-700 pt-4">
+                    <div className="min-w-64 flex-1">
+                      {give.length + get.length === 0 ? (
+                        <p className="text-sm text-ice-400">Tick players, prospects or picks on either side below; they'll collect here.</p>
+                      ) : v?.error ? (
+                        <p className="text-sm text-red-300">{v.error}</p>
+                      ) : isAi && v?.verdict ? (
+                        <div>
+                          <div className="mb-1 flex justify-between text-xs text-ice-400">
+                            <span>{theirs.data.team.city}'s interest</span>
+                            <span className={cx(v.verdict.accept ? 'text-win' : v.verdict.meter >= 0.85 ? 'text-warn' : 'text-ice-400')}>{v.verdict.reason}</span>
+                          </div>
+                          <div className="h-2 rounded-full bg-rink-700">
+                            <div
+                              className={cx('h-2 rounded-full transition-all', v.verdict.accept ? 'bg-win' : v.verdict.meter >= 0.85 ? 'bg-warn' : 'bg-goal')}
+                              style={{ width: `${Math.round(v.verdict.meter * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-ice-300">A manager runs {theirs.data.team.city}; they'll see your proposal and can accept or decline.</p>
+                      )}
+                      {v && !v.error && (
+                        <p className="mt-2 text-xs text-ice-400">
+                          Cap: you {v.myCapChange >= 0 ? '+' : '−'}
+                          {money(Math.abs(v.myCapChange))} · them {v.theirCapChange >= 0 ? '+' : '−'}
+                          {money(Math.abs(v.theirCapChange))}
+                        </p>
+                      )}
+                    </div>
+                    {isAi && (
+                      <Button variant="secondary" disabled={!status.data.open || ask.isFetching} onClick={() => ask.refetch()}>
+                        What would they want?
+                      </Button>
+                    )}
+                    <Button
+                      disabled={!status.data.open || propose.isPending || !!v?.error || give.length + get.length === 0}
+                      onClick={() => propose.mutate({ leagueId: L.id, partner, give, get })}
+                    >
+                      {isAi ? 'Make the trade' : 'Send proposal'}
+                    </Button>
+                  </div>
+                  {ask.data !== undefined && ask.isFetched && (
+                    <p className="mt-3 text-sm text-ice-200">
+                      {ask.data ? (
+                        <>
+                          They'd do it if you add <span className="font-semibold text-white">{ask.data.map((x) => x.label).join(' + ')}</span>.{' '}
+                          <Button
+                            variant="ghost"
+                            className="px-2 py-0.5 text-xs"
+                            onClick={() => setGive([...give, ...ask.data!.map((x) => (x.kind === 'pick' ? { kind: 'pick' as const, key: x.key } : { kind: 'player' as const, id: x.id }))])}
+                          >
+                            Add {ask.data.length > 1 ? 'them' : 'it'}
+                          </Button>
+                        </>
+                      ) : (
+                        'Nothing from your side gets this done. Try asking for less.'
+                      )}
+                    </p>
+                  )}
+                  {last && (
+                    <p
+                      className={cx(
+                        'mt-3 rounded-md px-3 py-2 text-sm',
+                        last.status === 'completed' ? 'bg-win/15 text-win' : last.status === 'rejected' ? 'bg-goal/10 text-red-200' : 'bg-blueline/15 text-blue-200',
+                      )}
+                    >
+                      {last.status === 'completed'
+                        ? 'Trade completed!'
+                        : last.status === 'pending'
+                          ? 'Proposal sent.'
+                          : last.status === 'awaiting-approval'
+                            ? 'Accepted. Waiting for the commissioner to approve.'
+                            : `Declined: ${last.note}`}
+                    </p>
+                  )}
+                  <div className="mt-2">
+                    <ErrorBox error={propose.error} />
+                  </div>
+                </Card>
 
-              <PlayerFilterBar
-                value={filters}
-                onChange={setFilters}
-                types={types}
-                extras={[
-                  { key: 'block', label: 'Only players on a trade block' },
-                  { key: 'fits', label: 'Only players that fit the other side’s needs' },
-                ]}
-              />
-              <div className="grid gap-5 xl:grid-cols-2">
-                <AssetPicker
-                  title={`You give (${mine.data.team.city})`}
-                  data={mine.data}
-                  selected={give}
-                  onToggle={(a) => toggle('give', a)}
-                  filters={filters}
-                  fitsLabel={`${theirs.data.team.city} want`}
-                  editableBlock
+                <BlockSummary data={theirs.data} />
+
+                <PlayerFilterBar
+                  value={filters}
+                  onChange={setFilters}
+                  types={types}
+                  extras={[
+                    { key: 'block', label: 'Only players on a trade block' },
+                    { key: 'fits', label: 'Only players that fit the other side’s needs' },
+                  ]}
                 />
-                <AssetPicker
-                  title={`You get (${theirs.data.team.city})`}
-                  data={theirs.data}
-                  selected={get}
-                  onToggle={(a) => toggle('get', a)}
-                  filters={filters}
-                  fitsLabel="You want"
-                />
-              </div>
-            </>
-          )}
-        </>
-      )}
-
-      <Card title="Recent trades around the league">
-        {list.data?.leagueCompleted.length ? (
-          <ul className="space-y-2 text-sm">
-            {list.data.leagueCompleted.map((t) => (
-              <TradeLine key={t.id} t={t} />
-            ))}
-          </ul>
-        ) : (
-          <Empty>No trades yet.</Empty>
+                <div className="grid gap-5 xl:grid-cols-2">
+                  <AssetPicker
+                    title={`You give (${mine.data.team.city})`}
+                    data={mine.data}
+                    selected={give}
+                    onToggle={(a) => toggle('give', a)}
+                    filters={filters}
+                    fitsLabel={`${theirs.data.team.city} want`}
+                    editableBlock
+                  />
+                  <AssetPicker
+                    title={`You get (${theirs.data.team.city})`}
+                    data={theirs.data}
+                    selected={get}
+                    onToggle={(a) => toggle('get', a)}
+                    filters={filters}
+                    fitsLabel="You want"
+                  />
+                </div>
+              </>
+            )}
+          </>
         )}
-      </Card>
+
+        <Card title="Recent trades around the league">
+          {list.data?.leagueCompleted.length ? (
+            <ul className="space-y-2 text-sm">
+              {list.data.leagueCompleted.map((t) => (
+                <TradeLine key={t.id} t={t} />
+              ))}
+            </ul>
+          ) : (
+            <Empty>No trades yet.</Empty>
+          )}
+        </Card>
+        </div>
+        <PartnerSidebar partner={partner} onPick={(id) => setParams({ with: id })} />
+      </div>
     </div>
   );
 }
@@ -911,5 +929,69 @@ function TradeLists({
         </Card>
       )}
     </div>
+  );
+}
+
+const STRATEGY: Record<string, { label: string; tone: string }> = {
+  contend: { label: 'Buying', tone: 'text-win' },
+  balanced: { label: 'Balanced', tone: 'text-ice-400' },
+  rebuild: { label: 'Selling', tone: 'text-warn' },
+};
+
+/** League standings with each club's goal for the season: who's buying and who's selling. Click a team to trade with it. */
+function PartnerSidebar({ partner, onPick }: { partner: string; onPick: (teamId: string) => void }) {
+  const L = useLeague();
+  const trpc = useTRPC();
+  const q = useQuery(trpc.trades.partners.queryOptions({ leagueId: L.id }));
+  return (
+    <Card title="Standings & team goals" className="xl:sticky xl:top-28 xl:self-start">
+      {!q.data ? (
+        <Spinner />
+      ) : (
+        <div className="-mx-4 -mb-4 max-h-[calc(100vh-10rem)] overflow-y-auto">
+          <table className="table text-xs">
+            <thead>
+              <tr>
+                <th className="num">#</th>
+                <th>Team</th>
+                <th className="num">Record</th>
+                <th className="num">Pts</th>
+                <th>Goal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {q.data.map((t) => {
+                const me = t.team.id === L.myTeamId;
+                return (
+                  <tr
+                    key={t.team.id}
+                    className={cx(!me && 'cursor-pointer', t.team.id === partner && 'bg-blueline/15', me && 'bg-rink-800/60')}
+                    onClick={() => !me && onPick(t.team.id)}
+                    title={me ? 'Your team' : `Trade with ${t.team.city}`}
+                  >
+                    <td className="num text-ice-500">{t.rank}</td>
+                    <td className="whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1.5">
+                        <TeamChip team={t.team} size="sm" />
+                        <span className={cx('font-semibold', me ? 'text-white' : 'text-ice-100')}>{t.team.abbr}</span>
+                        {t.manager && <span className="text-[10px] text-blue-300">{me ? 'you' : t.manager}</span>}
+                      </span>
+                    </td>
+                    <td className="num text-ice-300">
+                      {t.w}-{t.l}-{t.otl}
+                    </td>
+                    <td className="num font-semibold text-white">{t.pts}</td>
+                    <td className="whitespace-nowrap leading-tight" title={`Owner's goal: ${t.goal ?? '—'}${t.strategy ? ` · front office: ${STRATEGY[t.strategy].label}` : ''}`}>
+                      <span className="block text-ice-200">{t.goal ? t.goal.replace('Contend for the championship', 'Contend').replace('Make the playoffs', 'Playoffs').replace('Develop young talent', 'Youth').replace('Turn a profit', 'Profit') : '—'}</span>
+                      {t.strategy && <span className={cx('block text-[10px] font-semibold', STRATEGY[t.strategy].tone)}>{STRATEGY[t.strategy].label}</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }

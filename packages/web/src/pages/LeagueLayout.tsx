@@ -86,7 +86,7 @@ export function LeagueLayout() {
               <span className="hidden sm:inline">
                 {dayLabel(L.season, L.day, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
               </span>
-              <Badge tone={L.phase === 'playoffs' ? 'bad' : L.phase === 'offseason' ? 'neutral' : 'info'}>{PHASE_LABEL[L.phase]}</Badge>
+              <Badge tone={L.phase === 'playoffs' ? 'bad' : L.phase === 'offseason' ? 'neutral' : 'info'}>{L.stageLabel ?? PHASE_LABEL[L.phase]}</Badge>
               {myTeam && <TeamChip team={myTeam} size="sm" />}
               <NotificationBell leagueId={leagueId} />
             </div>

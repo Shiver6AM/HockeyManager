@@ -268,14 +268,39 @@ describe('multiplayer league flow', () => {
     expect(board!.available[0]).toHaveProperty('grade');
     expect(JSON.stringify(board)).not.toMatch(/potential/);
 
-    // Cat picks when on the clock (if she is), otherwise the commissioner forces the draft through.
+    // The lottery comes first; only the commissioner can hold it.
+    expect(os!.draft.lotteryHeld).toBe(false);
+    expect((await bob.leagues.overview({ leagueId })).stageLabel).toBe('Draft lottery');
+    expect(os!.draft.lotteryTeams.length).toBeGreaterThan(8);
+    await expect(bob.offseason.holdLottery({ leagueId, live: false })).rejects.toThrow(/commissioner/);
+    await expect(bob.offseason.makePick({ leagueId, playerId: longShot.id })).rejects.toThrow(/lottery/);
+    await comm.offseason.holdLottery({ leagueId, live: false });
+    const drawn = await bob.offseason.overview({ leagueId });
+    expect(drawn!.draft.lotteryHeld).toBe(true);
+    expect(drawn!.draft.lotteryTeams.every((t) => t.pick! >= 1)).toBe(true);
+    expect((await bob.leagues.overview({ leagueId })).stageLabel).toBe('Pre-draft');
+    // Start the clock: 3 minutes a pick. Then skip ahead to the next manager.
+    await comm.offseason.draftControl({ leagueId, action: 'start' });
+    const running = await bob.offseason.overview({ leagueId });
+    expect(running!.draft.clock!.perPick).toBe(180_000);
+    expect(running!.draft.clock!.deadline).toBeGreaterThan(Date.now() + 170_000);
+    expect((await bob.leagues.overview({ leagueId })).stageLabel).toMatch(/^Entry draft · pick 1 of/);
+    await comm.offseason.draftControl({ leagueId, action: 'skip' });
     const after = await bob.offseason.overview({ leagueId });
+    expect(['HAL', 'KC']).toContain(after!.draft.onTheClock!.team.id);
     if (after!.draft.onTheClock?.team.id === 'KC') {
       const b2 = await cat.offseason.draftBoard({ leagueId });
       await cat.offseason.makePick({ leagueId, playerId: b2!.available[0].id });
+      // Her pick doesn't run the AI picks after it: the next team gets its own clock.
+      const next = await bob.offseason.overview({ leagueId });
+      expect(next!.draft.current).toBe(after!.draft.current + 1);
+      expect(next!.draft.clock!.deadline).toBeGreaterThan(Date.now() + 170_000);
     }
+    await comm.offseason.draftControl({ leagueId, action: 'pause' });
+    expect((await bob.offseason.overview({ leagueId }))!.draft.clock!.paused).toBeGreaterThan(0);
+    await comm.offseason.draftControl({ leagueId, action: 'resume' });
     await expect(bob.offseason.negotiateFreeAgent({ leagueId, playerId: 'nope', salary: 1_000_000, years: 1 })).rejects.toThrow(/not a free agent/);
-    await comm.sim.advance({ leagueId, target: { days: 1 } }); // finish draft
+    await comm.offseason.draftControl({ leagueId, action: 'finish' }); // sim the rest of the draft
     const picks = (await bob.offseason.draftBoard({ leagueId }))!.picks.filter((p) => p.teamId === 'HAL');
     if (picks[0].overall > 1) expect(picks.map((p) => p.playerId)).toContain(longShot.id);
 

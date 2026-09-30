@@ -55,6 +55,12 @@ describe('offseason with a human manager', () => {
 
   it('builds a 7-round draft; lottery winners jump at most 10 spots', () => {
     const d = L.offseason!.draft;
+    // The lottery hasn't been drawn: the first round is in reverse order of the standings.
+    expect(d.lotteryHeld).toBe(false);
+    expect(d.lottery).toEqual([]);
+    expect(d.picks.slice(0, 16).map((p) => p.originalTeamId)).toEqual(d.lotteryOdds!.map(([t]) => t));
+    expect(offseasonStep(L, { force: false }).note).toMatch(/lottery/);
+    expect(d.lotteryHeld).toBe(true);
     expect(d.picks).toHaveLength(32 * DRAFT_ROUNDS);
     for (const [, from, to] of d.lottery) expect(from - to).toBeLessThanOrEqual(LOTTERY_MAX_JUMP);
     // The champion's own pick is last in every round (it may have been traded away).
@@ -65,6 +71,11 @@ describe('offseason with a human manager', () => {
   });
 
   it('pauses when the human is on the clock and resumes after the pick', () => {
+    // Not simmed, the draft starts on the clock; skipping ahead runs AI picks until a manager is up.
+    offseasonStep(L, { force: false, now: 1000 });
+    expect(L.offseason!.draft.clock).toMatchObject({ pick: 0, deadline: 1000 + 180_000 });
+    expect(L.offseason!.draft.current).toBe(0);
+    offseasonStep(L, { force: false, now: 2000 });
     const pick = onTheClock(L)!;
     expect(pick.teamId).toBe(ME);
     const madeBefore = L.offseason!.draft.current;

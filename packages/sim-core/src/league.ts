@@ -22,8 +22,10 @@ import type {
   GoalieSeasonStats,
   League,
   Player,
+  PlayEvent,
   PlayerId,
   ScheduledGame,
+  PlayoffSeries,
   SkaterSeasonStats,
   StandingsRow,
   TeamId,
@@ -137,11 +139,16 @@ function playGame(league: League, g: ScheduledGame, playoff: boolean, playedYest
   const away = league.teams[g.away];
   prepareTeamForGame(league, home);
   prepareTeamForGame(league, away);
-  const res = simulateGame(league, home, away, gameSeed(league, g.id), {
-    playoff,
-    homeBackToBack: playedYesterday.has(g.home),
-    awayBackToBack: playedYesterday.has(g.away),
-  });
+  // A game that was simcast already happened: use that result.
+  const pre = league.presimmed?.find((x) => x.gameId === g.id && x.season === league.season && x.day === league.day);
+  const res =
+    pre?.result ??
+    simulateGame(league, home, away, gameSeed(league, g.id), {
+      playoff,
+      homeBackToBack: playedYesterday.has(g.home),
+      awayBackToBack: playedYesterday.has(g.away),
+    });
+  if (pre) league.presimmed = league.presimmed!.filter((x) => x !== pre);
   g.result = res;
   recordChemistry(home);
   recordChemistry(away);
@@ -158,7 +165,7 @@ function playGame(league: League, g: ScheduledGame, playoff: boolean, playedYest
   gameNews(league, g, res.box, playoff, before);
 }
 
-function teamsPlayingOn(league: League, day: number): Set<TeamId> {
+export function teamsPlayingOn(league: League, day: number): Set<TeamId> {
   const out = new Set<TeamId>();
   for (const g of league.schedule) {
     if (g.day === day) {
@@ -208,6 +215,9 @@ export function ensureTraits(league: League) {
 function simDay(league: League): ScheduledGame[] {
   ensureLeagueLife(league);
   const out = simDayInner(league);
+  // (A simcast game is used on its own day, or not at all.)
+  if (league.presimmed) league.presimmed = league.presimmed.filter((x) => x.season === league.season && x.day >= league.day);
+  if (!league.presimmed?.length) delete league.presimmed;
   newsFromTransactions(league);
   return out;
 }
@@ -278,6 +288,64 @@ function startPlayoffs(league: League) {
   league.phase = 'playoffs';
 }
 
+function nextPlayoffGame(s: PlayoffSeries, idx: number, day: number): ScheduledGame {
+  const k = s.games.length + 1;
+  const highHome = HOME_PATTERN[k - 1];
+  return {
+    id: 100_000 + s.round * 1000 + idx * 10 + k,
+    day,
+    home: highHome ? s.high : s.low,
+    away: highHome ? s.low : s.high,
+    result: null,
+    seriesId: s.id,
+    gameNumber: k,
+  };
+}
+
+/** The games the next sim day will play (the ones that can be simcast). */
+export function upcomingGames(league: League): ScheduledGame[] {
+  if (league.phase === 'regular-season') return league.schedule.filter((g) => g.day === league.day && !g.result);
+  const po = league.playoffs;
+  if (league.phase !== 'playoffs' || !po) return [];
+  const offset = league.day - po.roundStartDay;
+  if (offset < 0 || offset % 2 !== 0) return [];
+  const out: ScheduledGame[] = [];
+  currentRound(po).forEach((s, idx) => {
+    if (!s.winner) out.push(nextPlayoffGame(s, idx, league.day));
+  });
+  return out;
+}
+
+/**
+ * Play one of the next day's games now, recording its play-by-play, and keep
+ * the result so the day's sim uses it. (The same game, played the same way.)
+ */
+export function presimGame(league: League, gameId: number): { game: ScheduledGame; result: GameSummary; events: PlayEvent[] } {
+  const g = upcomingGames(league).find((x) => x.id === gameId);
+  if (!g) throw new Error('That game is not on the next game day');
+  const playoff = league.phase === 'playoffs';
+  const yesterday = teamsPlayingOn(league, league.day - 1);
+  const home = league.teams[g.home];
+  const away = league.teams[g.away];
+  // Watched once, it stays played: a second simcast of the same game shows the same game.
+  const pre = league.presimmed?.find((x) => x.gameId === g.id && x.season === league.season && x.day === league.day);
+  if (pre) return { game: g, result: pre.result, events: pre.events ?? [] };
+  const events: PlayEvent[] = [];
+  prepareTeamForGame(league, home);
+  prepareTeamForGame(league, away);
+  const result = simulateGame(league, home, away, gameSeed(league, g.id), {
+    playoff,
+    homeBackToBack: yesterday.has(g.home),
+    awayBackToBack: yesterday.has(g.away),
+    pbp: events,
+  });
+  league.presimmed = [
+    ...(league.presimmed ?? []).filter((x) => x.season === league.season && x.day === league.day),
+    { season: league.season, day: league.day, gameId: g.id, result, events },
+  ];
+  return { game: g, result, events };
+}
+
 function playoffDay(league: League, yesterday: Set<TeamId>): ScheduledGame[] {
   const po = league.playoffs!;
   const offset = league.day - po.roundStartDay;
@@ -287,17 +355,7 @@ function playoffDay(league: League, yesterday: Set<TeamId>): ScheduledGame[] {
   const played: ScheduledGame[] = [];
   round.forEach((s, idx) => {
     if (s.winner) return;
-    const k = s.games.length + 1;
-    const highHome = HOME_PATTERN[k - 1];
-    const g: ScheduledGame = {
-      id: 100_000 + s.round * 1000 + idx * 10 + k,
-      day: league.day,
-      home: highHome ? s.high : s.low,
-      away: highHome ? s.low : s.high,
-      result: null,
-      seriesId: s.id,
-      gameNumber: k,
-    };
+    const g = nextPlayoffGame(s, idx, league.day);
     playGame(league, g, true, yesterday);
     s.games.push(g);
     const homeWon = g.result!.homeScore > g.result!.awayScore;
