@@ -85,6 +85,8 @@ export interface Player {
   firstName: string;
   lastName: string;
   pos: Position;
+  /** Other positions he can play (skaters). Worked out once for older saves. */
+  altPos?: Position[];
   shoots: 'L' | 'R';
   birthYear: number;
   nationality: string;
@@ -182,7 +184,7 @@ export interface Team {
   cash?: number;
   owner?: OwnerState;
   /** Buyout charges: cap hits for players no longer on the team. Seasons inclusive. */
-  deadCap?: Array<{ playerName: string; amount: number; fromSeason: number; untilSeason: number }>;
+  deadCap?: Array<{ playerName: string; amount: number; fromSeason: number; untilSeason: number; retained?: boolean }>;
   /** Draft picks and young players developing outside the active roster (junior/minors). */
   prospects?: PlayerId[];
   lines: Lines;
@@ -191,6 +193,11 @@ export interface Team {
    * game (the same logic AI teams use). Turned off when the manager edits lines.
    */
   autoLines?: boolean;
+  /**
+   * Where the manager wants players used when the assistant coach builds the
+   * lines: a line or group of lines, a position, or a healthy scratch.
+   */
+  linePins?: Record<PlayerId, LinePin>;
   /** Human managers' trade block (AI blocks are computed). */
   tradeBlock?: TradeBlock;
   /** Coaching systems (AI teams pick theirs to suit the roster). */
@@ -207,6 +214,13 @@ export interface Team {
   goalieCoach?: SkillsCoach;
   /** Games each forward line / defense pair (sorted ids joined by "|") has played together recently. */
   chemistry?: Record<string, number>;
+}
+
+export type PinSlot = 'L1' | 'L2' | 'L3' | 'L4' | 'top6' | 'top9' | 'bottom6' | 'P1' | 'P2' | 'P3' | 'top4' | 'G1' | 'G2' | 'scratch';
+export interface LinePin {
+  slot?: PinSlot;
+  /** Forwards: the position to play. */
+  pos?: 'C' | 'LW' | 'RW';
 }
 
 /**
@@ -420,7 +434,7 @@ export interface PlayEvent {
   period: number;
   /** Seconds into the period. */
   clock: number;
-  type: 'period-start' | 'period-end' | 'faceoff' | 'shot' | 'miss' | 'block' | 'goal' | 'penalty' | 'fight' | 'hit' | 'injury' | 'goalie-pulled' | 'goalie-back' | 'goalie-change' | 'shootout' | 'final';
+  type: 'period-start' | 'period-end' | 'faceoff' | 'shot' | 'miss' | 'block' | 'goal' | 'penalty' | 'penalty-over' | 'fight' | 'hit' | 'injury' | 'goalie-pulled' | 'goalie-back' | 'goalie-change' | 'shootout' | 'final';
   side: 'home' | 'away' | null;
   player?: PlayerId;
   /** The goalie who saved it, the blocker, the player hit, the other fighter, a new goalie. */
@@ -436,6 +450,10 @@ export interface PlayEvent {
   awayScore: number;
   homeShots: number;
   awayShots: number;
+  /** Penalty time left (seconds) for each player in the box, when anyone is. */
+  box?: { home: number[]; away: number[] };
+  /** A team playing with its goalie pulled. */
+  pulled?: 'home' | 'away';
 }
 
 export interface GameSummary {
@@ -685,7 +703,8 @@ export interface RfaCase {
   sheet?: OfferSheet;
 }
 
-export type TradeAsset = { kind: 'player'; id: PlayerId } | { kind: 'pick'; key: string };
+/** A player (the team sending him may retain part of his salary: 0 to 0.5) or a draft pick. */
+export type TradeAsset = { kind: 'player'; id: PlayerId; retain?: number } | { kind: 'pick'; key: string };
 
 export interface TradeProposal {
   id: string;

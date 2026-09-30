@@ -146,12 +146,35 @@ export type OzStyle = 'cycle' | 'crash' | 'perimeter' | 'rush';
 export type PpFormation = 'umbrella' | '1-3-1' | 'overload';
 export type PkStrategy = 'box' | 'diamond' | 'aggressive';
 
+export type ForwardUsage = 'balanced' | 'top-heavy' | 'top6' | 'top9' | 'roll4';
+export type DefenseUsage = 'balanced' | 'top2' | 'top4' | 'roll3';
+
 export interface Tactics {
   forecheck: Forecheck;
   offense: OzStyle;
   pp: PpFormation;
   pk: PkStrategy;
+  /** How even-strength ice time is spread over the four forward lines (left out: balanced). */
+  fUsage?: ForwardUsage;
+  /** ...and over the three defense pairs. */
+  dUsage?: DefenseUsage;
 }
+
+/** Share of even-strength time for each forward line, and a rough guide to minutes. */
+export const FORWARD_USAGE: Record<ForwardUsage, { label: string; help: string; share: number[] }> = {
+  balanced: { label: 'Standard', help: 'The usual NHL split: the top two lines play the most, the fourth line the least.', share: [0.285, 0.275, 0.245, 0.195] },
+  'top-heavy': { label: 'Ride the top line', help: 'Your best line plays a lot more. Big minutes wear it down late in games.', share: [0.34, 0.28, 0.22, 0.16] },
+  top6: { label: 'Top six', help: 'Lean on the top two lines; the bottom six get less.', share: [0.31, 0.3, 0.22, 0.17] },
+  top9: { label: 'Top nine', help: 'Three scoring lines share the load; the fourth line plays sparingly.', share: [0.28, 0.27, 0.26, 0.19] },
+  roll4: { label: 'Roll four lines', help: 'Nearly even minutes: fresh legs all game, less time for the stars.', share: [0.255, 0.25, 0.25, 0.245] },
+};
+
+export const DEFENSE_USAGE: Record<DefenseUsage, { label: string; help: string; share: number[] }> = {
+  balanced: { label: 'Standard', help: 'The top pair plays the most, the third pair the least.', share: [0.37, 0.34, 0.29] },
+  top2: { label: 'Lean on the top pair', help: 'Your top pair plays big minutes (it tires late in games).', share: [0.43, 0.32, 0.25] },
+  top4: { label: 'Top four', help: 'The top two pairs split most of the time; the third pair is sheltered.', share: [0.39, 0.37, 0.24] },
+  roll3: { label: 'Roll three pairs', help: 'Even minutes for all six.', share: [0.34, 0.335, 0.325] },
+};
 
 export const DEFAULT_TACTICS: Tactics = { forecheck: 'balanced', offense: 'cycle', pp: 'umbrella', pk: 'box' };
 

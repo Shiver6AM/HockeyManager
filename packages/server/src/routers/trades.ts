@@ -9,6 +9,10 @@ import {
   capRoom,
   describeAsset,
   evaluateForAi,
+  retainedAmount,
+  retainedCount,
+  retainedSeasons,
+  RETENTION,
   overall,
   payroll,
   pickLabel,
@@ -35,7 +39,10 @@ import { badRequest, commissionerProcedure, memberProcedure, router, type Member
 import { publicPlayer, teamInfo } from '../views';
 import { potentialView } from './data';
 
-const asset = z.union([z.object({ kind: z.literal('player'), id: z.string() }), z.object({ kind: z.literal('pick'), key: z.string() })]);
+const asset = z.union([
+  z.object({ kind: z.literal('player'), id: z.string(), retain: z.number().min(0).max(0.5).optional() }),
+  z.object({ kind: z.literal('pick'), key: z.string() }),
+]);
 const deal = z.object({ partner: z.string(), give: z.array(asset).max(10), get: z.array(asset).max(10) });
 
 /** Tell the people involved what happened to a trade. */
@@ -85,7 +92,13 @@ function tradeView(L: League, t: TradeProposal) {
 
 /** Salary change for a team from a deal (positive = takes on money). */
 function capDelta(L: League, incoming: TradeAsset[], outgoing: TradeAsset[]) {
-  const s = (xs: TradeAsset[]) => xs.reduce((sum, a) => sum + (a.kind === 'player' ? (L.players[a.id]?.contract?.salary ?? 0) : 0), 0);
+  // (Retained salary stays with the team sending him.)
+  const s = (xs: TradeAsset[]) =>
+    xs.reduce((sum, a) => {
+      if (a.kind !== 'player' || !L.players[a.id]) return sum;
+      const p = L.players[a.id];
+      return sum + (p.contract?.salary ?? 0) - (a.retain ? retainedAmount(p, a.retain) : 0);
+    }, 0);
   return s(incoming) - s(outgoing);
 }
 
@@ -241,6 +254,16 @@ export const tradesRouter = router({
         : null,
       myCapChange: capDelta(L, input.get, input.give),
       theirCapChange: capDelta(L, input.give, input.get),
+      /** Retained salary each side would carry (per season, and for how many seasons). */
+      retained: [...input.give.map((a) => ({ a, side: 'me' as const })), ...input.get.map((a) => ({ a, side: 'them' as const }))]
+        .filter((x) => x.a.kind === 'player' && x.a.retain && L.players[x.a.id])
+        .map(({ a, side }) => {
+          const p = L.players[(a as { id: string }).id];
+          return { side, playerId: p.id, name: `${p.firstName} ${p.lastName}`, share: (a as { retain: number }).retain, amount: retainedAmount(p, (a as { retain: number }).retain), seasons: retainedSeasons(L, p) };
+        }),
+      myRetainedCount: retainedCount(L, L.teams[teamId]),
+      theirRetainedCount: partner ? retainedCount(L, partner) : 0,
+      retentionMax: RETENTION,
     };
   }),
 

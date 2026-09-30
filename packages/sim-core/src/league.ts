@@ -3,6 +3,7 @@ import { applyScoutPlans, initScouts, scoutingDay } from './scouting';
 import { publishCss } from './css';
 import { ensureDraftClass } from './draft';
 import { refreshTraits } from './traits';
+import { altPositions } from './positions';
 import { recordChemistry } from './chemistry';
 import { initSkillsCoaches, trainingDay } from './skills';
 import { prospectGameDay } from './prospects';
@@ -206,6 +207,7 @@ export function ensureLeagueLife(league: League, opts: { farm?: boolean } = {}) 
 /** Work out traits for new players, and for everyone once a season (after the summer's development). */
 export function ensureTraits(league: League) {
   for (const p of Object.values(league.players)) {
+    if (p.altPos === undefined) p.altPos = altPositions(league, p);
     if (p.traitsSeason === league.season) continue;
     refreshTraits(p);
     p.traitsSeason = league.season;

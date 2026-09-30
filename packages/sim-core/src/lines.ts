@@ -13,7 +13,7 @@ import {
   type Slot,
   type Tactics,
 } from './systems';
-import type { Lines, Player, PlayerId } from './types';
+import type { LinePin, Lines, PinSlot, Player, PlayerId, Position } from './types';
 
 /** Keep forwards in forward slots and defensemen in defense slots when filling units. */
 const positional = (slot: Slot, p: Player) => {
@@ -28,57 +28,112 @@ const positional = (slot: Slot, p: Player) => {
  * human managers start from it and edit. Special units are filled by role
  * skill for the team's systems (e.g. the power-play formation's slots).
  */
-export function autoLines(roster: Player[], tactics: Tactics = DEFAULT_TACTICS): Lines {
+export function autoLines(roster: Player[], tactics: Tactics = DEFAULT_TACTICS, pins?: Record<PlayerId, LinePin>): Lines {
   // AI teams rebuild lines before every game, but the result only depends on
   // who's available, their ratings and the team's systems, so identical inputs
   // reuse the last answer.
   const key =
     JSON.stringify(tactics) +
+    (pins && Object.keys(pins).length ? JSON.stringify(pins) : '') +
     '#' +
-    roster.map((p) => `${p.id}:${p.pos}:${JSON.stringify(p.skater ?? p.goalie)}:${p.roleTraining ? JSON.stringify(p.roleTraining) : ''}`).join('|');
+    roster.map((p) => `${p.id}:${p.pos}${p.altPos?.join('') ?? ''}:${JSON.stringify(p.skater ?? p.goalie)}:${p.roleTraining ? JSON.stringify(p.roleTraining) : ''}`).join('|');
   const hit = linesCache.get(key);
   if (hit) return structuredClone(hit);
-  const lines = buildAutoLines(roster, tactics);
+  const lines = buildAutoLines(roster, tactics, pins ?? {});
   if (linesCache.size > 400) linesCache.clear();
   linesCache.set(key, structuredClone(lines));
   return lines;
 }
 const linesCache = new Map<string, Lines>();
 
-function buildAutoLines(roster: Player[], tactics: Tactics): Lines {
+/** Can he play this position (his own or one of his others)? */
+export const playsPos = (p: Player, pos: Position) => p.pos === pos || !!p.altPos?.includes(pos);
+
+/** Which forward lines (0-3) or defense pairs (0-2) a pin allows. */
+const PIN_LINES: Partial<Record<PinSlot, number[]>> = {
+  L1: [0], L2: [1], L3: [2], L4: [3], top6: [0, 1], top9: [0, 1, 2], bottom6: [2, 3],
+  P1: [0], P2: [1], P3: [2], top4: [0, 1],
+};
+
+function buildAutoLines(roster: Player[], tactics: Tactics, pins: Record<PlayerId, LinePin>): Lines {
   const byOvr = (a: Player, b: Player) => overall(b) - overall(a);
   const skaters = roster.filter((p) => p.pos !== 'G');
-  const forwards = skaters.filter((p) => p.pos !== 'D').sort(byOvr);
-  const defense = skaters.filter((p) => p.pos === 'D').sort(byOvr);
+  const isD = (p: Player) => p.pos === 'D';
+  // Healthy scratches the manager asked for sit out, unless they're needed to dress 12 forwards and 6 defensemen.
+  const scratched = (p: Player) => pins[p.id]?.slot === 'scratch';
+  const avail = (list: Player[], need: number) => {
+    const playing = list.filter((p) => !scratched(p));
+    return playing.length >= need ? playing : [...playing, ...list.filter(scratched)].slice(0, Math.max(need, playing.length));
+  };
+  const forwards = avail(skaters.filter((p) => !isD(p)), 12).sort(byOvr);
+  const defense = avail(skaters.filter(isD), 6).sort(byOvr);
   const goalies = roster.filter((p) => p.pos === 'G').sort(byOvr);
 
-  // Fill each slot with a natural-position player first, then best available forward.
   const used = new Set<PlayerId>();
-  const take = (pos: 'C' | 'LW' | 'RW'): PlayerId => {
-    const natural = forwards.find((p) => p.pos === pos && !used.has(p.id));
-    const pick = natural ?? forwards.find((p) => !used.has(p.id));
-    if (!pick) throw new Error('Not enough forwards to build lines');
-    used.add(pick.id);
-    return pick.id;
+  const allowed = (p: Player, line: number) => {
+    const lines = PIN_LINES[pins[p.id]?.slot as PinSlot];
+    return !lines || lines.includes(line);
+  };
+  /** Pinned to this line or a group that ends here: he has to go in now. */
+  const due = (p: Player, line: number) => {
+    const lines = PIN_LINES[pins[p.id]?.slot as PinSlot];
+    return !!lines && Math.max(...lines) === line;
+  };
+  const fitsPos = (p: Player, pos: 'C' | 'LW' | 'RW') => {
+    const want = pins[p.id]?.pos;
+    return want ? want === pos : playsPos(p, pos);
+  };
+  const pick = (pool: Player[], line: number, ok: (p: Player) => boolean) => {
+    const free = pool.filter((p) => !used.has(p.id) && allowed(p, line));
+    return free.find((p) => due(p, line) && ok(p)) ?? free.find(ok);
+  };
+  const take = (pos: 'C' | 'LW' | 'RW', line: number): PlayerId => {
+    // His own position first, then players who can also play it.
+    // (Someone who can also play there beats a clearly better player out of position only when it's close.)
+    const best = pick(forwards, line, (x) => !pins[x.id]?.pos || pins[x.id].pos === pos);
+    const alt = pick(forwards, line, (x) => fitsPos(x, pos));
+    const p =
+      pick(forwards, line, (x) => (pins[x.id]?.pos ? pins[x.id].pos === pos : x.pos === pos)) ??
+      (alt && (!best || overall(alt) >= overall(best) - 3 || pins[alt.id]?.pos === pos) ? alt : undefined) ??
+      // Nobody who plays there: a forward whose pin doesn't name another spot, then anyone.
+      pick(forwards, line, (x) => !pins[x.id]?.pos) ??
+      pick(forwards, line, () => true) ??
+      forwards.find((x) => !used.has(x.id));
+    if (!p) throw new Error('Not enough forwards to build lines');
+    used.add(p.id);
+    return p.id;
   };
   const fLines: PlayerId[][] = [];
   for (let i = 0; i < 4; i++) {
-    const c = take('C');
-    const lw = take('LW');
-    const rw = take('RW');
+    // Centers first (the scarcest), then the wings.
+    const c = take('C', i);
+    const lw = take('LW', i);
+    const rw = take('RW', i);
     fLines.push([lw, c, rw]);
   }
-  // Extra forwards spill onto defense only if we're short there.
+  // Extra forwards spill onto defense only if we're short there (ones who can play D first).
   const dPool = [...defense];
+  const spare = forwards.filter((p) => !used.has(p.id)).sort((a, b) => Number(playsPos(b, 'D')) - Number(playsPos(a, 'D')));
   while (dPool.length < 6) {
-    const extra = forwards.find((p) => !used.has(p.id));
+    const extra = spare.shift();
     if (!extra) throw new Error('Not enough skaters to build defense pairs');
     used.add(extra.id);
     dPool.push(extra);
   }
-  const dPairs = [0, 1, 2].map((i) => [dPool[i * 2].id, dPool[i * 2 + 1].id]);
+  const dPairs: PlayerId[][] = [];
+  for (let i = 0; i < 3; i++) {
+    const pair: PlayerId[] = [];
+    for (let k = 0; k < 2; k++) {
+      const p = pick(dPool, i, () => true) ?? dPool.find((x) => !used.has(x.id))!;
+      used.add(p.id);
+      pair.push(p.id);
+    }
+    dPairs.push(pair);
+  }
   if (goalies.length < 2) throw new Error('Need two goalies');
-  const base = { forwards: fLines, defense: dPairs, goalies: [goalies[0].id, goalies[1].id], pp: [], pk: [] } as Lines;
+  const g1 = goalies.find((g) => pins[g.id]?.slot === 'G1') ?? goalies.find((g) => pins[g.id]?.slot !== 'G2') ?? goalies[0];
+  const g2 = goalies.find((g) => g !== g1)!;
+  const base = { forwards: fLines, defense: dPairs, goalies: [g1.id, g2.id], pp: [], pk: [] } as Lines;
   return completeLines(base, roster, tactics, true);
 }
 

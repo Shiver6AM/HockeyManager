@@ -14,8 +14,9 @@ import { RosterMoves } from '../components/RosterMoves';
 import { TeamTrends } from '../components/TeamTrends';
 import { Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip } from '../components/ui';
 import { useSort } from '../sort';
-import { money, svPct } from '../format';
+import { money, svPct, posLabel } from '../format';
 import { useTRPC, type Outputs } from '../trpc';
+import { LinePins } from '../components/LinePins';
 import { useLeague } from './LeagueLayout';
 
 type TeamData = Outputs['data']['team'];
@@ -270,7 +271,7 @@ function Prospects({ t }: { t: TeamData }) {
                   <td className="whitespace-nowrap">
                     <PlayerLink p={p} />
                   </td>
-                  <td className="text-ice-400">{p.pos}</td>
+                  <td className="text-ice-400">{posLabel(p)}</td>
                   <td className="num">{p.age}</td>
                   <td className="num">
                     <Rating value={p.overall} />
@@ -445,6 +446,7 @@ function LinesEditor({ t }: { t: TeamData }) {
           <ErrorBox error={save.error ?? auto.error} />
         </div>
       </Card>
+      {t.isMine && <LinePins t={t} leagueId={L.id} />}
 
       <LinesBoard draft={draft} onChange={setDraft} players={t.players.filter((p) => !p.farm)} catalog={t.systems} formation={t.tactics.pp} leagueId={L.id} chemistryGames={t.chemistryGames} />
     </div>

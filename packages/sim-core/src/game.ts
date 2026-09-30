@@ -15,9 +15,12 @@ import { completeLines } from './lines';
 import { defensiveDrive, goalieQuality, offensiveDrive } from './ratings';
 import { slider } from './sliders';
 import { tierOf } from './traits';
+import { outOfPosition } from './positions';
 import {
   combine,
   DEFAULT_TACTICS,
+  DEFENSE_USAGE,
+  FORWARD_USAGE,
   evenStrengthEffect,
   EXTRA_ATTACKER_SLOTS,
   FOUR_SLOTS,
@@ -215,6 +218,9 @@ function traitBoosts(p: Parameters<typeof tierOf>[0]): TraitBoosts | undefined {
 
 interface Side {
   key: 'home' | 'away';
+  /** Even-strength ice-time shares for forward lines and defense pairs (the team's usage). */
+  fShare: number[];
+  dShare: number[];
   team: Team;
   /** The team's lines with every special unit filled in. */
   lines: Lines;
@@ -317,12 +323,16 @@ export function simulateGame(
   // ---- Build per-game player views (with nightly form) ----
   const prepare = (team: Team, backToBack: boolean) => {
     const L = team.lines;
+    // Out of position on his even-strength line (a winger at center, a defenseman up front) costs him.
+    const offPos = new Map<PlayerId, number>();
+    L.forwards.forEach((line) => line.forEach((id, j) => offPos.set(id, outOfPosition(league.players[id], (['LW', 'C', 'RW'] as const)[j] ?? 'C'))));
+    L.defense.forEach((pair) => pair.forEach((id) => offPos.set(id, outOfPosition(league.players[id], 'D'))));
     const startEnergy = backToBack ? T.fatigue.backToBackStart : 100;
     const drainMult = backToBack ? T.fatigue.backToBackDrain : 1;
     for (const id of [...L.forwards.flat(), ...L.defense.flat()]) {
       const p = league.players[id];
       const s = p.skater!;
-      const form = rng.normal(0, T.formSd.skater * (1.4 - p.hidden.consistency) * K.random);
+      const form = rng.normal(0, T.formSd.skater * (1.4 - p.hidden.consistency) * K.random) - (offPos.get(id) ?? 0);
       const tb = traitBoosts(p);
       const tr = (id: Parameters<typeof tierOf>[1]) => (tb ? tierOf(p, id) : 0);
       gp[id] = {
@@ -379,7 +389,9 @@ export function simulateGame(
     const dressed = [...team.lines.forwards.flat(), ...team.lines.defense.flat()].map((id) => league.players[id]);
     const lines = completeLines(team.lines, dressed, tactics);
     return {
-      key, team, lines, tactics, sys: NEUTRAL, slotOf: new Map(), goalie, backup, goalieIn: true, goaliePulled: false, box: [],
+      key, team, lines, tactics, sys: NEUTRAL,
+      fShare: FORWARD_USAGE[tactics.fUsage ?? 'balanced']?.share ?? T.forwardShare,
+      dShare: DEFENSE_USAGE[tactics.dUsage ?? 'balanced']?.share ?? T.defenseShare, slotOf: new Map(), goalie, backup, goalieIn: true, goaliePulled: false, box: [],
       fIdx: 0, dIdx: 0, fLeft: 45, dLeft: 50, fTime: [0, 0, 0, 0], dTime: [0, 0, 0], esTime: 0, ppClock: 0,
       onIce: [], off: 0, def: 0, support: 0, block: 0, line: newTeamLine(), goalieStartGoals: 0,
       out: new Set(),
@@ -415,7 +427,7 @@ export function simulateGame(
   // ---- Play-by-play (simcasts): its own random stream, so the game plays out exactly the same ----
   const rec = ctx.pbp;
   const locRng = rec ? new Rng(deriveSeed(seed, 'pbp')) : null;
-  const ev = (e: Omit<PlayEvent, 't' | 'period' | 'clock' | 'homeScore' | 'awayScore' | 'homeShots' | 'awayShots'>) => {
+  const ev = (e: Omit<PlayEvent, 't' | 'period' | 'clock' | 'homeScore' | 'awayScore' | 'homeShots' | 'awayShots' | 'box' | 'pulled'>) => {
     if (!rec) return;
     rec.push({
       t: gameT,
@@ -425,6 +437,8 @@ export function simulateGame(
       awayScore: away.line.goals,
       homeShots: home.line.shots,
       awayShots: away.line.shots,
+      ...(home.box.length || away.box.length ? { box: { home: home.box.map((b) => b.left), away: away.box.map((b) => b.left) } } : {}),
+      ...(home.goaliePulled ? { pulled: 'home' as const } : away.goaliePulled ? { pulled: 'away' as const } : {}),
       ...e,
     });
   };
@@ -791,7 +805,8 @@ export function simulateGame(
 
   const goalEvent = (s: Side, scorer: GP, rebound: boolean, spot: { x: number; y: number }) => {
     const g = goals[goals.length - 1];
-    ev({ type: 'goal', side: s.key, player: scorer.id, assists: g.assists, strength: g.strength, rebound, ...spot });
+    const o = other(s);
+    ev({ type: 'goal', side: s.key, player: scorer.id, other: o.goalieIn ? o.goalie : undefined, assists: g.assists, strength: g.strength, rebound, ...spot });
   };
 
   /** Resolve one shot attempt. Returns 'goal' | 'stoppage' | 'rebound' | 'play'. */
@@ -962,12 +977,12 @@ export function simulateGame(
       s.dTime[s.dIdx]++;
     }
     if (s.fLeft <= 0) {
-      s.fIdx = pickEsLine(s.fTime, T.forwardShare, s.fIdx, s.esTime);
+      s.fIdx = pickEsLine(s.fTime, s.fShare, s.fIdx, s.esTime);
       s.fLeft = clamp(rng.normal(threeOnThree ? 38 : 44, 8), 22, 75);
       changed = true;
     }
     if (s.dLeft <= 0) {
-      s.dIdx = pickEsLine(s.dTime, T.defenseShare, s.dIdx, s.esTime);
+      s.dIdx = pickEsLine(s.dTime, s.dShare, s.dIdx, s.esTime);
       s.dLeft = clamp(rng.normal(threeOnThree ? 42 : 50, 9), 25, 85);
       changed = true;
     }
@@ -984,6 +999,7 @@ export function simulateGame(
     // Only the first two penalties run concurrently.
     for (let i = 0; i < Math.min(2, s.box.length); i++) s.box[i].left--;
     s.box = s.box.filter((b) => b.left > 0);
+    if (rec && s.box.length !== before) ev({ type: 'penalty-over', side: s.key });
     return s.box.length !== before;
   };
 

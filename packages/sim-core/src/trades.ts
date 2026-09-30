@@ -22,7 +22,7 @@ import { scoutedPotential } from './draft';
 import { autoLines } from './lines';
 import { age, overall } from './ratings';
 import { deriveSeed, Rng } from './rng';
-import { healthyRoster } from './roster';
+import { healthyRoster, teamLines } from './roster';
 import type { League, NeedTag, Player, PlayerId, Team, TeamId, TradeAsset, TradeProposal } from './types';
 import { assetFits, BLOCK_DISCOUNT, NEED_BONUS, tradeBlock } from './block';
 import { slider } from './sliders';
@@ -171,7 +171,34 @@ export function playerValue(league: League, forTeam: Team, p: Player): number {
 }
 
 export function assetValue(league: League, forTeam: Team, a: TradeAsset): number {
-  return a.kind === 'pick' ? pickValue(league, forTeam, a.key) : playerValue(league, forTeam, league.players[a.id]);
+  if (a.kind === 'pick') return pickValue(league, forTeam, a.key);
+  const p = league.players[a.id];
+  if (!a.retain || !p.contract) return playerValue(league, forTeam, p);
+  // Retained salary: the team getting him values the cheaper contract; the team keeping part of it pays for that.
+  const kept = retainedAmount(p, a.retain);
+  const owner = p.teamId ?? p.prospectOf;
+  if (owner === forTeam.id) return playerValue(league, forTeam, p) + (kept / 1e6) * retainedSeasons(league, p) * 6;
+  return playerValue(league, forTeam, { ...p, contract: { ...p.contract, salary: p.contract.salary - kept } });
+}
+
+// ---------------------------------------------------------------------------
+// Retained salary
+// ---------------------------------------------------------------------------
+
+export const RETENTION = { max: 0.5, maxContracts: 3 };
+
+export const retainedAmount = (p: Player, share: number) => Math.round(((p.contract?.salary ?? 0) * Math.min(RETENTION.max, Math.max(0, share))) / 1000) * 1000;
+
+/** Seasons of his contract still to count against the cap (this one included). */
+export function retainedSeasons(league: League, p: Player): number {
+  if (!p.contract) return 0;
+  return Math.max(0, league.season + p.contract.yearsLeft - 1 - capSeason(league) + 1);
+}
+
+/** Retained-salary contracts a team is carrying now. */
+export function retainedCount(league: League, team: Team): number {
+  const now = capSeason(league);
+  return (team.deadCap ?? []).filter((d) => d.retained && d.untilSeason >= now).length;
 }
 
 /** Value of a package received, with diminishing returns for quantity. */
@@ -210,7 +237,12 @@ function owns(league: League, teamId: TeamId, a: TradeAsset): boolean {
   return !!p && (p.teamId === teamId || p.prospectOf === teamId);
 }
 
-const salaryOf = (league: League, a: TradeAsset) => (a.kind === 'player' ? (league.players[a.id]?.contract?.salary ?? 0) : 0);
+/** His cap hit as he moves (less whatever the sending team retains). */
+const salaryOf = (league: League, a: TradeAsset) => {
+  if (a.kind !== 'player') return 0;
+  const p = league.players[a.id];
+  return (p?.contract?.salary ?? 0) - (a.retain && p ? retainedAmount(p, a.retain) : 0);
+};
 const onRoster = (league: League, a: TradeAsset) => a.kind === 'player' && !!league.players[a.id]?.teamId;
 
 /** Returns a reason the trade can't happen, or null if it's legal. */
@@ -223,6 +255,22 @@ export function validateTrade(league: League, fromId: TeamId, toId: TeamId, give
   if (new Set(keys).size !== keys.length) return 'An asset is listed twice.';
   for (const a of give) if (!owns(league, fromId, a)) return `${fromId} doesn't own ${describeAsset(league, a)}.`;
   for (const a of get) if (!owns(league, toId, a)) return `${toId} doesn't own ${describeAsset(league, a)}.`;
+  for (const [teamId, out] of [
+    [fromId, give],
+    [toId, get],
+  ] as const) {
+    const kept = out.filter((a) => a.kind === 'player' && a.retain);
+    for (const a of kept) {
+      if (a.kind !== 'player') continue;
+      const p = league.players[a.id];
+      if (a.retain! > RETENTION.max) return `A team can retain at most ${RETENTION.max * 100}% of a salary.`;
+      if (!p.contract || !p.teamId) return `${p.firstName} ${p.lastName} has no NHL contract to retain part of.`;
+      if (retainedSeasons(league, p) < 1) return `${p.firstName} ${p.lastName}'s contract is expiring: there's nothing to retain.`;
+    }
+    if (kept.length && retainedCount(league, league.teams[teamId]) + kept.length > RETENTION.maxContracts) {
+      return `${league.teams[teamId].city} can carry at most ${RETENTION.maxContracts} retained contracts.`;
+    }
+  }
   const cap = league.settings.salaryCap;
   const maxRoster = CONTRACT_MAX;
   for (const [teamId, out, inn] of [
@@ -243,7 +291,7 @@ export function validateTrade(league: League, fromId: TeamId, toId: TeamId, give
 export function describeAsset(league: League, a: TradeAsset): string {
   if (a.kind === 'pick') return pickLabel(a.key, league);
   const p = league.players[a.id];
-  return p ? `${p.firstName} ${p.lastName} (${p.pos}, ${overall(p)})` : a.id;
+  return p ? `${p.firstName} ${p.lastName} (${p.pos}, ${overall(p)}${a.retain ? `, ${Math.round(a.retain * 100)}% retained` : ''})` : a.id;
 }
 
 function moveAsset(league: League, a: TradeAsset, from: Team, to: Team) {
@@ -254,6 +302,16 @@ function moveAsset(league: League, a: TradeAsset, from: Team, to: Team) {
     return;
   }
   const p = league.players[a.id];
+  if (a.retain && p.contract && p.teamId === from.id) {
+    // The old team keeps part of his salary on its cap for the rest of the contract.
+    const kept = retainedAmount(p, a.retain);
+    const seasons = retainedSeasons(league, p);
+    if (kept > 0 && seasons > 0) {
+      const now = capSeason(league);
+      (from.deadCap ??= []).push({ playerName: `${p.firstName} ${p.lastName} (retained)`, amount: kept, fromSeason: now, untilSeason: now + seasons - 1, retained: true });
+      p.contract.salary -= kept;
+    }
+  }
   if (p.teamId === from.id) {
     from.roster = from.roster.filter((id) => id !== p.id);
     to.roster.push(p.id);
@@ -272,7 +330,7 @@ function refreshLines(league: League, team: Team, removed: Set<PlayerId>) {
   if (team.controller.kind === 'ai' || team.autoLines || affected) {
     if (team.controller.kind === 'human' && affected) team.autoLines = true;
     try {
-      team.lines = autoLines(healthyRoster(league, team), team.tactics);
+      team.lines = teamLines(league, team);
     } catch {
       /* short-handed; game-day call-ups will fix it */
     }

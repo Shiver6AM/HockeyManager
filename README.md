@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 183 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 192 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -133,6 +133,12 @@ season · deadline in 3d*, *Conference finals*, *Draft lottery*, *Pre-draft*, *E
 pick 25 of 224*, *Re-signing window · day 2 of 7*, *Free agency · day 4 of 10*,
 *Pre-season · training camp*.
 
+**Calendar.** A month-by-month calendar of the season: every game day's matchups (click a
+day to see them all), your team's games and results at a glance, and the key dates
+(opening night, a week to the deadline, the trade deadline, the last day of the season, the
+playoffs, each round as it starts), followed by the offseason stages in order. Advancers can
+**sim to any date**: it stops the morning of that day, before its games.
+
 **Simcast.** Any manager can watch one of the next game day's games live (📺 *Simcast* in
 the top bar): a rink with every shot where it was taken (goals, saves, misses and blocks
 in each team's color), the home team's logo at center ice, a scoreboard and a running
@@ -140,7 +146,11 @@ play-by-play. Whoever started it (or a commissioner) can change the speed (1× t
 pause, skip a period or intermission, or skip to the final. Everyone else in the league
 gets a **Join simcast** button next to *Ready* and *Sim*. While a simcast is on, the league
 can't sim; the game is played out when the simcast starts and the day's sim uses that
-exact result.
+exact result. The rink and the play-by-play follow the period being played (pick another
+period or *All*), a bar shows any **power play with its time left** (or 4 on 4) and an
+**empty net** when a goalie is pulled, and a **box score** fills in as the game goes (goals,
+assists, shots, hits, blocks, PIM and goalie saves), with ice time and plus-minus at the
+final.
 
 Every advance, whatever triggered it, goes through the same code path: take a lock,
 simulate, save the state and box scores, clear ready flags, and write to the audit log
@@ -212,6 +222,22 @@ middle. Advancers can
   coming back.
 
 ![Lines editor](docs/screenshots/lines.png)
+
+### Positions, placements and ice time
+
+- **More than one position:** many centers can also play the wing, about half of all
+  wingers can switch sides, some wingers take faceoffs, and the odd defenseman can move up
+  (or forward drop back). Tables show every position he plays ("C/RW"). Playing someone
+  where he doesn't play costs him a little (a winger at center, the wrong wing) or a lot
+  (a defenseman up front), and the lines editor warns you.
+- **Player placement:** keep the assistant coach running your lines and tell him where
+  you want people: a line (1st to 4th, top pair to 3rd pair), a group (top six, top nine,
+  bottom six, top four), a position for a forward (C, LW or RW), a starting goalie, or a
+  healthy scratch. He builds the rest around it before every game, injuries included.
+- **Ice time** (*Systems*): how even-strength minutes are spread: *Standard*, *Ride the
+  top line*, *Top six*, *Top nine* or *Roll four lines* for forwards; *Standard*, *Lean on
+  the top pair*, *Top four* or *Roll three pairs* for defense. Heavier use puts your best
+  players out more but they tire late in games (fatigue is simulated shift by shift).
 
 ### Coaching systems
 
@@ -414,6 +440,11 @@ anyone who hasn't acted gets sensible defaults.
 
 ## Trades
 
+- **Salary retention:** the team sending a player can keep up to 50% of his salary on its
+  own cap for the rest of his contract (at most three retained contracts per team). Pick
+  the share next to him in the trade preview; the cap changes and what each side will carry
+  are shown before you send it, and AI teams value the cheaper contract (or charge for
+  keeping part of one).
 - **Trade partners** are listed in standings order with each team's record, points and
   owner's goal (Contend / Playoffs / Youth / Profit), and a **Standings & team goals**
   sidebar shows the same with each AI front office's posture (buying, balanced, selling);
@@ -566,7 +597,6 @@ playoff OT rate. Some targets are approximate.
 - A full-season "sim to end" takes a few seconds and blocks the API while it runs.
   It should move to a worker thread before the game is hosted.
 - Live updates use 5-second polling. Supabase Realtime can replace it later.
-- No retained salary in trades.
 - Simcasts and the draft clock run in the server's memory: a restart ends a simcast (its
   game result is kept) and the draft clock resumes the next time anyone opens the league.
 - The league document grows about 0.5 MB per season of history (careers including junior/AHL seasons, retirees).
@@ -575,5 +605,5 @@ playoff OT rate. Some targets are approximate.
 
 - **Phase 7, hosting:** Supabase for the database, sims moved to a worker thread,
   Supabase Realtime instead of polling, email or push for notifications, and deployment.
-- **Depth:** retained salary in trades, arena and ticket-price decisions,
+- **Depth:** arena and ticket-price decisions,
   owners who fire GMs, and a minor-league affiliate with its own games.

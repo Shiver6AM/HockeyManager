@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { TraitChips } from '../components/Traits';
 import { Badge, Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip } from '../components/ui';
-import { dayLabel, money } from '../format';
+import { dayLabel, money, posLabel } from '../format';
 import { useTRPC } from '../trpc';
 import { useLeague } from './LeagueLayout';
 
@@ -91,7 +91,7 @@ export function WaiversPage() {
                           {p.from.abbr}
                         </span>
                       </td>
-                      <td className="text-ice-400">{p.pos}</td>
+                      <td className="text-ice-400">{posLabel(p)}</td>
                       <td className="num">{p.age}</td>
                       <td className="num">
                         <Rating value={p.overall} />

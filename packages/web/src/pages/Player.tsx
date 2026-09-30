@@ -78,6 +78,7 @@ export function PlayerPage() {
             <h1 className="font-display text-3xl font-semibold tracking-wide text-white uppercase">{name}</h1>
             <p className="text-sm text-ice-300">
               {pos}
+              {p && p.altPos.length > 0 && <span title="Other positions he can play"> (also {p.altPos.join(', ')})</span>}
               {p && ` · Age ${p.age} · ${ht(p.height)}, ${p.weight} lb · Shoots ${p.shoots} · ${p.nationality} · ${p.archetype}`}
               {d.retired && ` · Retired after ${d.retired.retiredAfter}-${String(d.retired.retiredAfter + 1).slice(2)} · Peak ${d.retired.peakOverall} OVR`}
             </p>

@@ -1,3 +1,4 @@
+import { posLabel } from '../format';
 /**
  * Drag-and-drop lines editor.
  *
@@ -221,7 +222,7 @@ function Card({
         )}
       </span>
       <span className={cx('flex flex-wrap items-center gap-x-1.5 text-[11px]', !color && 'text-ice-400')}>
-        <span className={cx(warn && !color && 'text-warn')}>{p.pos}</span>
+        <span className={cx(warn && !color && 'text-warn')}>{posLabel(p)}</span>
         <span className={cx('tabular font-semibold', !color && 'text-ice-100')}>{p.overall}</span>
         <span className="tabular" title="Age">
           {p.age}y
@@ -321,10 +322,15 @@ function Section({ title, children, note, action }: { title: string; children: R
 }
 
 /** Position fit for a lineup slot (a hint, not a rule). */
-function fitWarning(k: Kind, p: P | undefined): string | undefined {
+function fitWarning(k: Kind, p: P | undefined, j = 0): string | undefined {
   if (!p) return undefined;
-  if (k === 'd' && p.pos !== 'D') return 'forward playing defense';
-  if (k === 'f' && p.pos === 'D') return 'defenseman playing forward';
+  const plays = (x: string) => p.pos === x || (p.altPos ?? []).includes(x as never);
+  if (k === 'd' && !plays('D')) return 'forward playing defense (costs him a lot)';
+  if (k === 'f') {
+    const want = (['LW', 'C', 'RW'] as const)[j] ?? 'C';
+    if (p.pos === 'D' && !plays(want)) return 'defenseman playing forward (costs him a lot)';
+    if (!plays(want)) return `out of position at ${want} (costs him a little)`;
+  }
   return undefined;
 }
 
@@ -447,7 +453,7 @@ export function LinesBoard({
         p={p}
         tag={opts.tag ?? slot?.label}
         compact={opts.compact}
-        warn={fitWarning(r.k, p)}
+        warn={fitWarning(r.k, p, r.j)}
         invalid={invalid}
         droppable={!!source && canDrop(draft, source, r)}
         selected={!!picked && picked.type === 'slot' && refKey(picked.ref) === refKey(r)}

@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import { InterestPill, OfferForm, Priorities } from '../components/OfferForm';
 import { OfferSheetTargets } from '../components/RfaPanels';
 import { Badge, Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip } from '../components/ui';
-import { ht, money, svPct } from '../format';
+import { ht, money, svPct, posLabel } from '../format';
 import { useSort } from '../sort';
 import { useTRPC, type Outputs } from '../trpc';
 import { useLeague } from './LeagueLayout';
@@ -358,7 +358,7 @@ function FreeAgentTable({ d, open, setOpen }: { d: FAData; open: string | null; 
                         <OfferStatus p={p} />
                       </td>
                     )}
-                    <td className="text-ice-400">{p.pos}</td>
+                    <td className="text-ice-400">{posLabel(p)}</td>
                     <td className="num">{p.age}</td>
                     <td className="num whitespace-nowrap">{ht(p.height)}</td>
                     <td className="num">{p.weight}</td>

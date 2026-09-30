@@ -12,6 +12,8 @@ export function publicPlayer(league: League, p: Player) {
     lastName: p.lastName,
     name: `${p.firstName} ${p.lastName}`,
     pos: p.pos,
+    /** Other positions he can play. */
+    altPos: p.altPos ?? [],
     shoots: p.shoots,
     // During the summer, show the age the player will be next season.
     age: age(p, league.season + (league.phase === 'offseason' ? 1 : 0)),
