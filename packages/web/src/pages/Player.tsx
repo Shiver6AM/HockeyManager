@@ -128,6 +128,22 @@ export function PlayerPage() {
             {p.contract.yearsLeft > 1 ? 's' : ''} · {p.contract.kind === 'ELC' ? 'entry-level' : 'standard'} · becomes {p.contract.expiresAs}
           </p>
         )}
+        {d.myOffer && (
+          <p className="mt-2 inline-flex flex-wrap items-center gap-2 rounded-md border border-warn/40 bg-warn/10 px-2.5 py-1 text-sm text-warn">
+            <span className="font-semibold">
+              {d.myOffer.kind === 'free-agent' ? 'Your offer' : d.myOffer.kind === 'offer-sheet' ? 'Your offer sheet' : 'Your offer sent'}:
+            </span>
+            <span className="text-white">
+              {money(d.myOffer.offer.salary)} × {d.myOffer.offer.years} yr{d.myOffer.offer.years === 1 ? '' : 's'}
+            </span>
+            <span className="text-ice-300">· {d.myOffer.status}</span>
+          </p>
+        )}
+        {!d.myOffer && d.myAnswer && d.myAnswer.result !== 'accept' && d.myAnswer.result !== 'considering' && (
+          <p className="mt-2 rounded-md border border-rink-600 bg-rink-850 px-2.5 py-1 text-sm text-ice-200">
+            <span className="font-semibold">{d.myAnswer.result === 'counter' ? 'He countered' : 'Offer turned down'}:</span> {d.myAnswer.message}
+          </p>
+        )}
       </div>
 
       <div className="grid gap-5 lg:grid-cols-3">

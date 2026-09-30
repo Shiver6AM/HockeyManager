@@ -76,6 +76,7 @@ import { badRequest, memberProcedure, router } from '../trpc';
 import { playerName, publicPlayer, teamInfo } from '../views';
 import { grade } from './offseason';
 import { franchiseRecords, franchiseTopScorers, minorLeaders } from '../records';
+import { latestAnswer, offeredBySeason, openOffers } from '../offers';
 
 const overallOf = (L: League, id: string) => overall(L.players[id]);
 
@@ -479,6 +480,8 @@ export const dataRouter = router({
     const first = capSeason(L);
     const beforeRollover = L.phase === 'offseason' && (!L.offseason || ['fantasy-draft', 'draft', 're-sign'].includes(L.offseason.stage));
     const seasons = Array.from({ length: 7 }, (_, i) => first + i);
+    const offers = isMine ? openOffers(L, t.id) : [];
+    const offerFor = new Map(offers.filter((o) => o.kind === 're-sign').map((o) => [o.playerId, o]));
     const players = t.roster
       .map((id) => L.players[id])
       .filter(Boolean)
@@ -486,10 +489,13 @@ export const dataRouter = router({
         const c = p.contract;
         const remaining = c ? Math.max(0, c.yearsLeft - (beforeRollover ? 1 : 0)) : 0;
         const ext = p.extension ?? null;
+        const pend = offerFor.get(p.id);
         const grid = seasons.map((season) => {
           const i = season - first;
           if (i < remaining) return { season, salary: c!.salary, kind: 'contract' as const };
           if (ext && i < remaining + ext.years) return { season, salary: ext.salary, kind: 'extension' as const };
+          // An offer he hasn't answered yet: shown where it would land (not counted as committed).
+          if (!ext && pend && i >= pend.startIndex && i < pend.startIndex + pend.offer.years) return { season, salary: pend.offer.salary, kind: 'offer' as const };
           if (i === remaining + (ext?.years ?? 0)) {
             const status = ext ? expiresAsFor(age(p, first + remaining + ext.years), 99) : (c?.expiresAs ?? 'UFA');
             return { season, salary: null, kind: status === 'RFA' ? ('rfa' as const) : ('ufa' as const) };
@@ -514,21 +520,36 @@ export const dataRouter = router({
           deal: isMine && canExtend(L, p) ? terms : null,
           attemptsLeft: L.negotiations?.[p.id]?.teamId === t.id && L.negotiations[p.id].season === L.season ? Math.max(0, 3 - L.negotiations[p.id].attempts) : 3,
           buyout: isMine ? buyoutTerms(L, p) : null,
+          /** Your offer waiting for his answer, and his latest answer this summer. */
+          myOffer: pend ? { offer: pend.offer, status: pend.status } : null,
+          answer: isMine && !ext ? latestAnswer(L, t.id, p.id) : null,
         };
       })
       .sort((a, b) => Number(a.farm) - Number(b.farm) || b.capHit - a.capHit);
+    const offeredPer = offeredBySeason(offers, seasons.length);
     const cap = seasons.map((season, i) => {
       const projectedCap = Math.round((L.settings.salaryCap * Math.pow(1.025, i + (L.phase === 'offseason' ? 0 : 0))) / 100_000) * 100_000;
       const committed = players.reduce((sum, p) => {
         const g = p.grid[i];
-        if (!g.salary) return sum;
+        if (!g.salary || g.kind === 'offer') return sum;
         return sum + (p.farm ? Math.max(0, g.salary - BURY_EXEMPT) : g.salary);
       }, 0);
       const dead = deadCapFor(L, t, season);
-      const signed = players.filter((p) => p.grid[i].salary).length;
-      return { season, cap: projectedCap, committed: committed + dead, dead, space: projectedCap - committed - dead, signed };
+      const signed = players.filter((p) => p.grid[i].salary && p.grid[i].kind !== 'offer').length;
+      return {
+        season,
+        cap: projectedCap,
+        committed: committed + dead,
+        dead,
+        space: projectedCap - committed - dead,
+        signed,
+        /** AAV of your open offers that would count this season if accepted. */
+        offered: offeredPer[i],
+        /** Space left if every open offer were accepted. */
+        spaceIfAccepted: projectedCap - committed - dead - offeredPer[i],
+      };
     });
-    return { team: teamInfo(t), isMine, seasons, players, cap, contractMax: CONTRACT_MAX, affiliate: affiliateLabel(L, t) };
+    return { team: teamInfo(t), isMine, seasons, players, cap, offers, contractMax: CONTRACT_MAX, affiliate: affiliateLabel(L, t) };
   }),
 
   player: memberProcedure.input(z.object({ playerId: z.string() })).query(async ({ ctx, input }) => {
@@ -574,6 +595,9 @@ export const dataRouter = router({
       /** Skills coaching: points gained this season by skill, and who's working with him now. */
       training: p ? trainingView(L, p) : null,
       awards,
+      /** Your open offer to him (re-signing, free agent or offer sheet), and his latest answer to a re-signing offer. */
+      myOffer: p && ctx.membership.teamId ? (openOffers(L, ctx.membership.teamId).find((o) => o.playerId === p.id) ?? null) : null,
+      myAnswer: p && ctx.membership.teamId && !p.extension ? latestAnswer(L, ctx.membership.teamId, p.id) : null,
     };
   }),
 
