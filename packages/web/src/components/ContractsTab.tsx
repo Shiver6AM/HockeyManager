@@ -53,6 +53,16 @@ export function ContractsTab({ leagueId, teamId }: { leagueId: string; teamId: s
                 <th className="num">Dead cap</th>
                 <th className="num">Space</th>
                 <th className="num">Signed</th>
+                {d.isMine && (
+                  <th className="num" title="AAV of your open offers (re-signing, free agents, offer sheets) that would count that season if accepted">
+                    Offered
+                  </th>
+                )}
+                {d.isMine && (
+                  <th className="num" title="Cap space left if every open offer were accepted">
+                    If accepted
+                  </th>
+                )}
                 <th className="w-1/3" />
               </tr>
             </thead>
@@ -68,9 +78,24 @@ export function ContractsTab({ leagueId, teamId }: { leagueId: string; teamId: s
                   <td className={cx('num', c.dead ? 'text-red-300' : 'text-ice-600')}>{c.dead ? money(c.dead) : '—'}</td>
                   <td className={cx('num font-semibold', c.space < 0 ? 'text-red-300' : 'text-win')}>{money(c.space)}</td>
                   <td className="num">{c.signed}</td>
+                  {d.isMine && <td className={cx('num', c.offered ? 'font-semibold text-warn' : 'text-ice-600')}>{c.offered ? money(c.offered) : '—'}</td>}
+                  {d.isMine && (
+                    <td className={cx('num', !c.offered ? 'text-ice-600' : c.spaceIfAccepted < 0 ? 'font-semibold text-red-300' : 'text-ice-100')}>
+                      {c.offered ? money(c.spaceIfAccepted) : '—'}
+                    </td>
+                  )}
                   <td>
-                    <div className="h-2 rounded-full bg-rink-700" title={`${Math.round((c.committed / c.cap) * 100)}% of the cap committed`}>
-                      <div className={cx('h-2 rounded-full', c.committed > c.cap ? 'bg-goal' : 'bg-blueline')} style={{ width: `${Math.min(100, (c.committed / c.cap) * 100)}%` }} />
+                    <div
+                      className="flex h-2 overflow-hidden rounded-full bg-rink-700"
+                      title={`${Math.round((c.committed / c.cap) * 100)}% of the cap committed${c.offered ? `, ${Math.round((c.offered / c.cap) * 100)}% more offered` : ''}`}
+                    >
+                      <div className={cx('h-2', c.committed > c.cap ? 'bg-goal' : 'bg-blueline')} style={{ width: `${Math.min(100, (c.committed / c.cap) * 100)}%` }} />
+                      {c.offered > 0 && (
+                        <div
+                          className={cx('h-2', c.spaceIfAccepted < 0 ? 'bg-goal/60' : 'bg-warn/70')}
+                          style={{ width: `${Math.max(0, Math.min(100 - (c.committed / c.cap) * 100, (c.offered / c.cap) * 100))}%` }}
+                        />
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -79,6 +104,34 @@ export function ContractsTab({ leagueId, teamId }: { leagueId: string; teamId: s
           </table>
         </div>
       </Card>
+
+      {d.isMine && d.offers.length > 0 && (
+        <Card title={`Open offers (${d.offers.length})`}>
+          <ul className="divide-y divide-rink-700/60 text-sm">
+            {d.offers.map((o) => (
+              <li key={`${o.kind}-${o.playerId}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5">
+                <Link to={`/league/${leagueId}/player/${o.playerId}`} className="min-w-0 flex-1 truncate font-semibold text-ice-50 hover:underline">
+                  {o.name} <span className="text-xs font-normal text-ice-500">{o.pos}</span>
+                </Link>
+                <Badge tone={o.kind === 're-sign' ? 'info' : o.kind === 'free-agent' ? 'good' : 'warn'}>
+                  {o.kind === 're-sign' ? 'Re-sign' : o.kind === 'free-agent' ? 'Free agent' : 'Offer sheet'}
+                </Badge>
+                <span className="tabular text-white">
+                  {money(o.offer.salary)} × {o.offer.years}y
+                </span>
+                <span className="tabular text-xs text-ice-400">
+                  {seasonLabel(d.seasons[o.startIndex])}
+                  {o.offer.years > 1 ? ` to ${seasonLabel(d.seasons[0] + o.startIndex + o.offer.years - 1)}` : ''}
+                </span>
+                <span className="w-32 text-right text-xs text-warn">{o.status}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-ice-400">
+            Offers aren't on your cap until they're accepted; the cap outlook above shows what they'd add each season.
+          </p>
+        </Card>
+      )}
 
       <Card
         title={`Contracts (${d.players.length}/${d.contractMax})`}
@@ -99,7 +152,7 @@ export function ContractsTab({ leagueId, teamId }: { leagueId: string; teamId: s
       >
         <p className="-mt-1 mb-3 text-xs text-ice-400">
           Each season column shows his cap hit that year: <span className="text-blue-200">current deal</span>,{' '}
-          <span className="text-win">agreed extension</span>, then <Badge tone="bad">UFA</Badge> or <Badge tone="warn">RFA</Badge> when it runs out. Interest
+          <span className="text-win">agreed extension</span>, <span className="text-warn">your offer awaiting an answer</span>, then <Badge tone="bad">UFA</Badge> or <Badge tone="warn">RFA</Badge> when it runs out. Interest
           is how keen he is to stay, from your team's standing, his role, loyalty and ambition, the market and his age. Players in their final year can be
           extended; releasing a player with years left is a buyout.
         </p>
@@ -153,6 +206,19 @@ function ContractRow({ r, d, leagueId }: { r: Row; d: Data; leagueId: string }) 
           {r.farm && <span className="mr-1 rounded bg-rink-700 px-1 text-ice-300">AHL</span>}
           {r.contract?.kind === 'ELC' && <span className="rounded bg-blueline/20 px-1 text-blue-200">ELC</span>}
         </span>
+        {r.myOffer ? (
+          <span className="ml-1.5 rounded bg-warn/15 px-1.5 py-0.5 text-[10px] font-semibold text-warn" title={`Your offer: ${money(r.myOffer.offer.salary)} × ${r.myOffer.offer.years}y`}>
+            Offer sent · {r.myOffer.status}
+          </span>
+        ) : r.answer?.result === 'counter' && r.answer.counter ? (
+          <span className="ml-1.5 rounded bg-blueline/15 px-1.5 py-0.5 text-[10px] font-semibold text-blue-200" title={r.answer.message}>
+            Countered {short(r.answer.counter.salary)} × {r.answer.counter.years}y
+          </span>
+        ) : r.answer && (r.answer.result === 'reject' || r.answer.result === 'refuse') ? (
+          <span className="ml-1.5 rounded bg-goal/15 px-1.5 py-0.5 text-[10px] font-semibold text-red-300" title={r.answer.message}>
+            Offer turned down
+          </span>
+        ) : null}
       </td>
       <td className="text-ice-300">{r.pos}</td>
       <td className="num">{r.age}</td>
@@ -170,6 +236,10 @@ function ContractRow({ r, d, leagueId }: { r: Row; d: Data; leagueId: string }) 
             <span className="rounded bg-blueline/15 px-1 py-0.5 text-blue-100">{short(g.salary!)}</span>
           ) : g.kind === 'extension' ? (
             <span className="rounded bg-win/15 px-1 py-0.5 text-win">{short(g.salary!)}</span>
+          ) : g.kind === 'offer' ? (
+            <span className="rounded border border-dashed border-warn/60 px-1 py-0.5 text-warn" title="Your offer, waiting for his answer">
+              {short(g.salary!)}
+            </span>
           ) : g.kind === 'ufa' ? (
             <Badge tone="bad">UFA</Badge>
           ) : g.kind === 'rfa' ? (
@@ -192,7 +262,7 @@ function ContractRow({ r, d, leagueId }: { r: Row; d: Data; leagueId: string }) 
         <td className="whitespace-nowrap">
           {r.canExtend && r.deal && (
             <Button variant="ghost" className="px-1.5 py-0 text-[11px] text-blue-300" onClick={() => setExtending(true)}>
-              Extend
+              {r.myOffer ? 'Change offer' : 'Extend'}
             </Button>
           )}
           <Button
