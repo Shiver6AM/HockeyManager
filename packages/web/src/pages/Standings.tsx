@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { ColumnChart, ScatterChart } from '../components/Charts';
 import { useState } from 'react';
 import { Card, cx, Spinner, TeamLink } from '../components/ui';
 import { signed } from '../format';
@@ -64,6 +65,7 @@ export function StandingsPage() {
           <StandingsTable key={name} name={name} list={list} cutAfter={cutAfter} leagueId={L.id} myTeamId={L.myTeamId} />
         ))}
       </div>
+      {rows.some((r) => r.gp > 0) && <LeagueCharts rows={rows} myTeamId={L.myTeamId} />}
     </div>
   );
 }
@@ -156,5 +158,43 @@ function StandingsTable({ name, list, cutAfter, leagueId, myTeamId }: { name: st
         </table>
       </div>
     </Card>
+  );
+}
+
+/** Every team on one picture: scoring against keeping the puck out, and points percentage. */
+function LeagueCharts({ rows, myTeamId }: { rows: Row[]; myTeamId: string | null }) {
+  const played = rows.filter((r) => r.gp > 0);
+  const byPct = [...played].sort((a, b) => b.pts / (2 * b.gp) - a.pts / (2 * a.gp));
+  const mine = byPct.findIndex((r) => r.team.id === myTeamId);
+  return (
+    <div className="grid gap-4 2xl:grid-cols-2">
+      <Card title="Goals for vs goals against, per game">
+        <p className="-mt-1 mb-2 text-xs text-ice-400">Up and to the right is good: scoring a lot and allowing little. Hover a team for details.</p>
+        <ScatterChart
+          points={played.map((r) => ({
+            x: r.gf / r.gp,
+            y: r.ga / r.gp,
+            label: r.team.abbr,
+            s: r.team.id === myTeamId ? 1 : 0,
+            detail: `${r.w}-${r.l}-${r.otl} · ${r.pts} pts`,
+          }))}
+          series={myTeamId ? ['Other teams', 'Your team'] : ['Teams']}
+          xLabel="Goals for per game"
+          yLabel="Goals against per game"
+          invertY
+          height={360}
+        />
+      </Card>
+      <Card title="Points percentage">
+        <ColumnChart
+          data={byPct.map((r) => ({ label: r.team.abbr, value: Math.round((r.pts / (2 * r.gp)) * 1000) / 1000, sub: `${r.pts} pts in ${r.gp} GP` }))}
+          fmt={(v) => v.toFixed(3).replace(/^0/, '')}
+          valueName="Points %"
+          highlight={mine >= 0 ? mine : undefined}
+          highlightName="Your team"
+          height={360}
+        />
+      </Card>
+    </div>
   );
 }

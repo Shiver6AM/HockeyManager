@@ -13,7 +13,7 @@ import { overall } from './ratings';
 import { skillsCoachPayroll } from './skills';
 import { staffPayroll } from './staff';
 import type { League, OwnerGoal, StandingsRow, Team, TeamFinances } from './types';
-import { payroll } from './contracts';
+import { cashPayroll } from './contracts';
 
 export const ARENA_CAPACITY = 18_000;
 export const FINANCE = {
@@ -97,7 +97,7 @@ export function bookGame(league: League, home: Team, away: Team, homePts: number
       f.pts += pts;
       f.media += FINANCE.mediaPerSeason / n;
       f.sponsorship += (FINANCE.sponsorshipBase * (t.market ?? 1)) / n;
-      f.salaries += payroll(league, t) / n;
+      f.salaries += cashPayroll(league, t) / n;
       f.staff += (staffPayroll(t) + skillsCoachPayroll(t) + scoutPayroll(t)) / n;
       f.operations += FINANCE.operationsPerSeason / n;
     }

@@ -32,6 +32,7 @@ export function ContractsTab({ leagueId, teamId }: { leagueId: string; teamId: s
     pot: (r) => ['F', 'D', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A-', 'A', 'A+'].indexOf(r.potential.grade),
     hit: (r) => r.capHit,
     left: (r) => r.remaining,
+    type: (r) => (r.twoWay ? 1 : 0),
     interest: (r) => r.interest?.score ?? null,
   };
   (q.data?.seasons ?? []).forEach((y, i) => (cols[`s${y}`] = (r) => r.grid[i].salary ?? (r.grid[i].kind ? -1 : null)));
@@ -167,6 +168,7 @@ export function ContractsTab({ leagueId, teamId }: { leagueId: string; teamId: s
                 <Th k="pot">Pot</Th>
                 <Th k="hit" className="num" title="Cap hit now (farm: only the part above $1.15M)">Cap hit</Th>
                 <Th k="left" className="num" title="Seasons left on his current deal">Left</Th>
+                <Th k="type" title="One-way deals pay the full salary anywhere; two-way deals pay an AHL salary while he's on the farm">Type</Th>
                 {d.seasons.map((y) => (
                   <Th key={y} k={`s${y}`} className="num">
                     {seasonLabel(y)}
@@ -230,6 +232,19 @@ function ContractRow({ r, d, leagueId }: { r: Row; d: Data; leagueId: string }) 
       </td>
       <td className="num text-white">{money(r.capHit)}</td>
       <td className="num">{r.remaining}</td>
+      <td className="text-xs whitespace-nowrap">
+        {r.contract ? (
+          r.twoWay ? (
+            <span className="text-ice-400" title={`Two-way: ${money(r.minorSalary ?? 0)} while in the AHL`}>
+              2-way <span className="text-ice-500">({short(r.minorSalary ?? 0)} AHL)</span>
+            </span>
+          ) : (
+            <span className="text-ice-200">1-way</span>
+          )
+        ) : (
+          '—'
+        )}
+      </td>
       {r.grid.map((g) => (
         <td key={g.season} className="num text-xs">
           {g.kind === 'contract' ? (

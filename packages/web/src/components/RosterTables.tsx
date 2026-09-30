@@ -2,6 +2,7 @@
  * The team's roster: NHL skaters and goalies, then the farm team. Every column
  * sorts; stats can be this season, a past season or career totals.
  */
+import { TraitChips } from './Traits';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -30,6 +31,7 @@ function PlayerCell({ p }: { p: P }) {
         {p.name}
       </Link>
       <span className="text-xs text-ice-500">{p.archetype}</span>
+      <TraitChips traits={p.traits} />
     </td>
   );
 }

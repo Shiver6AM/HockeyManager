@@ -95,7 +95,8 @@ describe('phase 12: background sims, contracts, farm, scouting', () => {
     expect(t.activeMax).toBe(23);
     expect(t.players.some((p) => p.farm)).toBe(true);
     expect(t.affiliate).toBeTruthy();
-    const up = t.players.filter((p) => !p.farm && !p.injury && p.pos !== 'G').sort((a, b) => a.overall - b.overall)[0];
+    // (A waiver-exempt player: veterans go on waivers first.)
+    const up = t.players.filter((p) => !p.farm && !p.injury && p.pos !== 'G' && p.waiverExempt !== null).sort((a, b) => a.overall - b.overall)[0];
     await bob.offseason.sendDown({ leagueId, playerId: up.id });
     t = await bob.data.team({ leagueId, teamId: 'HAL' });
     expect(t.players.find((p) => p.id === up.id)!.farm).toBe(true);
@@ -111,7 +112,9 @@ describe('phase 12: background sims, contracts, farm, scouting', () => {
     await bob.offseason.callUp({ leagueId, playerId: up.id, sendDownId: down.id });
     t = await bob.data.team({ leagueId, teamId: 'HAL' });
     expect(t.players.find((p) => p.id === up.id)!.farm).toBe(false);
-    expect(t.players.find((p) => p.id === down.id)!.farm).toBe(true);
+    // Down to the farm, or onto waivers first if he's a veteran.
+    const d = t.players.find((p) => p.id === down.id)!;
+    expect(d.farm || d.onWaivers).toBe(true);
     expect(t.active).toBeLessThanOrEqual(23);
     // Prospects show where they play.
     for (const p of t.prospects) {

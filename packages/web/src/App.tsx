@@ -1,3 +1,4 @@
+import { WaiversPage } from './pages/Waivers';
 import { useQuery } from '@tanstack/react-query';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Spinner } from './components/ui';
@@ -47,6 +48,7 @@ export function App() {
         <Route path="scouting" element={<ScoutingPage />} />
         <Route path="re-sign" element={<ResignPage />} />
         <Route path="free-agents" element={<FreeAgentsPage />} />
+        <Route path="waivers" element={<WaiversPage />} />
         <Route path="player/:playerId" element={<PlayerPage />} />
         <Route path="trades" element={<TradesPage />} />
         <Route path="news" element={<NewsPage />} />

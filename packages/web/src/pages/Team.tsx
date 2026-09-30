@@ -10,6 +10,8 @@ import { PlayerFilterBar, usePlayerFilters } from '../components/PlayerFilters';
 import { FarmTable, GoalieTable, SkaterTable } from '../components/RosterTables';
 import { ContractsTab } from '../components/ContractsTab';
 import { FranchiseRecords } from '../components/FranchiseRecords';
+import { RosterMoves } from '../components/RosterMoves';
+import { TeamTrends } from '../components/TeamTrends';
 import { Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip } from '../components/ui';
 import { useSort } from '../sort';
 import { money, svPct } from '../format';
@@ -28,7 +30,8 @@ export function TeamPage() {
     ...trpc.data.team.queryOptions({ leagueId: L.id, teamId, statsSeason: statsSeason === L.season ? undefined : statsSeason }),
     placeholderData: (prev) => prev,
   });
-  const [tab, setTab] = useState<'roster' | 'contracts' | 'lines' | 'systems' | 'coaching' | 'prospects' | 'schedule' | 'records' | 'front office'>('roster');
+  const [moves, setMoves] = useState(false);
+  const [tab, setTab] = useState<'roster' | 'contracts' | 'lines' | 'systems' | 'coaching' | 'prospects' | 'trends' | 'schedule' | 'records' | 'front office'>('roster');
   if (q.error) return <ErrorBox error={q.error} />;
   if (!q.data) return <Spinner />;
   const t = q.data;
@@ -68,6 +71,11 @@ export function TeamPage() {
             <div className={cx('h-2 rounded-full', capPct > 97 ? 'bg-goal' : 'bg-blueline')} style={{ width: `${capPct}%` }} />
           </div>
           <p className="mt-1 text-xs text-ice-400">Cap space {money(t.salaryCap - t.payroll)}</p>
+          {t.isMine && (
+            <Button variant="secondary" className="mt-2 w-full px-2 py-1 text-xs" onClick={() => setMoves(true)}>
+              Roster moves ({t.active}/{t.activeMax} healthy)…
+            </Button>
+          )}
           {t.deadCapThisSeason > 0 && (
             <p className="mt-1 text-xs text-red-300" title={t.deadCap.map((d) => `${d.playerName}: ${money(d.amount)} through ${d.untilSeason}`).join(', ')}>
               Includes {money(t.deadCapThisSeason)} dead cap ({t.deadCap.length} buyout{t.deadCap.length === 1 ? '' : 's'})
@@ -77,7 +85,7 @@ export function TeamPage() {
       </div>
 
       <div className="flex gap-1 overflow-x-auto rounded-lg bg-rink-900 p-1 text-sm sm:w-fit">
-        {(['roster', 'contracts', 'lines', 'systems', 'coaching', 'prospects', 'schedule', 'records', 'front office'] as const).map((k) => (
+        {(['roster', 'contracts', 'lines', 'systems', 'coaching', 'prospects', 'trends', 'schedule', 'records', 'front office'] as const).map((k) => (
           <button
             key={k}
             onClick={() => setTab(k)}
@@ -88,11 +96,13 @@ export function TeamPage() {
         ))}
       </div>
 
+      {moves && <RosterMoves t={t} leagueId={L.id} onClose={() => setMoves(false)} />}
       {tab === 'roster' && <Roster t={t} season={statsSeason} setSeason={setStatsSeason} />}
       {tab === 'contracts' && <ContractsTab leagueId={L.id} teamId={t.team.id} />}
       {tab === 'prospects' && <Prospects t={t} />}
       {tab === 'systems' && (t.hasLines ? <TacticsPanel t={t} leagueId={L.id} /> : <Card><Empty>Systems are set once the roster is built.</Empty></Card>)}
       {tab === 'coaching' && <SkillsCoaches leagueId={L.id} teamId={t.team.id} />}
+      {tab === 'trends' && <TeamTrends leagueId={L.id} teamId={t.team.id} abbr={t.team.abbr} />}
       {tab === 'records' && <FranchiseRecords leagueId={L.id} teamId={t.team.id} />}
       {tab === 'front office' && <FrontOffice leagueId={L.id} teamId={t.team.id} />}
       {tab === 'lines' &&

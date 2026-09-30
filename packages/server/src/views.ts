@@ -3,7 +3,7 @@
  * injury-proneness, consistency) never leave the server; scouting will reveal
  * estimates of them in a later phase.
  */
-import { age, bodyOf, coachability, coachabilityLabel, overall, type League, type Player, type Team } from '@hockey-gm/sim-core';
+import { age, bodyOf, coachability, coachabilityLabel, computeTraits, isTwoWay, minorSalaryOf, overall, traitList, type League, type Player, type Team } from '@hockey-gm/sim-core';
 
 export function publicPlayer(league: League, p: Player) {
   return {
@@ -24,10 +24,15 @@ export function publicPlayer(league: League, p: Player) {
     skater: p.skater ?? null,
     goalie: p.goalie ?? null,
     contract: p.contract,
+    /** Two-way deal (an AHL salary while on the farm)? */
+    twoWay: isTwoWay(p.contract),
+    minorSalary: p.contract && isTwoWay(p.contract) ? minorSalaryOf(p.contract) : null,
     injury: p.injury,
     /** How much he gets out of coaching (a visible trait). */
     coachability: coachability(p),
     coachabilityLabel: coachabilityLabel(coachability(p)),
+    /** Rare badges (2K-style), best first. Worked out now for players the sim hasn't reached yet. */
+    traits: traitList(p.traitsSeason === undefined ? { ...p, traits: computeTraits(p) } : p),
   };
 }
 export type PublicPlayer = ReturnType<typeof publicPlayer>;

@@ -7,6 +7,7 @@ import { Badge, Button, cx, ErrorBox } from './ui';
 interface Offer {
   salary: number;
   years: number;
+  twoWay?: boolean;
 }
 
 /** What the server tells a manager about a player before an offer (see server/src/deal.ts). */
@@ -183,6 +184,7 @@ export function OfferForm({
   const start = initial ?? deal.ask;
   const [salary, setSalary] = useState(start.salary);
   const [years, setYears] = useState(start.years);
+  const [twoWay, setTwoWay] = useState<boolean>(initial?.twoWay ?? start.salary < 1_000_000);
   const opts = { onSuccess: () => qc.invalidateQueries() };
   const negotiate = useMutation(trpc.offseason.negotiate.mutationOptions(opts));
   const sign = useMutation(trpc.offseason.negotiateFreeAgent.mutationOptions(opts));
@@ -249,9 +251,35 @@ export function OfferForm({
           </p>
         </div>
 
+        <div>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-ice-400">Contract type</span>
+            <div role="radiogroup" aria-label="Contract type" className="flex rounded-md bg-rink-800 p-0.5">
+              {([false, true] as const).map((tw) => (
+                <button
+                  key={String(tw)}
+                  type="button"
+                  role="radio"
+                  aria-checked={twoWay === tw}
+                  onClick={() => setTwoWay(tw)}
+                  className={cx('rounded px-2 py-0.5 font-semibold', twoWay === tw ? 'bg-rink-600 text-white' : 'text-ice-400')}
+                >
+                  {tw ? 'Two-way' : 'One-way'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="mt-1 text-[11px] text-ice-500">
+            {twoWay
+              ? 'Two-way: he earns a much smaller AHL salary whenever he’s on the farm. Established NHL players don’t like them and will want more (or a one-way deal).'
+              : 'One-way: he earns his full salary even in the AHL. What most NHL regulars expect.'}
+          </p>
+        </div>
+
         <div className="flex flex-wrap items-center gap-2">
-          <Button disabled={busy || overCap || !!blocked || (!sealed && attemptsLeft === 0)} onClick={() => submit({ salary, years })}>
+          <Button disabled={busy || overCap || !!blocked || (!sealed && attemptsLeft === 0)} onClick={() => submit({ salary, years, twoWay })}>
             {mode === 'bid' ? 'Place sealed bid' : mode === 'sheet' ? 'Tender offer sheet' : mode === 'sign' ? 'Offer contract' : 'Make offer'}: {money(salary)} × {years}y
+            {twoWay ? ' (two-way)' : ''}
           </Button>
           {onClose && (
             <Button variant="ghost" onClick={onClose}>
@@ -283,7 +311,7 @@ export function OfferForm({
             {result.message}
             {result.result === 'counter' && (
               <Button className="ml-3 px-2 py-0.5 text-xs" disabled={busy} onClick={() => submit(result.counter)}>
-                Accept {money(result.counter.salary)} × {result.counter.years}y
+                Accept {money(result.counter.salary)} × {result.counter.years}y{result.counter.twoWay === false ? ' one-way' : ''}
               </Button>
             )}
           </div>

@@ -14,6 +14,7 @@
 import { overall } from './ratings';
 import { deriveSeed, Rng } from './rng';
 import type { League, Player, Team } from './types';
+import { assignToFarm, needsWaivers } from './waivers';
 
 export const CONTRACT_MAX = 50;
 export const ACTIVE_MAX = 23;
@@ -25,7 +26,7 @@ const isF = (p: Player) => p.pos === 'C' || p.pos === 'LW' || p.pos === 'RW';
 const group = (p: Player): 'F' | 'D' | 'G' => (p.pos === 'G' ? 'G' : p.pos === 'D' ? 'D' : 'F');
 const MIN_DRESS = { F: 12, D: 6, G: 2 };
 
-export const nhlRoster = (league: League, team: Team): Player[] => team.roster.map((id) => league.players[id]).filter((p) => p && !p.farm);
+export const nhlRoster = (league: League, team: Team): Player[] => team.roster.map((id) => league.players[id]).filter((p) => p && !p.farm && !p.onWaivers);
 export const farmRoster = (league: League, team: Team): Player[] => team.roster.map((id) => league.players[id]).filter((p) => p && p.farm);
 /** Healthy NHL players (injured players are on injured reserve). */
 export const activeRoster = (league: League, team: Team): Player[] => nhlRoster(league, team).filter((p) => !p.injury);
@@ -71,6 +72,8 @@ export function sendDown(league: League, team: Team, p: Player, why = '') {
   if (p.teamId !== team.id) throw new Error('Not your player');
   if (p.farm) throw new Error('He is already with the farm team');
   p.farm = true;
+  p.onWaivers = false;
+  delete p.injuryCallUp;
   tx(league, 'send-down', team, p, `${p.firstName} ${p.lastName} assigned to ${affiliateLabel(league, team)}${why}`);
 }
 
@@ -81,6 +84,7 @@ export function callUp(league: League, team: Team, p: Player, why = '') {
     throw new Error(`You already have ${ACTIVE_MAX} healthy players. Send someone down first.`);
   }
   p.farm = false;
+  p.recalledOn = { season: league.season, day: league.day };
   tx(league, 'call-up', team, p, `${p.firstName} ${p.lastName} called up from ${affiliateLabel(league, team)}${why}`);
 }
 
@@ -101,11 +105,36 @@ export function balanceRoster(league: League, team: Team): Player[] {
     if (active.length <= ACTIVE_MAX) break;
     const counts = { F: active.filter(isF).length, D: active.filter((p) => p.pos === 'D').length, G: active.filter((p) => p.pos === 'G').length };
     const excess = (g: 'F' | 'D' | 'G') => counts[g] - MIN_DRESS[g];
-    const candidates = active.filter((p) => excess(group(p)) > 0).sort((a, b) => overall(a) - overall(b));
+    // The weakest extra goes, though teams would rather send down someone who
+    // doesn't need waivers than risk losing a similar player for nothing.
+    const cost = (p: Player) => overall(p) + (needsWaivers(league, p) ? 1 : 0);
+    const candidates = active.filter((p) => excess(group(p)) > 0).sort((a, b) => cost(a) - cost(b));
     const p = candidates[0];
     if (!p) break;
-    sendDown(league, team, p, team.controller.kind === 'human' ? ' (roster at 23; your assistant GM made room)' : '');
+    assignToFarm(league, team, p, team.controller.kind === 'human' ? ' (roster at 23; your assistant GM made room)' : '');
     sent.push(p);
+  }
+  return sent;
+}
+
+/**
+ * Regulars back from injury: for lineups the AI or the assistant coach runs,
+ * each one sends down the weakest call-up at his position who's worse than he
+ * is (keeping enough bodies to dress a lineup).
+ */
+export function returnInjuryCallUps(league: League, team: Team, back: Player[]): Player[] {
+  if (!back.length || (team.controller.kind === 'human' && !team.autoLines)) return [];
+  const sent: Player[] = [];
+  for (const r of back) {
+    const g = group(r);
+    const active = activeRoster(league, team);
+    if (active.filter((p) => group(p) === g).length <= MIN_DRESS[g]) continue;
+    const cover = active
+      .filter((p) => p.injuryCallUp && p.id !== r.id && group(p) === g && overall(p) < overall(r))
+      .sort((a, b) => overall(a) - overall(b))[0];
+    if (!cover) continue;
+    assignToFarm(league, team, cover, ` (${r.firstName} ${r.lastName} is back from injury)`);
+    sent.push(cover);
   }
   return sent;
 }

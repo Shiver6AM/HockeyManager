@@ -16,7 +16,7 @@ export function SimProgress() {
   if (!j || j.status !== 'running') return null;
   const where = j.phase === 'offseason' ? (j.stage ? STAGE[j.stage] : 'Season review') : dayLabel(j.season, j.day);
   return (
-    <div className="mx-auto max-w-7xl px-4 pb-2">
+    <div className="mx-auto w-full max-w-[2560px] px-4 pb-2 lg:px-6">
     <div className="flex min-w-0 items-center gap-2 rounded-lg border border-blueline/50 bg-blueline/10 px-2.5 py-1 text-xs text-blue-100" role="status" aria-live="polite">
       <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-blue-300 border-t-transparent" />
       <span className="min-w-0 truncate">

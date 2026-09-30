@@ -187,7 +187,18 @@ function termPenalty(tp: TermProfile, years: number, wanted: number): number {
 export function offerUtility(league: League, p: Player, team: Team, offer: ContractOffer, base = askingContract(league, p)): number {
   const ask = askFromTeam(league, p, team, base);
   const tp = termProfile(league, p);
-  return 1 + (offer.salary / ask.salary - 1) * tp.moneyWeight - termPenalty(tp, offer.years, ask.years);
+  return 1 + (offer.salary / ask.salary - 1) * tp.moneyWeight - termPenalty(tp, offer.years, ask.years) - twoWayPenalty(p, offer);
+}
+
+/**
+ * Players prefer one-way deals: an established NHLer takes a two-way offer as
+ * a slight (it says he might spend time in the minors); a depth player barely
+ * minds. A one-way offer to a depth player is the default either way.
+ */
+export function twoWayPenalty(p: Player, offer: ContractOffer): number {
+  if (!offer.twoWay) return 0;
+  const o = overall(p);
+  return o >= 72 ? 0.15 : o >= 66 ? 0.07 : 0.02;
 }
 
 function threshold(neg: NegotiationState | undefined, faRound = 0): number {
@@ -234,12 +245,14 @@ export function respondToOffer(league: League, p: Player, team: Team, offer: Con
     // Counter at his preferred term, unless the offered term costs him little.
     const preferred = askFromTeam(league, p, team, ask).years;
     const years = salaryNeeded(league, p, team, offer.years, thr, ask) <= salaryNeeded(league, p, team, preferred, thr, ask) * 1.03 ? offer.years : preferred;
-    const counter = { salary: salaryNeeded(league, p, team, years, thr, ask), years };
+    // An established player who was offered a two-way deal asks for a one-way one.
+    const oneWay = !!offer.twoWay && twoWayPenalty(p, offer) >= 0.05;
+    const counter: ContractOffer = { salary: salaryNeeded(league, p, team, years, thr, ask), years, ...(offer.twoWay ? { twoWay: !oneWay } : {}) };
     return {
       result: 'counter',
       counter,
       attemptsLeft: left,
-      message: `${p.lastName} counters at ${years} yr × $${(counter.salary / 1e6).toFixed(2)}M.`,
+      message: `${p.lastName} counters at ${years} yr × $${(counter.salary / 1e6).toFixed(2)}M${oneWay ? ', one-way' : ''}.`,
     };
   }
   neg.annoyance += NEGOTIATION.lowballPenalty;

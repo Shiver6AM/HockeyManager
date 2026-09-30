@@ -47,6 +47,37 @@ export function askingContract(league: League, p: Player, season = league.season
   return { salary: round25k(clamp(salary, LEAGUE_MIN_SALARY, MAX_SALARY * (league.settings.salaryCap / BASE_CAP))), years };
 }
 
+// ---- One-way and two-way contracts ----
+
+/** Two-way deals are for depth players and prospects: under $1M and not an established NHLer. */
+export function defaultTwoWay(p: Player, salary: number): boolean {
+  return salary < 1_000_000 && overall(p) < 70;
+}
+
+/** Is this a two-way deal? (Older saves: entry-level deals and anything under $1M.) */
+export function isTwoWay(c: Player['contract']): boolean {
+  if (!c) return false;
+  return c.twoWay ?? (c.kind === 'ELC' || c.salary < 1_000_000);
+}
+
+/** What a two-way deal pays in the AHL. */
+export function minorSalaryOf(c: NonNullable<Player['contract']>): number {
+  if (c.minorSalary) return c.minorSalary;
+  return c.kind === 'ELC' ? 85_000 : clamp(Math.round((c.salary * 0.3) / 5_000) * 5_000, 75_000, 350_000);
+}
+
+/** Salary actually paid this season: a two-way player earns his AHL salary while on the farm. */
+export function salaryPaid(p: Player): number {
+  const c = p.contract;
+  if (!c) return 0;
+  return p.farm && isTwoWay(c) ? minorSalaryOf(c) : c.salary;
+}
+
+/** A team's cash payroll (what it pays out, not its cap hit). */
+export function cashPayroll(league: League, team: Team): number {
+  return team.roster.reduce((s, id) => s + (league.players[id] ? salaryPaid(league.players[id]) : 0), 0) + deadCapFor(league, team);
+}
+
 /** The season the cap is being planned for: next season once the offseason starts. */
 export function capSeason(league: League): number {
   return league.phase === 'offseason' ? league.season + 1 : league.season;

@@ -2,6 +2,7 @@ import { playoffMvp, regularSeasonAwards } from './awards';
 import { applyScoutPlans, initScouts, scoutingDay } from './scouting';
 import { publishCss } from './css';
 import { ensureDraftClass } from './draft';
+import { refreshTraits } from './traits';
 import { recordChemistry } from './chemistry';
 import { initSkillsCoaches, trainingDay } from './skills';
 import { prospectGameDay } from './prospects';
@@ -10,7 +11,8 @@ import { simulateGame } from './game';
 import { currentRound, HOME_PATTERN, nextRound, seedPlayoffs, WINS_NEEDED } from './playoffs';
 import { deriveSeed } from './rng';
 import { aiRosterMoves, prepareTeamForGame } from './roster';
-import { balanceRoster } from './farm';
+import { balanceRoster, returnInjuryCallUps } from './farm';
+import { processWaivers } from './waivers';
 import { bookGame, initFinances, ownerReviews } from './finances';
 import { addNews, gameNews, newsFromTransactions } from './news';
 import { initStaff, refillStaffPool, trainerInjuryMultiplier } from './staff';
@@ -19,6 +21,7 @@ import type {
   GameSummary,
   GoalieSeasonStats,
   League,
+  Player,
   PlayerId,
   ScheduledGame,
   SkaterSeasonStats,
@@ -95,7 +98,9 @@ export const advanceToEnd = advanceToPlayoffs;
 // One calendar day
 // ---------------------------------------------------------------------------
 
-function healInjuries(league: League) {
+/** Heal a day; returns who's back. */
+function healInjuries(league: League): Player[] {
+  const back: Player[] = [];
   for (const p of Object.values(league.players)) {
     if (!p.injury) continue;
     p.injury.daysLeft--;
@@ -107,8 +112,10 @@ function healInjuries(league: League) {
         });
       }
       p.injury = null;
+      back.push(p);
     }
   }
+  return back;
 }
 
 function applyInjuries(league: League, res: GameSummary) {
@@ -184,8 +191,18 @@ export function ensureLeagueLife(league: League, opts: { farm?: boolean } = {}) 
   if (opts.farm !== false && !(league.fantasy && !league.fantasy.done) && teams.some((t) => !t.farmStocked)) initFarm(league);
   if (teams.some((t) => !t.scouts)) initScouts(league);
   ensureDraftClass(league);
+  ensureTraits(league);
   refillStaffPool(league); // no-op unless the job market is thin
   league.newsState ??= { txCursor: league.transactions.length, streaks: {}, nextId: 1 };
+}
+
+/** Work out traits for new players, and for everyone once a season (after the summer's development). */
+export function ensureTraits(league: League) {
+  for (const p of Object.values(league.players)) {
+    if (p.traitsSeason === league.season) continue;
+    refreshTraits(p);
+    p.traitsSeason = league.season;
+  }
 }
 
 function simDay(league: League): ScheduledGame[] {
@@ -197,9 +214,16 @@ function simDay(league: League): ScheduledGame[] {
 
 function simDayInner(league: League): ScheduledGame[] {
   if (league.day > 0) {
-    healInjuries(league);
-    // Players back from injury retake their spots: extras go down to the farm.
-    for (const t of Object.values(league.teams)) balanceRoster(league, t);
+    const back = healInjuries(league);
+    // Yesterday's waiver placements are claimed or clear.
+    processWaivers(league);
+    // Players back from injury retake their spots: for lineups the AI (or the
+    // assistant coach) runs, the call-ups who covered for them go back down,
+    // and any extras go down to the farm.
+    for (const t of Object.values(league.teams)) {
+      returnInjuryCallUps(league, t, back.filter((p) => p.teamId === t.id && !p.farm));
+      balanceRoster(league, t);
+    }
   }
   const yesterday = teamsPlayingOn(league, league.day - 1);
   const played: ScheduledGame[] = [];
@@ -242,6 +266,7 @@ function simDayInner(league: League): ScheduledGame[] {
 // ---------------------------------------------------------------------------
 
 function startPlayoffs(league: League) {
+  processWaivers(league, true);
   const st = standings(league);
   league.awards = regularSeasonAwards(league, st);
   for (const [award, w] of Object.entries(league.awards)) {

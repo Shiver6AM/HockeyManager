@@ -33,3 +33,5 @@ export * from './body';
 export * from './css';
 export * from './start';
 export * from './sliders';
+export * from './traits';
+export * from './waivers';

@@ -63,6 +63,7 @@ export function LeagueLayout() {
     ['stats', 'Stats'],
     ...(L.phase !== 'regular-season' && !L.freshStart ? ([['playoffs', 'Playoffs']] as Array<[string, string]>) : []),
     ['free-agents', 'Free agents'],
+    ...(L.phase !== 'offseason' || L.offseasonStage === 'training-camp' ? ([['waivers', 'Waivers']] as Array<[string, string]>) : []),
     ...(L.myTeamId ? ([['trades', 'Trades']] as Array<[string, string]>) : []),
     ['news', 'News'],
     ['teams', 'Teams'],
@@ -74,7 +75,7 @@ export function LeagueLayout() {
     <LeagueCtx.Provider value={L}>
       <div className="min-h-screen">
         <header className="sticky top-0 z-20 border-b border-rink-700 bg-rink-950/95 backdrop-blur">
-          <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5">
+          <div className="mx-auto flex w-full max-w-[2560px] flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 lg:px-6">
             <Link to="/" className="font-display text-lg font-semibold tracking-wider whitespace-nowrap text-white uppercase hover:text-ice-300">
               Hockey GM
             </Link>
@@ -91,7 +92,7 @@ export function LeagueLayout() {
             </div>
           </div>
           <SimProgress />
-          <nav className="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-3">
+          <nav className="mx-auto flex w-full max-w-[2560px] gap-1 overflow-x-auto px-3 lg:px-5">
             {tabs.map(([to, label]) => (
               <NavLink
                 key={to}
@@ -109,7 +110,7 @@ export function LeagueLayout() {
             ))}
           </nav>
         </header>
-        <main className="mx-auto max-w-7xl min-w-0 px-4 py-6">
+        <main className="mx-auto w-full max-w-[2560px] min-w-0 px-4 py-6 lg:px-6">
           <BackButton leagueId={leagueId} />
           <Outlet />
         </main>
