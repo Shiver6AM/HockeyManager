@@ -295,6 +295,12 @@ anyone who hasn't acted gets sensible defaults.
 - **Following specific prospects:** instead of a region, a scout can follow up to 10
   prospects in one league. He learns about each of them much faster than regional
   coverage would (the fewer he follows, the faster), and they're marked in the class list.
+- **Scout schedules:** plan each scout's season ahead as a list of stops. Each stop is a
+  region, the head scout's call, or a set of specific prospects, and lasts a number of weeks.
+  The stops run back to back, up to the weeks left in the regular season, and the last one
+  carries on through the playoffs until the draft. You can reorder, resize or clear a
+  schedule at any time. In the summer you can plan regions for next season. Picking an
+  assignment directly replaces the schedule.
 - **Sleepers:** every draft class hides a few late bloomers with modest numbers and
   modest reports but a real ceiling. Scouts and Central Scouting miss most of it while
   they're teenagers; they tend to go in the middle rounds, grow quickly from 19 to 23, and

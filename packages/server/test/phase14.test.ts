@@ -88,6 +88,32 @@ describe('phase 14: start points, fantasy draft, sliders', () => {
     expect(me.assignment).toBe('players');
     expect(me.following!.players.map((p) => p.id)).toEqual(picks);
     expect((await comm.life.draftClass({ leagueId }))!.targeted).toEqual(picks);
+    // A schedule: a region for two weeks, then the same prospects, capped at the weeks left.
+    const sched = await comm.life.scouting({ leagueId, teamId: 'HAL' });
+    const w = sched.planWindow!;
+    expect(w.nextSeason).toBe(false);
+    await expect(comm.life.setScoutPlan({ leagueId, scoutId: sc.id, legs: [{ weeks: w.weeks + 1, assignment: 'sweden' }] })).rejects.toThrow(/weeks left/);
+    await comm.life.setScoutPlan({
+      leagueId,
+      scoutId: sc.id,
+      legs: [
+        { weeks: 2, assignment: 'sweden' },
+        { weeks: 3, assignment: 'players', targets: { league: lg, ids: picks } },
+      ],
+    });
+    let view = (await comm.life.scouting({ leagueId, teamId: 'HAL' })).scouts.find((x) => x.id === sc.id)!;
+    expect(view.assignment).toBe('sweden');
+    expect(view.plan!.legs).toHaveLength(2);
+    expect(view.plan!.current).toBe(0);
+    expect(view.plan!.legs[1].from).toBe(view.plan!.legs[0].to + 1);
+    await comm.sim.advance({ leagueId, target: { days: 14 } });
+    view = (await comm.life.scouting({ leagueId, teamId: 'HAL' })).scouts.find((x) => x.id === sc.id)!;
+    expect(view.assignment).toBe('players');
+    expect(view.plan!.current).toBe(1);
+    expect(view.plan!.legs[0].done).toBe(true);
+    // Clearing it leaves him where he is.
+    await comm.life.clearScoutPlan({ leagueId, scoutId: sc.id });
+    expect((await comm.life.scouting({ leagueId, teamId: 'HAL' })).scouts.find((x) => x.id === sc.id)!.plan).toBeNull();
     // Back to a region clears the list.
     await comm.life.assignScout({ leagueId, scoutId: sc.id, region: 'auto' });
     expect((await comm.life.scouting({ leagueId, teamId: 'HAL' })).scouts.find((x) => x.id === sc.id)!.following).toBeNull();

@@ -1,5 +1,5 @@
 import { playoffMvp, regularSeasonAwards } from './awards';
-import { initScouts, scoutingDay } from './scouting';
+import { applyScoutPlans, initScouts, scoutingDay } from './scouting';
 import { publishCss } from './css';
 import { ensureDraftClass } from './draft';
 import { recordChemistry } from './chemistry';
@@ -216,6 +216,7 @@ function simDayInner(league: League): ScheduledGame[] {
     scoutingDay(league);
     if (league.day % 7 === 6) for (const t of Object.values(league.teams)) aiRosterMoves(league, t);
     league.day++;
+    applyScoutPlans(league);
     const deadline = tradeDeadline(league);
     if (league.day === deadline) addNews(league, 'trade', 'It’s trade deadline day: deals must be done before the next game day.');
     else if (league.day === deadline - 7) addNews(league, 'trade', 'One week to the trade deadline. Contenders are shopping.');
@@ -231,6 +232,7 @@ function simDayInner(league: League): ScheduledGame[] {
     trainingDay(league);
     scoutingDay(league);
     league.day++;
+    applyScoutPlans(league);
   }
   return played;
 }
