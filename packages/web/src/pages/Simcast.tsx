@@ -84,7 +84,9 @@ function Broadcast({ v }: { v: View }) {
   const control = useMutation(trpc.simcast.control.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));
   const act = (action: 'speed' | 'pause' | 'resume' | 'skip-period' | 'skip-end' | 'end', speed?: number) => control.mutate({ leagueId: L.id, action, speed });
   const canRun = v.canControl;
-  const [period, setPeriod] = useState<number | 'all'>('all');
+  // Follows the period being played unless the viewer picks another one (or all of them).
+  const [picked, setPeriod] = useState<number | 'all' | null>(null);
+  const period = picked ?? v.period;
   const feedRef = useRef<HTMLOListElement>(null);
   const plays = v.plays;
   const last = plays[plays.length - 1];
@@ -106,7 +108,8 @@ function Broadcast({ v }: { v: View }) {
   useEffect(() => {
     feedRef.current?.scrollTo({ top: 0 });
   }, [plays.length]);
-  const shotsOnRink = plays.filter((p) => p.x != null && (period === 'all' || p.period === period));
+  const inPeriod = (p: Play) => period === 'all' || p.period === period;
+  const shotsOnRink = plays.filter((p) => p.x != null && inPeriod(p));
   const periods = [...new Set(plays.map((p) => p.period))];
   const teamOf = (side: 'home' | 'away' | null) => (side === 'home' ? v.home : side === 'away' ? v.away : null);
   const awayColor = useAwayColor(v.home, v.away);
@@ -123,6 +126,7 @@ function Broadcast({ v }: { v: View }) {
       </div>
 
       <Scoreboard v={v} />
+      <SituationBar v={v} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="min-w-0 space-y-3">
@@ -157,13 +161,14 @@ function Broadcast({ v }: { v: View }) {
               <span className="h-2.5 w-2.5 rounded-full" style={{ background: v.home.colors[0] }} /> {v.home.abbr}
             </span>
             <span className="ml-auto flex gap-1">
-              {(['all', ...periods] as const).map((p) => (
+              {([...periods, 'all'] as const).map((p) => (
                 <button
                   key={p}
-                  onClick={() => setPeriod(p)}
+                  onClick={() => setPeriod(p === v.period ? null : p)}
                   className={cx('rounded px-2 py-0.5', period === p ? 'bg-blueline text-white' : 'bg-rink-800 hover:bg-rink-700')}
+                  title={p === 'all' ? 'Every period' : p === v.period ? 'The period being played (follows the game)' : undefined}
                 >
-                  {p === 'all' ? 'All' : p <= 3 ? `P${p}` : 'OT'}
+                  {p === 'all' ? 'All' : p <= 3 ? `P${p}` : p === 4 ? 'OT' : `${p - 3}OT`}
                 </button>
               ))}
             </span>
@@ -232,7 +237,7 @@ function Broadcast({ v }: { v: View }) {
 
         <Card title="Play by play">
           <ol ref={feedRef} className="max-h-[36rem] space-y-1 overflow-y-auto pr-1 text-sm">
-            {[...plays].reverse().map((p, i) => {
+            {[...plays].filter(inPeriod).reverse().map((p, i) => {
               const team = teamOf(p.side);
               const big = p.type === 'goal' || p.type === 'period-start' || p.type === 'period-end' || p.type === 'final' || p.type === 'shootout';
               return (
@@ -263,7 +268,132 @@ function Broadcast({ v }: { v: View }) {
           </ol>
         </Card>
       </div>
+
+      <BoxScoreCard v={v} />
     </div>
+  );
+}
+
+/** Power plays (with the time left) and empty nets. */
+function SituationBar({ v }: { v: View }) {
+  const pen = v.penalties;
+  if ((!pen && !v.emptyNet) || v.done) return null;
+  const team = (side: 'home' | 'away') => (side === 'home' ? v.home : v.away);
+  const items: React.ReactNode[] = [];
+  if (pen) {
+    const h = Math.min(2, pen.home.length);
+    const a = Math.min(2, pen.away.length);
+    const hMen = 5 - h;
+    const aMen = 5 - a;
+    const clock = (xs: number[]) => mmss(Math.min(...xs.slice(0, 2)));
+    if (h === a) {
+      items.push(
+        <span key="even" className="rounded-md bg-rink-800 px-2.5 py-1 text-sm font-semibold text-ice-100">
+          {hMen} on {aMen} · <span className="tabular">{clock([...pen.home, ...pen.away])}</span>
+        </span>,
+      );
+    } else {
+      const pp: 'home' | 'away' = h > a ? 'away' : 'home';
+      const short = pp === 'home' ? pen.away : pen.home;
+      items.push(
+        <span key="pp" className="inline-flex items-center gap-2 rounded-md bg-warn/15 px-2.5 py-1 text-sm font-semibold text-warn ring-1 ring-warn/40">
+          <TeamChip team={team(pp)} size="sm" /> Power play {team(pp).abbr} · {Math.max(hMen, aMen)} on {Math.min(hMen, aMen)} ·{' '}
+          <span className="tabular font-display text-base">{clock(short)}</span>
+        </span>,
+      );
+    }
+  }
+  if (v.emptyNet) {
+    items.push(
+      <span key="en" className="inline-flex animate-pulse items-center gap-2 rounded-md bg-goal/15 px-2.5 py-1 text-sm font-semibold text-red-200 ring-1 ring-goal/50">
+        <TeamChip team={team(v.emptyNet)} size="sm" /> Empty net: {team(v.emptyNet).abbr} goalie pulled for an extra attacker
+      </span>,
+    );
+  }
+  return <div className="flex flex-wrap items-center justify-center gap-2">{items}</div>;
+}
+
+function BoxScoreCard({ v }: { v: View }) {
+  const [tab, setTab] = useState<'away' | 'home'>('away');
+  const t = tab === 'home' ? v.home : v.away;
+  const b = v.box[tab];
+  const f = v.box.final;
+  return (
+    <Card
+      title={f ? 'Box score' : 'Box score (so far)'}
+      action={
+        <div className="flex overflow-hidden rounded-lg border border-rink-600 text-xs">
+          {(['away', 'home'] as const).map((k) => (
+            <button key={k} onClick={() => setTab(k)} className={cx('flex items-center gap-1.5 px-2.5 py-1', tab === k ? 'bg-blueline text-white' : 'text-ice-300 hover:bg-rink-800')}>
+              <TeamChip team={k === 'home' ? v.home : v.away} size="sm" /> {(k === 'home' ? v.home : v.away).abbr}
+            </button>
+          ))}
+        </div>
+      }
+    >
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <div className="-mx-4 overflow-x-auto">
+          <table className="table text-xs">
+            <thead>
+              <tr>
+                <th>{t.abbr} skaters</th>
+                <th>Pos</th>
+                <th className="num">G</th>
+                <th className="num">A</th>
+                <th className="num">P</th>
+                {f && <th className="num">+/-</th>}
+                <th className="num">SOG</th>
+                <th className="num">Hits</th>
+                <th className="num">Blk</th>
+                <th className="num">PIM</th>
+                {f && <th className="num">TOI</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {b.skaters.map((p) => (
+                <tr key={p.id}>
+                  <td className="whitespace-nowrap">{p.name}</td>
+                  <td className="text-ice-400">{p.pos}</td>
+                  <td className="num">{p.g || ''}</td>
+                  <td className="num">{p.a || ''}</td>
+                  <td className="num font-semibold text-white">{p.p || ''}</td>
+                  {f && <td className={cx('num', (p.pm ?? 0) > 0 ? 'text-win' : (p.pm ?? 0) < 0 ? 'text-red-300' : '')}>{p.pm ? (p.pm > 0 ? `+${p.pm}` : p.pm) : ''}</td>}
+                  <td className="num">{p.sog || ''}</td>
+                  <td className="num">{p.hits || ''}</td>
+                  <td className="num">{p.blk || ''}</td>
+                  <td className="num">{p.pim || ''}</td>
+                  {f && <td className="num text-ice-300">{p.toi != null ? mmss(p.toi) : ''}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <table className="table text-xs">
+            <thead>
+              <tr>
+                <th>Goalies</th>
+                <th className="num">SA</th>
+                <th className="num">SV</th>
+                <th className="num">GA</th>
+                <th className="num">SV%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {b.goalies.map((g) => (
+                <tr key={g.id}>
+                  <td className="whitespace-nowrap">{g.name}</td>
+                  <td className="num">{g.sa}</td>
+                  <td className="num">{g.sv}</td>
+                  <td className="num">{g.ga}</td>
+                  <td className="num">{g.sa ? (g.sv / g.sa).toFixed(3).replace(/^0/, '') : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </Card>
   );
 }
 

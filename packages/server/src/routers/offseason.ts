@@ -86,6 +86,7 @@ import {
   FANTASY_ROUNDS,
   centralScouting,
   autoLines,
+  teamLines,
   healthyRoster,
 } from '@hockey-gm/sim-core';
 import { z } from 'zod';
@@ -986,7 +987,7 @@ function fixLines(L: League, teamId: string, playerId: string) {
   if (ids.includes(playerId) || t.autoLines) {
     t.autoLines = true;
     try {
-      t.lines = autoLines(healthyRoster(L, t), t.tactics);
+      t.lines = teamLines(L, t);
     } catch {
       /* short of bodies until the next game-day call-up */
     }

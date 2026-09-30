@@ -6,7 +6,7 @@ import { TraitChips } from './Traits';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { gaa, ht, money, signed, svPct, toi } from '../format';
+import { gaa, ht, money, signed, svPct, toi, posLabel } from '../format';
 import { useLeague } from '../pages/LeagueLayout';
 import { useSort } from '../sort';
 import { useTRPC, type Outputs } from '../trpc';
@@ -146,7 +146,7 @@ export function SkaterTable({ title, players, t, statsLabel }: { title: string; 
               return (
                 <tr key={p.id}>
                   <PlayerCell p={p} />
-                  <td className="text-ice-300">{p.pos}</td>
+                  <td className="text-ice-300">{posLabel(p)}</td>
                   <td className="num">{p.age}</td>
                   <td className="num whitespace-nowrap">{ht(p.height)}</td>
                   <td className="num">{p.weight}</td>
@@ -352,7 +352,7 @@ export function FarmTable({ players, t }: { players: P[]; t: TeamData }) {
               return (
                 <tr key={p.id}>
                   <PlayerCell p={p} />
-                  <td className="text-ice-300">{p.pos}</td>
+                  <td className="text-ice-300">{posLabel(p)}</td>
                   <td className="num">{p.age}</td>
                   <td className="num whitespace-nowrap">{ht(p.height)}</td>
                   <td className="num">{p.weight}</td>

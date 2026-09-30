@@ -59,6 +59,7 @@ export function LeagueLayout() {
       : []),
     ...(L.myTeamId && L.phase !== 'offseason' ? ([['scouting', 'Scouting']] as Array<[string, string]>) : []),
     ['standings', 'Standings'],
+    ['calendar', 'Calendar'],
     ['scores', 'Scores'],
     ['stats', 'Stats'],
     ...(L.phase !== 'regular-season' && !L.freshStart ? ([['playoffs', 'Playoffs']] as Array<[string, string]>) : []),

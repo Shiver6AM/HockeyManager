@@ -35,3 +35,4 @@ export * from './start';
 export * from './sliders';
 export * from './traits';
 export * from './waivers';
+export * from './positions';

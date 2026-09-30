@@ -172,7 +172,12 @@ export function sendDownCallUps(league: League, team: Team) {
       note: `${p.firstName} ${p.lastName} returned to the free-agent pool`,
     });
   }
-  if (released) team.lines = autoLines(healthyRoster(league, team), team.tactics);
+  if (released) team.lines = teamLines(league, team);
+}
+
+/** The assistant coach's lines for a team: best players up, systems filled, and the manager's placements honored. */
+export function teamLines(league: League, team: Team): Lines {
+  return autoLines(healthyRoster(league, team), team.tactics, team.controller.kind === 'human' ? team.linePins : undefined);
 }
 
 /** Call before simulating a team's game. */
@@ -183,15 +188,15 @@ export function prepareTeamForGame(league: League, team: Team) {
   if (team.controller.kind === 'ai') {
     // The AI coach revisits its systems every few weeks as the roster changes.
     if (!team.tactics || league.day % 20 === 0) team.tactics = suggestTactics(healthyRoster(league, team).filter((p) => p.pos !== 'G'));
-    team.lines = autoLines(healthyRoster(league, team), team.tactics);
+    team.lines = teamLines(league, team);
     return;
   }
   void sent;
   if (team.autoLines) {
-    team.lines = autoLines(healthyRoster(league, team), team.tactics);
+    team.lines = teamLines(league, team);
     return;
   }
-  if (!linesValid(league, team, team.lines)) team.lines = repairLines(league, team, team.lines) ?? autoLines(healthyRoster(league, team), team.tactics);
+  if (!linesValid(league, team, team.lines)) team.lines = repairLines(league, team, team.lines) ?? teamLines(league, team);
   // Special units that are missing (older saves) or list someone not dressed are refilled.
   team.lines = completeLines(team.lines, healthyRoster(league, team), team.tactics);
 }

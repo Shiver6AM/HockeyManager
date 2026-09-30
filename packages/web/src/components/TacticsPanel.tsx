@@ -3,9 +3,9 @@ import { useTRPC, type Outputs } from '../trpc';
 import { Badge, Card, cx, ErrorBox } from './ui';
 
 type TeamData = Outputs['data']['team'];
-type Group = 'forecheck' | 'offense' | 'pp' | 'pk';
+type Group = 'forecheck' | 'offense' | 'pp' | 'pk' | 'fUsage' | 'dUsage';
 
-const GROUPS: Array<{ key: Group; title: string; intro: string }> = [
+const GROUPS: Array<{ key: Exclude<Group, 'fUsage' | 'dUsage'>; title: string; intro: string }> = [
   {
     key: 'forecheck',
     title: 'Forecheck',
@@ -73,6 +73,51 @@ export function TacticsPanel({ t, leagueId }: { t: TeamData; leagueId: string })
         <ErrorBox error={set.error} />
       </Card>
       <div className="grid gap-5 lg:grid-cols-2">
+        {(
+          [
+            ['fUsage', 'Forward ice time', 'How even-strength minutes are spread over your four forward lines.', ['L1', 'L2', 'L3', 'L4']],
+            ['dUsage', 'Defense ice time', 'How even-strength minutes are spread over your three pairs.', ['P1', 'P2', 'P3']],
+          ] as const
+        ).map(([key, title, intro, cols]) => {
+          const on = (current[key] as string | undefined) ?? 'balanced';
+          return (
+            <Card key={key} title={title}>
+              <p className="mb-3 text-xs text-ice-400">
+                {intro} Heavier use means more of your best players, but tired legs late in games (fatigue is simulated shift by shift).
+              </p>
+              <div className="space-y-2">
+                {t.systems[key].map((o) => (
+                  <button
+                    key={o.id}
+                    disabled={!t.isMine || set.isPending}
+                    onClick={() => choose(key, o.id)}
+                    className={cx(
+                      'block w-full rounded-lg border p-3 text-left transition',
+                      on === o.id ? 'border-blueline bg-blueline/10' : 'border-rink-700 hover:border-rink-500',
+                      !t.isMine && 'cursor-default',
+                    )}
+                  >
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className={cx('h-3 w-3 shrink-0 rounded-full border', on === o.id ? 'border-blueline bg-blueline' : 'border-rink-500')} />
+                      <span className="flex-1 font-semibold text-white">{o.label}</span>
+                      <span className="flex items-end gap-1" title="Rough 5-on-5 minutes per game">
+                        {o.minutes.map((m, i) => (
+                          <span key={i} className="flex flex-col items-center">
+                            <span className="w-7 rounded-sm bg-blueline/70" style={{ height: `${Math.round(m * 1.6)}px` }} />
+                            <span className="tabular text-[10px] text-ice-400">
+                              {cols[i]} {m.toFixed(0)}′
+                            </span>
+                          </span>
+                        ))}
+                      </span>
+                    </span>
+                    <span className="mt-1 block pl-5 text-xs text-ice-400">{o.help}</span>
+                  </button>
+                ))}
+              </div>
+            </Card>
+          );
+        })}
         {GROUPS.map((g) => {
           const options = t.systems[g.key] as Array<{
             id: string;

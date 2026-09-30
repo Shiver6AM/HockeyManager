@@ -25,6 +25,12 @@ import {
   type Tactics,
   qualifyingOffer,
   autoLines,
+  teamLines,
+  tradeDeadline,
+  FORWARD_USAGE,
+  DEFENSE_USAGE,
+  RESIGN_DAYS,
+  FA_DAYS,
   buyoutTerms,
   canExtend,
   capSeason,
@@ -191,6 +197,9 @@ const slotView = (xs: Slot[]) => xs.map((s) => ({ label: s.label, role: s.role }
 const entries = <K extends string>(o: Record<K, { label: string; help: string }>) => (Object.keys(o) as K[]).map((id) => ({ id, label: o[id].label, help: o[id].help }));
 /** Systems, formations, slots and role names for the lines editor. */
 const SYSTEMS_CATALOG = {
+  /** Ice-time plans, with the rough even-strength minutes each line or pair gets (about 48 of the 60 minutes are 5-on-5). */
+  fUsage: (Object.keys(FORWARD_USAGE) as Array<keyof typeof FORWARD_USAGE>).map((id) => ({ id, ...FORWARD_USAGE[id], minutes: FORWARD_USAGE[id].share.map((x) => Math.round(x * 48 * 10) / 10) })),
+  dUsage: (Object.keys(DEFENSE_USAGE) as Array<keyof typeof DEFENSE_USAGE>).map((id) => ({ id, ...DEFENSE_USAGE[id], minutes: DEFENSE_USAGE[id].share.map((x) => Math.round(x * 48 * 10) / 10) })),
   forecheck: entries(FORECHECKS),
   offense: entries(OZ_STYLES),
   pk: entries(PK_STRATEGIES),
@@ -213,6 +222,8 @@ const tacticsSchema = z.object({
   offense: z.enum(['cycle', 'crash', 'perimeter', 'rush']),
   pp: z.enum(['umbrella', '1-3-1', 'overload']),
   pk: z.enum(['box', 'diamond', 'aggressive']),
+  fUsage: z.enum(['balanced', 'top-heavy', 'top6', 'top9', 'roll4']).optional(),
+  dUsage: z.enum(['balanced', 'top2', 'top4', 'roll3']).optional(),
 }) satisfies z.ZodType<Tactics>;
 
 function allGames(L: League): ScheduledGame[] {
@@ -340,6 +351,57 @@ export const dataRouter = router({
     };
   }),
 
+  /**
+   * The season on a calendar: every game day's matchups (compact), and the
+   * key dates. Offseason stages aren't game days, so they come as a list.
+   */
+  calendar: memberProcedure.query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    const games = allGames(L);
+    const lastRegularDay = L.schedule.reduce((m, g) => Math.max(m, g.day), 0);
+    const deadline = tradeDeadline(L);
+    const days: Record<number, Array<[number, string, string, number | null, number | null, 0 | 1 | 2]>> = {};
+    for (const g of games) {
+      const r = g.result;
+      (days[g.day] ??= []).push([g.id, g.home, g.away, r ? r.homeScore : null, r ? r.awayScore : null, r?.shootout ? 2 : r?.overtime ? 1 : 0]);
+    }
+    const milestones: Array<{ day: number; label: string; kind: 'season' | 'deadline' | 'playoffs' | 'today' }> = [
+      { day: 0, label: 'Opening night', kind: 'season' },
+      { day: deadline - 7, label: 'One week to the trade deadline', kind: 'deadline' },
+      { day: deadline, label: 'Trade deadline', kind: 'deadline' },
+      { day: lastRegularDay, label: 'Last day of the regular season', kind: 'season' },
+    ];
+    const po = L.playoffs;
+    if (po) {
+      const names = ['First round', 'Second round', 'Conference finals', 'Final'];
+      po.rounds.forEach((round, i) => {
+        const first = Math.min(...round.flatMap((sr) => sr.games.map((g) => g.day)), i === po.rounds.length - 1 ? po.roundStartDay : Infinity);
+        if (Number.isFinite(first)) milestones.push({ day: first, label: `${names[i] ?? 'Playoffs'} begins`, kind: 'playoffs' });
+      });
+    } else {
+      milestones.push({ day: lastRegularDay + 2, label: 'Playoffs begin', kind: 'playoffs' });
+    }
+    return {
+      season: L.season,
+      today: L.day,
+      phase: L.phase,
+      lastRegularDay,
+      deadline,
+      myTeamId: ctx.membership.teamId,
+      days,
+      milestones: milestones.filter((m) => m.day >= 0).sort((a, b) => a.day - b.day),
+      /** After the Final: the offseason, in order (stages, not game days). */
+      offseason: [
+        { label: 'Draft lottery', note: 'right after the Final' },
+        { label: 'Entry draft', note: '7 rounds, 3 minutes a pick' },
+        { label: 'Re-signing window', note: `${RESIGN_DAYS} days to re-sign your own free agents` },
+        { label: 'Free agency', note: `${FA_DAYS} days; players listen to offers for a few days before deciding` },
+        { label: 'Training camp', note: 'cut down to 23' },
+        { label: 'Opening night', note: `the ${L.season + 1}-${String(L.season + 2).slice(2)} season` },
+      ],
+    };
+  }),
+
   boxScore: memberProcedure.input(z.object({ gameId: z.number().int() })).query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
     const g = allGames(L).find((x) => x.id === input.gameId);
@@ -459,6 +521,8 @@ export const dataRouter = router({
         defense: t.lines.defense.map((ids) => chemView(unitChemistry(t, ids.map((id) => L.players[id]).filter(Boolean), true))),
       },
       autoLines: t.controller.kind === 'human' ? !!t.autoLines : true,
+      /** Where the manager wants players used when the assistant coach sets the lines. */
+      linePins: ctx.membership.teamId === t.id ? (t.linePins ?? {}) : {},
       tactics: t.tactics ?? DEFAULT_TACTICS,
       systemFits: systemFits(healthyRoster(L, t).filter((p) => p.pos !== 'G'), t.tactics ?? DEFAULT_TACTICS),
       recommendedTactics: suggestTactics(healthyRoster(L, t).filter((p) => p.pos !== 'G')),
@@ -618,7 +682,7 @@ export const dataRouter = router({
     if (!ctx.membership.teamId) throw badRequest('You do not manage a team');
     const L = await readLeague(ctx.db, input.leagueId);
     const team = L.teams[ctx.membership.teamId];
-    return autoLines(healthyRoster(L, team), team.tactics);
+    return teamLines(L, team);
   }),
 
   setLines: memberProcedure.input(z.object({ lines: linesSchema })).mutation(async ({ ctx, input }) => {
@@ -634,13 +698,52 @@ export const dataRouter = router({
     return { ok: true };
   }),
 
+  /** Tell the assistant coach where to play people (a line, a group of lines, a position, or scratch). */
+  setLinePins: memberProcedure
+    .input(
+      z.object({
+        pins: z.record(
+          z.string(),
+          z.object({
+            slot: z.enum(['L1', 'L2', 'L3', 'L4', 'top6', 'top9', 'bottom6', 'P1', 'P2', 'P3', 'top4', 'G1', 'G2', 'scratch']).optional(),
+            pos: z.enum(['C', 'LW', 'RW']).optional(),
+          }),
+        ),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const teamId = ctx.membership.teamId;
+      if (!teamId) throw badRequest('You do not manage a team');
+      await mutateLeague(ctx.db, input.leagueId, (L) => {
+        const team = L.teams[teamId];
+        const pins: NonNullable<typeof team.linePins> = {};
+        for (const [id, pin] of Object.entries(input.pins)) {
+          const p = L.players[id];
+          if (!p || p.teamId !== teamId || (!pin.slot && !pin.pos)) continue;
+          const fwd = p.pos !== 'D' && p.pos !== 'G';
+          const ok = !pin.slot || pin.slot === 'scratch' || (p.pos === 'G' ? /^G/.test(pin.slot) : p.pos === 'D' ? /^P|top4/.test(pin.slot) : /^L|top6|top9|bottom6/.test(pin.slot));
+          if (!ok) throw badRequest(`${p.firstName} ${p.lastName} can't be placed there`);
+          pins[id] = { ...(pin.slot ? { slot: pin.slot } : {}), ...(pin.pos && fwd ? { pos: pin.pos } : {}) };
+        }
+        team.linePins = pins;
+        if (team.autoLines) {
+          try {
+            team.lines = teamLines(L, team);
+          } catch (e) {
+            throw badRequest((e as Error).message);
+          }
+        }
+      });
+      return { ok: true };
+    }),
+
   setAutoLines: memberProcedure.input(z.object({ enabled: z.boolean() })).mutation(async ({ ctx, input }) => {
     const teamId = ctx.membership.teamId;
     if (!teamId) throw badRequest('You do not manage a team');
     await mutateLeague(ctx.db, input.leagueId, (L) => {
       const team = L.teams[teamId];
       team.autoLines = input.enabled;
-      if (input.enabled) team.lines = autoLines(healthyRoster(L, team), team.tactics);
+      if (input.enabled) team.lines = teamLines(L, team);
     });
     return { ok: true };
   }),
@@ -653,7 +756,7 @@ export const dataRouter = router({
       const team = L.teams[teamId];
       const formationChanged = (team.tactics ?? DEFAULT_TACTICS).pp !== input.tactics.pp;
       team.tactics = input.tactics;
-      if (team.autoLines) team.lines = autoLines(healthyRoster(L, team), team.tactics);
+      if (team.autoLines) team.lines = teamLines(L, team);
       // A new formation re-slots the power play; the rest of the manager's lines stay.
       else if (formationChanged) team.lines = completeLines({ ...team.lines, pp: [] }, healthyRoster(L, team), team.tactics);
     });

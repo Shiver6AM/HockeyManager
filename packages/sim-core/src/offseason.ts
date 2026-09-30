@@ -42,7 +42,7 @@ import { generatePlayer, talentStats } from './generate';
 import { autoLines } from './lines';
 import { age, overall } from './ratings';
 import { deriveSeed, Rng } from './rng';
-import { aiRosterMoves, ensureBodies, freeAgents, healthyRoster, isFreeAgent } from './roster';
+import { aiRosterMoves, ensureBodies, freeAgents, healthyRoster, isFreeAgent, teamLines } from './roster';
 import { standings } from './league';
 import { closeBooks, newFinances, setOwnerGoals } from './finances';
 import { fantasyOnClock, finishFantasy, runFantasy } from './start';
@@ -1094,7 +1094,7 @@ function startNewSeason(league: League) {
     const valid = [...team.lines.forwards.flat(), ...team.lines.defense.flat(), ...team.lines.goalies].every(
       (id) => league.players[id]?.teamId === team.id,
     );
-    if (team.controller.kind === 'ai' || team.autoLines || !valid) team.lines = autoLines(healthyRoster(league, team), team.tactics);
+    if (team.controller.kind === 'ai' || team.autoLines || !valid) team.lines = teamLines(league, team);
   }
   league.schedule = buildSchedule(Object.values(league.teams), new Rng(deriveSeed(league.seed, `schedule:${league.season}`)));
   setOwnerGoals(league);

@@ -30,7 +30,7 @@ import { autoLines } from './lines';
 import { finishDraft } from './offseason';
 import { prospectGameDay } from './prospects';
 import { age, overall } from './ratings';
-import { ensureBodies, healthyRoster } from './roster';
+import { ensureBodies, healthyRoster, teamLines } from './roster';
 import { deriveSeed, Rng } from './rng';
 import { initScouts, scoutingDay } from './scouting';
 import { suggestTactics } from './systems';
@@ -282,7 +282,7 @@ export function finishFantasy(L: League): 're-sign' | 'draft' | 'training-camp' 
   for (const t of Object.values(L.teams)) {
     ensureBodies(L, t);
     t.tactics = suggestTactics(healthyRoster(L, t).filter((p) => p.pos !== 'G'));
-    t.lines = autoLines(healthyRoster(L, t), t.tactics);
+    t.lines = teamLines(L, t);
   }
   f.done = true;
   if (f.then === 'season') {

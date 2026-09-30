@@ -5,7 +5,7 @@
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
-import { money } from '../format';
+import { money, posLabel } from '../format';
 import { useTRPC, type Outputs } from '../trpc';
 import { TraitChips } from './Traits';
 import { Button, cx, ErrorBox, Modal, Rating } from './ui';
@@ -75,7 +75,7 @@ export function RosterMoves({ t, leagueId, onClose }: { t: TeamData; leagueId: s
           {p.injury && <span className="ml-1.5 text-[10px] text-red-300">INJ</span>}
           {p.injuryCallUp && <span className="ml-1.5 text-[10px] text-ice-500">covering</span>}
         </td>
-        <td className="text-ice-400">{p.pos}</td>
+        <td className="text-ice-400">{posLabel(p)}</td>
         <td className="num">{p.age}</td>
         <td className="num">
           <Rating value={p.overall} />

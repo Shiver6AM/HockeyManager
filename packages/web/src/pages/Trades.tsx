@@ -3,12 +3,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EMPTY_FILTERS, matchesFilters, PlayerFilterBar, SortTh, useSort, type Filters } from '../components/PlayerFilters';
 import { Badge, Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip, TeamLink } from '../components/ui';
-import { money } from '../format';
+import { money, posLabel } from '../format';
 import { useTRPC, type Outputs } from '../trpc';
 import { dayLabel } from '../format';
 import { useLeague } from './LeagueLayout';
 
-type Asset = { kind: 'player'; id: string } | { kind: 'pick'; key: string };
+type Asset = { kind: 'player'; id: string; retain?: number } | { kind: 'pick'; key: string };
 type Assets = Outputs['trades']['assets'];
 type AssetPlayer = Assets['players'][number];
 type AssetPick = Assets['picks'][number];
@@ -251,8 +251,22 @@ export function TradesPage() {
               <>
                 <Card title="Trade preview">
                   <div className="grid gap-4 md:grid-cols-2">
-                    <PreviewSide title={`You give · ${mine.data.team.city}`} data={mine.data} assets={give} onRemove={(a) => toggle('give', a)} />
-                    <PreviewSide title={`You get · ${theirs.data.team.city}`} data={theirs.data} assets={get} onRemove={(a) => toggle('get', a)} />
+                    <PreviewSide
+                      title={`You give · ${mine.data.team.city}`}
+                      data={mine.data}
+                      assets={give}
+                      onRemove={(a) => toggle('give', a)}
+                      onRetain={(id, share) => setGive((xs) => xs.map((x) => (x.kind === 'player' && x.id === id ? { ...x, retain: share || undefined } : x)))}
+                      retainNote="you keep"
+                    />
+                    <PreviewSide
+                      title={`You get · ${theirs.data.team.city}`}
+                      data={theirs.data}
+                      assets={get}
+                      onRemove={(a) => toggle('get', a)}
+                      onRetain={(id, share) => setGet((xs) => xs.map((x) => (x.kind === 'player' && x.id === id ? { ...x, retain: share || undefined } : x)))}
+                      retainNote="they keep"
+                    />
                   </div>
                   <div className="mt-4 flex flex-wrap items-center gap-4 border-t border-rink-700 pt-4">
                     <div className="min-w-64 flex-1">
@@ -281,6 +295,18 @@ export function TradesPage() {
                           Cap: you {v.myCapChange >= 0 ? '+' : '−'}
                           {money(Math.abs(v.myCapChange))} · them {v.theirCapChange >= 0 ? '+' : '−'}
                           {money(Math.abs(v.theirCapChange))}
+                        </p>
+                      )}
+                      {v && v.retained.length > 0 && (
+                        <p className="mt-1 text-xs text-ice-400">
+                          Retained salary:{' '}
+                          {v.retained.map((r, i) => (
+                            <span key={r.playerId}>
+                              {i > 0 && '; '}
+                              {r.side === 'me' ? 'you keep' : `${theirs.data.team.city} keeps`} {money(r.amount)} of {r.name}'s salary for {r.seasons} season{r.seasons > 1 ? 's' : ''}
+                            </span>
+                          ))}
+                          . Retained contracts: you {v.myRetainedCount}/{v.retentionMax.maxContracts}, them {v.theirRetainedCount}/{v.retentionMax.maxContracts}.
                         </p>
                       )}
                     </div>
@@ -389,13 +415,30 @@ export function TradesPage() {
 }
 
 /** One side of the preview: players by overall, then picks by round (then year). */
-function PreviewSide({ title, data, assets, onRemove }: { title: string; data: Assets; assets: Asset[]; onRemove: (a: Asset) => void }) {
+const RETAIN_OPTIONS = [0, 0.1, 0.15, 0.2, 0.25, 0.33, 0.4, 0.5];
+
+function PreviewSide({
+  title,
+  data,
+  assets,
+  onRemove,
+  onRetain,
+  retainNote,
+}: {
+  title: string;
+  data: Assets;
+  assets: Asset[];
+  onRemove: (a: Asset) => void;
+  onRetain: (id: string, share: number) => void;
+  retainNote: string;
+}) {
+  const retainOf = new Map(assets.flatMap((a) => (a.kind === 'player' && a.retain ? [[a.id, a.retain] as const] : [])));
   const L = useLeague();
   const byId = new Map([...data.players, ...data.prospects].map((p) => [p.id, p]));
   const byKey = new Map(data.picks.map((p) => [p.key, p]));
   const players = assets.flatMap((a) => (a.kind === 'player' && byId.get(a.id) ? [byId.get(a.id)!] : [])).sort((a, b) => b.overall - a.overall);
   const picks = assets.flatMap((a) => (a.kind === 'pick' && byKey.get(a.key) ? [byKey.get(a.key)!] : [])).sort((a, b) => a.round - b.round || a.season - b.season);
-  const salary = players.reduce((s, p) => s + (p.contract?.salary ?? 0), 0);
+  const salary = players.reduce((s, p) => s + (p.contract?.salary ?? 0) * (1 - (retainOf.get(p.id) ?? 0)), 0);
   return (
     <div className="min-w-0">
       <div className="mb-2 flex items-center justify-between gap-2">
@@ -421,7 +464,34 @@ function PreviewSide({ title, data, assets, onRemove }: { title: string; data: A
                 </span>
               </span>
               <PotentialBadge potential={p.potential} />
-              <span className="tabular text-xs text-ice-300">{p.contract ? `${money(p.contract.salary)} · ${p.contract.yearsLeft}y` : 'unsigned'}</span>
+              <span className="tabular text-right text-xs text-ice-300">
+                {p.contract ? (
+                  retainOf.get(p.id) ? (
+                    <>
+                      <span className="text-ice-500 line-through">{money(p.contract.salary)}</span> {money(p.contract.salary * (1 - retainOf.get(p.id)!))} · {p.contract.yearsLeft}y
+                    </>
+                  ) : (
+                    `${money(p.contract.salary)} · ${p.contract.yearsLeft}y`
+                  )
+                ) : (
+                  'unsigned'
+                )}
+              </span>
+              {p.contract && !p.prospect && (
+                <select
+                  className="rounded border border-rink-600 bg-rink-900 px-1 py-0.5 text-[11px] text-ice-100 focus:border-blueline focus:outline-none"
+                  value={retainOf.get(p.id) ?? 0}
+                  onChange={(e) => onRetain(p.id, Number(e.target.value))}
+                  title={`Salary retention: the share of his salary ${retainNote} for the rest of his contract (max 50%, 3 retained contracts per team)`}
+                  aria-label={`Retain part of ${p.name}'s salary`}
+                >
+                  {RETAIN_OPTIONS.map((r) => (
+                    <option key={r} value={r}>
+                      {r ? `Retain ${Math.round(r * 100)}%` : 'No retention'}
+                    </option>
+                  ))}
+                </select>
+              )}
               <button className="px-1 text-ice-500 hover:text-red-300" aria-label={`Remove ${p.name}`} onClick={() => onRemove({ kind: 'player', id: p.id })}>
                 ×
               </button>
@@ -554,7 +624,7 @@ function AssetPicker({
                 <FitBadges fits={p.fits} label={fitsLabel} />
                 {p.injury && <span className="ml-1 text-[10px] text-red-300">INJ</span>}
               </td>
-              <td className="text-ice-400">{p.pos}</td>
+              <td className="text-ice-400">{posLabel(p)}</td>
               <td className="hidden text-xs whitespace-nowrap text-ice-400 2xl:table-cell">{p.archetype}</td>
               <td className="num">{p.age}</td>
               <td className="num">
@@ -796,7 +866,7 @@ function BlockTab({ mine, onTradeFor }: { mine: Assets; onTradeFor: (teamId: str
                         {p.prospect && <span className="ml-1 text-[10px] text-ice-500">prospect</span>}
                         <FitBadges fits={p.fits} label="You want" />
                       </td>
-                      <td className="text-ice-400">{p.pos}</td>
+                      <td className="text-ice-400">{posLabel(p)}</td>
                       <td className="text-xs text-ice-400">{p.archetype}</td>
                       <td className="num">{p.age}</td>
                       <td className="num">

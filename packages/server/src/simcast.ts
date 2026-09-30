@@ -7,7 +7,7 @@
  * league can't be simmed. Sessions live in memory: a restart simply ends them
  * (the game's result is kept in the league either way).
  */
-import { presimGame, type League, type PlayEvent } from '@hockey-gm/sim-core';
+import { presimGame, type GameSummary, type League, type PlayEvent } from '@hockey-gm/sim-core';
 import { teamInfo } from './views';
 
 /** Game seconds per real second at each speed. */
@@ -38,6 +38,27 @@ export interface SimcastRow {
   strength?: string;
 }
 
+/** What the box score needs from each play (kept on the server). */
+interface RawPlay {
+  t: number;
+  type: PlayEvent['type'];
+  side: 'home' | 'away' | null;
+  pid?: string;
+  oid?: string;
+  aids?: string[];
+  pim?: number;
+  box?: { home: number[]; away: number[] };
+  pulled?: 'home' | 'away';
+  clock: number;
+  period: number;
+}
+
+interface BoxPlayer {
+  id: string;
+  name: string;
+  pos: string;
+}
+
 interface Session {
   leagueId: string;
   gameId: number;
@@ -58,6 +79,9 @@ interface Session {
   paused: boolean;
   viewers: Map<string, { name: string; seen: number }>;
   finishedAt: number | null;
+  raw: RawPlay[];
+  dressed: { home: BoxPlayer[]; away: BoxPlayer[] };
+  result: GameSummary;
 }
 
 const sessions = new Map<string, Session>();
@@ -129,6 +153,8 @@ function describe(L: League, e: PlayEvent, playoff: boolean, cities: { home: str
       return `${n(e.player)}'s shot is blocked by ${n(e.other)}`;
     case 'penalty':
       return `Penalty: ${n(e.player)}, ${e.text}`;
+    case 'penalty-over':
+      return `Penalty over: ${e.side ? cities[e.side] : ''} back to ${e.box && (e.box[e.side!]?.length ?? 0) > 0 ? 'fewer men short' : 'full strength'}`;
     case 'fight':
       return `Fight! ${n(e.player)} and ${n(e.other)} drop the gloves (5 minutes each)`;
     case 'hit':
@@ -177,6 +203,21 @@ export function startSimcast(L: League, leagueId: string, gameId: number, host: 
       strength: e.strength,
     };
   });
+  const raw: RawPlay[] = events.map((e, i) => ({
+    t: rows[i].t,
+    type: e.type,
+    side: e.side,
+    pid: e.player,
+    oid: e.other,
+    aids: e.assists,
+    pim: e.type === 'penalty' ? Number(/(\d+) minutes/.exec(e.text ?? '')?.[1] ?? 2) : e.type === 'fight' ? 5 : undefined,
+    box: e.box,
+    pulled: e.pulled,
+    clock: e.clock,
+    period: e.period,
+  }));
+  const dressedOf = (ids: string[]) =>
+    ids.filter((id) => L.players[id]).map((id) => ({ id, name: `${L.players[id].firstName[0]}. ${L.players[id].lastName}`, pos: L.players[id].pos }));
   // The final score (a shootout adds the deciding goal).
   const last = rows[rows.length - 1];
   last.homeScore = result.homeScore;
@@ -202,6 +243,9 @@ export function startSimcast(L: League, leagueId: string, gameId: number, host: 
     paused: false,
     viewers: new Map([[host.id, { name: host.name, seen: now }]]),
     finishedAt: null,
+    raw,
+    dressed: { home: dressedOf(result.box.rosters.home), away: dressedOf(result.box.rosters.away) },
+    result,
   };
   sessions.set(leagueId, s);
   return simcastSummary(leagueId)!;
@@ -247,8 +291,117 @@ export function simcastView(leagueId: string, viewer: { id: string; name: string
     homeShots: cur?.homeShots ?? 0,
     awayShots: cur?.awayShots ?? 0,
     plays: shown,
+    /** Penalties running now: time left for each player in the box (the first two on each side tick). */
+    penalties: penaltyState(s, shown.length, clock, periodEnded),
+    /** A team with its goalie pulled for an extra attacker. */
+    emptyNet: shown.length && !periodEnded ? (s.raw[shown.length - 1].pulled ?? null) : null,
+    box: s.finishedAt ? finalBox(s) : liveBox(s, shown.length),
     serverNow: now,
   };
+}
+
+function penaltyState(s: Session, n: number, clock: number, stopped: boolean) {
+  const last = n ? s.raw[n - 1] : null;
+  if (!last?.box) return null;
+  const elapsed = stopped ? 0 : Math.max(0, clock - last.clock);
+  const run = (xs: number[]) => xs.map((left, i) => (i < 2 ? Math.max(0, left - elapsed) : left)).filter((x) => x > 0);
+  const home = run(last.box.home);
+  const away = run(last.box.away);
+  if (!home.length && !away.length) return null;
+  return { home, away };
+}
+
+type Line = { id: string; name: string; pos: string; g: number; a: number; p: number; sog: number; hits: number; blk: number; pim: number; pm?: number; toi?: number };
+type GLine = { id: string; name: string; sa: number; ga: number; sv: number; toi?: number };
+
+/** The box score so far, from the plays shown. */
+function liveBox(s: Session, n: number) {
+  const make = (side: 'home' | 'away') => {
+    const lines = new Map<string, Line>(s.dressed[side].filter((p) => p.pos !== 'G').map((p) => [p.id, { ...p, g: 0, a: 0, p: 0, sog: 0, hits: 0, blk: 0, pim: 0 }]));
+    const goalies = new Map<string, GLine>(s.dressed[side].filter((p) => p.pos === 'G').map((p) => [p.id, { id: p.id, name: p.name, sa: 0, ga: 0, sv: 0 }]));
+    return { lines, goalies };
+  };
+  const box = { home: make('home'), away: make('away') };
+  const other = (x: 'home' | 'away') => (x === 'home' ? 'away' : 'home');
+  for (const r of s.raw.slice(0, n)) {
+    if (!r.side) continue;
+    const mine = box[r.side].lines;
+    const theirs = box[other(r.side)];
+    const me = r.pid ? mine.get(r.pid) : undefined;
+    switch (r.type) {
+      case 'goal':
+        if (me) {
+          me.g++;
+          me.p++;
+          me.sog++;
+        }
+        for (const a of r.aids ?? []) {
+          const x = mine.get(a);
+          if (x) {
+            x.a++;
+            x.p++;
+          }
+        }
+        {
+          const g = r.oid ? theirs.goalies.get(r.oid) : undefined; // (none: an empty net)
+          if (g) {
+            g.sa++;
+            g.ga++;
+          }
+        }
+        break;
+      case 'shot':
+        if (me) me.sog++;
+        if (r.oid) {
+          const g = theirs.goalies.get(r.oid);
+          if (g) {
+            g.sa++;
+            g.sv++;
+          }
+        }
+        break;
+      case 'block': {
+        const b = r.oid ? theirs.lines.get(r.oid) : undefined;
+        if (b) b.blk++;
+        break;
+      }
+      case 'hit':
+        if (me) me.hits++;
+        break;
+      case 'penalty':
+        if (me) me.pim += r.pim ?? 2;
+        break;
+      case 'fight': {
+        if (me) me.pim += 5;
+        const o = r.oid ? theirs.lines.get(r.oid) : undefined;
+        if (o) o.pim += 5;
+        break;
+      }
+    }
+  }
+  const out = (side: 'home' | 'away') => ({
+    skaters: [...box[side].lines.values()].sort((a, b) => b.p - a.p || b.g - a.g || b.sog - a.sog),
+    goalies: [...box[side].goalies.values()].filter((g) => g.sa > 0 || [...box[side].goalies.values()].every((x) => x.sa === 0)).slice(0, 2),
+  });
+  return { final: false, home: out('home'), away: out('away') };
+}
+
+/** After the final: the full box score (with ice time and plus-minus). */
+function finalBox(s: Session) {
+  const b = s.result.box;
+  const side = (key: 'home' | 'away') => {
+    const names = new Map(s.dressed[key].map((p) => [p.id, p]));
+    return {
+      skaters: Object.entries(b.skaters)
+        .filter(([id]) => names.has(id) && names.get(id)!.pos !== 'G')
+        .map(([id, l]) => ({ id, name: names.get(id)!.name, pos: names.get(id)!.pos, g: l.g, a: l.a, p: l.g + l.a, sog: l.sog, hits: l.hits, blk: l.blk, pim: l.pim, pm: l.pm, toi: l.toi }))
+        .sort((x, y) => y.p - x.p || y.g - x.g || (y.toi ?? 0) - (x.toi ?? 0)),
+      goalies: Object.entries(b.goalies)
+        .filter(([id]) => names.has(id))
+        .map(([id, g]) => ({ id, name: names.get(id)!.name, sa: g.sa, ga: g.ga, sv: g.sa - g.ga, toi: g.toi })),
+    };
+  };
+  return { final: true, home: side('home'), away: side('away') };
 }
 
 export function controlSimcast(

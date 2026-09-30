@@ -58,3 +58,6 @@ export function errorMessage(e: unknown): string {
 
 /** 74 → 6'2" */
 export const ht = (inches: number) => `${Math.floor(inches / 12)}'${inches % 12}"`;
+
+/** Every position he plays, his main one first ("C/RW"). */
+export const posLabel = (p: { pos: string; altPos?: string[] }) => [p.pos, ...(p.altPos ?? [])].join('/');
