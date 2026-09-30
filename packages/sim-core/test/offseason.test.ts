@@ -178,8 +178,8 @@ describe('offseason with a human manager', () => {
     expect(L.schedule.every((g) => !g.result)).toBe(true);
     expect(Object.keys(L.skaterStats)).toHaveLength(0);
     for (const t of Object.values(L.teams)) {
-      // (Emergency call-ups can cover players still injured from last season.)
-      expect(t.roster.filter((id) => !L.players[id].injury && !L.players[id].farm).length).toBeLessThanOrEqual(ROSTER_MAX + 1);
+      // (Emergency call-ups can cover players still injured from last season; camp cuts on waivers are off the roster.)
+      expect(t.roster.filter((id) => !L.players[id].injury && !L.players[id].farm && !L.players[id].onWaivers).length).toBeLessThanOrEqual(ROSTER_MAX + 1);
       expect(t.roster.length).toBeLessThanOrEqual(50);
       for (const id of [...t.lines.forwards.flat(), ...t.lines.defense.flat(), ...t.lines.goalies]) {
         expect(L.players[id]?.teamId).toBe(t.id);

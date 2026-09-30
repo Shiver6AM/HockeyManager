@@ -17,6 +17,7 @@
  * the seed and on what the human managers decided.
  */
 import { offseasonScouts } from './scouting';
+import { assignToFarm, needsWaivers } from './waivers';
 import { proSeasons } from './prospects';
 import {
   askingContract,
@@ -30,6 +31,8 @@ import {
   PROSPECT_MAX,
   ROSTER_MAX,
   SUMMER_ROSTER_MAX,
+  defaultTwoWay,
+  minorSalaryOf,
 } from './contracts';
 import { aiValuation, askFromTeam, offerUtility, respondToOffer, type OfferResult } from './negotiation';
 import { aiWouldQualify, holdArbitration, openCase, openRfaCase, resolveOfferSheets, settlePending, settleRfaCase } from './rfa';
@@ -364,12 +367,15 @@ function aiWantsToResign(league: League, team: Team, p: Player): boolean {
 /** Apply an agreed contract (re-signing, extension, qualifying offer or signing). */
 export function applyContract(league: League, p: Player, offer: ContractOffer) {
   const yearsIn = proSeasons(league.careerStats?.[p.id] ?? []).length + 1;
+  const twoWay = offer.twoWay ?? defaultTwoWay(p, offer.salary);
   p.contract = {
     salary: offer.salary,
     yearsLeft: offer.years,
     kind: 'standard',
     expiresAs: expiresAsFor(age(p, league.season) + 1 + offer.years, yearsIn + offer.years),
+    twoWay,
   };
+  if (twoWay) p.contract.minorSalary = minorSalaryOf(p.contract);
   delete p.extension;
 }
 
@@ -911,7 +917,7 @@ export function promoteProspect(league: League, team: Team, p: Player) {
   team.prospects = (team.prospects ?? []).filter((id) => id !== p.id);
   p.prospectOf = undefined;
   p.teamId = team.id;
-  p.contract = { salary: ELC_SALARY, yearsLeft: 3, kind: 'ELC', expiresAs: 'RFA' };
+  p.contract = { salary: ELC_SALARY, yearsLeft: 3, kind: 'ELC', expiresAs: 'RFA', twoWay: true, minorSalary: 85_000 };
   team.roster.push(p.id);
   tx(league, 'promotion', team.id, p, `${nm(p)} (${p.pos}, ${overall(p)} OVR, age ${age(p, league.season + (league.phase === 'offseason' ? 1 : 0))}) signs his entry-level deal and joins the roster`);
 }
@@ -978,9 +984,11 @@ function trainingCamp(league: League) {
     while (nhl().length > ROSTER_MAX) {
       const r = nhl();
       const counts = { F: r.filter(isF).length, D: r.filter((p) => p.pos === 'D').length, G: r.filter((p) => p.pos === 'G').length };
-      const cut = r.filter((p) => counts[group(p)] > keepCounts[group(p)]).sort((a, b) => overall(a) - overall(b))[0];
+      // Teams would rather send down someone who doesn't need waivers.
+      const cost = (p: Player) => overall(p) + (needsWaivers(league, p) ? 1 : 0);
+      const cut = r.filter((p) => counts[group(p)] > keepCounts[group(p)]).sort((a, b) => cost(a) - cost(b))[0];
       if (!cut) break;
-      sendDown(league, team, cut);
+      assignToFarm(league, team, cut);
     }
     // Too many contracts: the weakest farm players are released.
     trimContracts(league, team, (p) => releasePlayer(league, team, p));
@@ -1019,7 +1027,7 @@ export function signProspectToFarm(league: League, team: Team, p: Player) {
   p.prospectOf = undefined;
   p.teamId = team.id;
   p.farm = true;
-  p.contract = { salary: ELC_SALARY, yearsLeft: 3, kind: 'ELC', expiresAs: 'RFA' };
+  p.contract = { salary: ELC_SALARY, yearsLeft: 3, kind: 'ELC', expiresAs: 'RFA', twoWay: true, minorSalary: 85_000 };
   team.roster.push(p.id);
   tx(league, 'promotion', team.id, p, `${nm(p)} signs his entry-level deal and joins ${affiliateLabel(league, team)}`);
 }

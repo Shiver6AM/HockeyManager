@@ -419,6 +419,18 @@ export function advanceNotices(L: League, before: Before, res: AdvanceResult): {
       for (const teamId of new Set([c.teamId, c.sheet?.fromTeam])) if (isHuman(teamId)) team.push({ teamId: teamId!, kind: 'free-agency', text: t.note, link: '/free-agents' });
     }
     if ((t.type === 'arbitration' || (t.type === 'departure' && c)) && isHuman(t.teamId)) team.push({ teamId: t.teamId, kind: 'free-agency', text: t.note, link: '/re-sign' });
+    // Waivers: your player claimed or cleared; your claim won; a new name on the wire.
+    if (t.type === 'waiver-claim') {
+      if (isHuman(t.teamId)) team.push({ teamId: t.teamId, kind: 'offseason', text: `You claimed ${name(t.playerId)} off waivers.`, link: `/player/${t.playerId}` });
+      const from = Object.values(L.teams).find((x) => t.note.endsWith(`${x.city} ${x.name}`));
+      if (from && isHuman(from.id)) team.push({ teamId: from.id, kind: 'offseason', text: `${name(t.playerId)} was claimed off waivers by ${L.teams[t.teamId].city}.`, link: '/waivers' });
+    }
+    if (t.note.includes('(cleared waivers)') && isHuman(t.teamId)) team.push({ teamId: t.teamId, kind: 'offseason', text: `${name(t.playerId)} cleared waivers and reports to the farm team.`, link: `/player/${t.playerId}` });
+    if (t.type === 'waivers') {
+      for (const x of Object.values(L.teams)) {
+        if (x.id !== t.teamId && isHuman(x.id)) team.push({ teamId: x.id, kind: 'offseason', text: `${t.note} by ${L.teams[t.teamId].city}. Claims close when the next day is played.`, link: '/waivers' });
+      }
+    }
   }
   return { team, all };
 }

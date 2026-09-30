@@ -55,7 +55,7 @@ describe('farm teams', () => {
 
   it('only salary above the bury exemption counts against the cap while in the minors', () => {
     const t = L.teams.HAL;
-    const p = nhlRoster(L, t).find((x) => (x.contract?.salary ?? 0) > BURY_EXEMPT + 1_000_000)!;
+    const p = nhlRoster(L, t).find((x) => !x.injury && (x.contract?.salary ?? 0) > BURY_EXEMPT + 1_000_000)!;
     expect(capHit(p)).toBe(p.contract!.salary);
     sendDown(L, t, p);
     expect(capHit(p)).toBe(p.contract!.salary - BURY_EXEMPT);

@@ -1,3 +1,4 @@
+import { TraitChips } from '../components/Traits';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
@@ -79,8 +80,8 @@ export function FreeAgentsPage() {
 
       <OfferSheetTargets />
 
-      <div className="grid gap-5 xl:grid-cols-3">
-        <div className="min-w-0 xl:col-span-2">
+      <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className="min-w-0">
           <FreeAgentTable d={d} open={open} setOpen={setOpen} />
         </div>
 
@@ -350,6 +351,7 @@ function FreeAgentTable({ d, open, setOpen }: { d: FAData; open: string | null; 
                         {p.name}
                       </Link>
                       {p.injury && <span className="ml-1.5 text-[10px] text-red-300">INJ</span>}
+                      <TraitChips traits={p.traits} />
                     </td>
                     {d.bidding && (
                       <td className="text-xs whitespace-nowrap">

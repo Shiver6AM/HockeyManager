@@ -1,5 +1,8 @@
 import {
   askingContract,
+  isTwoWay,
+  minorSalaryOf,
+  waiverExemption,
   completeLines,
   DEFAULT_TACTICS,
   EXTRA_ATTACKER_SLOTS,
@@ -405,6 +408,13 @@ export const dataRouter = router({
         goalieStats: statsFor(id).goalie,
         /** With the AHL affiliate. */
         farm: !!L.players[id].farm,
+        /** On waivers right now; and whether a send-down would need waivers (null: exempt, else why not). */
+        onWaivers: !!L.players[id].onWaivers,
+        waiverExempt: waiverExemption(L, L.players[id]),
+        injuryCallUp: !!L.players[id].injuryCallUp,
+        /** Two-way deals pay an AHL salary on the farm. */
+        twoWay: isTwoWay(L.players[id].contract),
+        minorSalary: L.players[id].contract && isTwoWay(L.players[id].contract) ? minorSalaryOf(L.players[id].contract!) : null,
         minor: L.players[id].farm ? (L.prospectStats?.[id] ?? null) : null,
         /** Trade value from your front office's point of view (0–1 scale, like the trade screen's meter). */
         tradeValue: Math.round(Math.min(1, Math.sqrt(Math.max(0, playerValue(L, viewer, L.players[id]))) / 30) * 100) / 100,
@@ -509,6 +519,8 @@ export const dataRouter = router({
           farm: !!p.farm,
           potential: potentialView(L, ctx.membership.teamId, p),
           capHit: capHit(p),
+          twoWay: isTwoWay(p.contract),
+          minorSalary: p.contract && isTwoWay(p.contract) ? minorSalaryOf(p.contract) : null,
           remaining,
           grid,
           extension: ext,
@@ -752,6 +764,55 @@ export const dataRouter = router({
     const L = await readLeague(ctx.db, input.leagueId);
     if (!L.teams[input.teamId]) throw new TRPCError({ code: 'NOT_FOUND', message: 'No such team' });
     return franchiseRecords(L, input.teamId);
+  }),
+
+  /**
+   * A team's season game by game: points pace against the league average and
+   * the conference's playoff line, and rolling goals for/against.
+   */
+  teamTrends: memberProcedure.input(z.object({ teamId: z.string() })).query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    const t = L.teams[input.teamId];
+    if (!t) throw new TRPCError({ code: 'NOT_FOUND', message: 'No such team' });
+    // Per-team game logs, in order.
+    const logs = new Map<string, Array<{ day: number; opp: string; home: boolean; gf: number; ga: number; pts: number; ot: boolean }>>();
+    for (const id of Object.keys(L.teams)) logs.set(id, []);
+    for (const g of [...L.schedule].filter((x) => x.result).sort((a, b) => a.day - b.day)) {
+      const r = g.result!;
+      const extra = r.overtime || r.shootout;
+      for (const [me, them, gf, ga, home] of [
+        [g.home, g.away, r.homeScore, r.awayScore, true],
+        [g.away, g.home, r.awayScore, r.homeScore, false],
+      ] as const) {
+        logs.get(me)!.push({ day: g.day, opp: L.teams[them].abbr, home, gf, ga, pts: gf > ga ? 2 : extra ? 1 : 0, ot: extra });
+      }
+    }
+    const cum = new Map([...logs].map(([id, l]) => [id, l.reduce<number[]>((acc, x) => [...acc, (acc.at(-1) ?? 0) + x.pts], [])]));
+    const mine = logs.get(t.id)!;
+    const conf = Object.values(L.teams).filter((x) => x.conference === t.conference);
+    const n = mine.length;
+    // At each game number, only once most teams have played that many (otherwise the few ahead skew it).
+    const leagueAvg: Array<number | null> = [];
+    const playoffLine: Array<number | null> = [];
+    const teams = [...cum.values()];
+    for (let i = 0; i < n; i++) {
+      const at = teams.map((c) => c[i]).filter((v): v is number => v !== undefined);
+      leagueAvg.push(at.length >= teams.length * 0.75 ? Math.round((at.reduce((a, b) => a + b, 0) / at.length) * 10) / 10 : null);
+      const c = conf.map((x) => cum.get(x.id)![i]).filter((v): v is number => v !== undefined).sort((a, b) => b - a);
+      playoffLine.push(c.length >= Math.max(8, conf.length * 0.75) ? c[7] : null);
+    }
+    const roll = (k: 'gf' | 'ga') => mine.map((_, i) => {
+      const w = mine.slice(Math.max(0, i - 9), i + 1);
+      return Math.round((w.reduce((s, x) => s + x[k], 0) / w.length) * 100) / 100;
+    });
+    return {
+      games: mine.map((g, i) => ({ ...g, n: i + 1, cum: cum.get(t.id)![i] })),
+      leagueAvg,
+      playoffLine,
+      gfRolling: roll('gf'),
+      gaRolling: roll('ga'),
+      totalGames: L.schedule.filter((g) => g.home === t.id || g.away === t.id).length,
+    };
   }),
 
   /** Every team's all-time leading scorer. */

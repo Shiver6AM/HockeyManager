@@ -62,7 +62,13 @@ import {
   contractCount,
   CONTRACT_MAX,
   nhlRoster,
+  assignToFarm,
   sendDown,
+  claimOnWaivers,
+  claimOutlook,
+  isTwoWay,
+  standings,
+  withdrawClaim,
   activeRoster,
   ACTIVE_MAX,
   affiliateLabel,
@@ -85,6 +91,7 @@ import { deliver } from '../notify';
 import { readLeague } from '../state';
 import { advancerProcedure, badRequest, memberProcedure, router, type Membership } from '../trpc';
 import { publicPlayer, teamInfo } from '../views';
+import { potentialView } from './data';
 
 /** Letter grade from a scout's ceiling estimate. */
 export function grade(scouted: number): string {
@@ -126,6 +133,7 @@ export function classView(L: League, viewerTeam: string | null, p: Player, draft
     overall: scouted ? base.overall : null,
     skater: scouted ? base.skater : null,
     goalie: scouted ? base.goalie : null,
+    traits: scouted ? base.traits : [],
     age: age(p, draftSeason),
     league: MINOR_LEAGUES[mt.league]?.name ?? mt.league,
     club: mt.team,
@@ -452,7 +460,7 @@ export const offseasonRouter = router({
 
   /** Offer a contract to one of your players: an expiring player this summer, or a final-year player in season. */
   negotiate: memberProcedure
-    .input(z.object({ playerId: z.string(), salary: z.number().int().min(0).max(30_000_000), years: z.number().int().min(1).max(8) }))
+    .input(z.object({ playerId: z.string(), salary: z.number().int().min(0).max(30_000_000), years: z.number().int().min(1).max(8), twoWay: z.boolean().optional() }))
     .mutation(async ({ ctx, input }) => {
       const teamId = requireTeam(ctx.membership);
       return mutateLeague(ctx.db, input.leagueId, (L) => {
@@ -461,10 +469,10 @@ export const offseasonRouter = router({
         try {
           // During the draft and the re-signing week, his agent answers the next day.
           if (offersAreDeferred(L) && L.offseason?.expiring[p.id]) {
-            const r = submitResignOffer(L, L.teams[teamId], p, { salary: input.salary, years: input.years });
+            const r = submitResignOffer(L, L.teams[teamId], p, { salary: input.salary, years: input.years, twoWay: input.twoWay });
             return { result: 'pending' as const, message: r.message };
           }
-          return offerExtension(L, L.teams[teamId], p, { salary: input.salary, years: input.years });
+          return offerExtension(L, L.teams[teamId], p, { salary: input.salary, years: input.years, twoWay: input.twoWay });
         } catch (e) {
           throw badRequest((e as Error).message);
         }
@@ -583,7 +591,7 @@ export const offseasonRouter = router({
   }),
 
   placeBid: memberProcedure
-    .input(z.object({ playerId: z.string(), salary: z.number().int().min(0).max(30_000_000), years: z.number().int().min(1).max(8) }))
+    .input(z.object({ playerId: z.string(), salary: z.number().int().min(0).max(30_000_000), years: z.number().int().min(1).max(8), twoWay: z.boolean().optional() }))
     .mutation(async ({ ctx, input }) => {
       const teamId = requireTeam(ctx.membership);
       await mutateLeague(ctx.db, input.leagueId, (L) => {
@@ -592,7 +600,7 @@ export const offseasonRouter = router({
         if (!p) throw badRequest('No such player');
         if (contractCount(team) >= CONTRACT_MAX) throw badRequest(`You're at the ${CONTRACT_MAX}-contract limit. Release a player first.`);
         try {
-          placeBid(L, team, p, { salary: input.salary, years: input.years });
+          placeBid(L, team, p, { salary: input.salary, years: input.years, twoWay: input.twoWay });
         } catch (e) {
           throw badRequest((e as Error).message);
         }
@@ -608,7 +616,7 @@ export const offseasonRouter = router({
 
   /** Negotiate with a leftover free agent (training camp or in season). He signs on acceptance. */
   negotiateFreeAgent: memberProcedure
-    .input(z.object({ playerId: z.string(), salary: z.number().int().min(0).max(30_000_000), years: z.number().int().min(1).max(8) }))
+    .input(z.object({ playerId: z.string(), salary: z.number().int().min(0).max(30_000_000), years: z.number().int().min(1).max(8), twoWay: z.boolean().optional() }))
     .mutation(async ({ ctx, input }) => {
       const teamId = requireTeam(ctx.membership);
       return mutateLeague(ctx.db, input.leagueId, (L) => {
@@ -618,7 +626,7 @@ export const offseasonRouter = router({
         if (contractCount(team) >= CONTRACT_MAX) throw badRequest(`You're at the ${CONTRACT_MAX}-contract limit. Release a player first.`);
         const base = L.offseason?.freeAgentAsks[p.id] ?? inSeasonAsk(L, p);
         try {
-          const r = negotiateFreeAgent(L, team, p, { salary: input.salary, years: input.years }, base);
+          const r = negotiateFreeAgent(L, team, p, { salary: input.salary, years: input.years, twoWay: input.twoWay }, base);
           // In season, a full 23-man roster means he reports to the farm team; call him up when you're ready.
           if (r.result === 'accept' && L.phase !== 'offseason' && activeRoster(L, team).length > ACTIVE_MAX) {
             sendDown(L, team, p, 'signed with the NHL roster full');
@@ -683,14 +691,14 @@ export const offseasonRouter = router({
   }),
 
   tenderOfferSheet: memberProcedure
-    .input(z.object({ playerId: z.string(), salary: z.number().int().min(0).max(30_000_000), years: z.number().int().min(1).max(8) }))
+    .input(z.object({ playerId: z.string(), salary: z.number().int().min(0).max(30_000_000), years: z.number().int().min(1).max(8), twoWay: z.boolean().optional() }))
     .mutation(async ({ ctx, input }) => {
       const teamId = requireTeam(ctx.membership);
       return mutateLeague(ctx.db, input.leagueId, (L) => {
         const p = L.players[input.playerId];
         if (!p) throw badRequest('No such player');
         try {
-          tenderOfferSheet(L, L.teams[teamId], p, { salary: input.salary, years: input.years });
+          tenderOfferSheet(L, L.teams[teamId], p, { salary: input.salary, years: input.years, twoWay: input.twoWay });
         } catch (e) {
           throw badRequest((e as Error).message);
         }
@@ -766,7 +774,7 @@ export const offseasonRouter = router({
       const p = L.players[input.playerId];
       if (!p) throw badRequest('No such player');
       try {
-        if (input.sendDownId) sendDown(L, team, L.players[input.sendDownId]);
+        if (input.sendDownId) assignToFarm(L, team, L.players[input.sendDownId]);
         callUp(L, team, p);
       } catch (e) {
         throw badRequest((e as Error).message);
@@ -784,11 +792,97 @@ export const offseasonRouter = router({
         const p = L.players[input.playerId];
         if (!p) throw new Error('No such player');
         if (nhlRoster(L, team).filter((x) => x.id !== p.id).length < 20) throw new Error('You need at least 20 players on the NHL roster');
-        sendDown(L, team, p);
+        assignToFarm(L, team, p);
       } catch (e) {
         throw badRequest((e as Error).message);
       }
       fixLines(L, teamId, input.playerId);
+    });
+    return { ok: true };
+  }),
+
+  /**
+   * Several call-ups and send-downs at once (the roster tool): send-downs first
+   * (non-exempt players go on waivers), then call-ups. All or nothing.
+   */
+  rosterMoves: memberProcedure
+    .input(z.object({ up: z.array(z.string()).max(30), down: z.array(z.string()).max(30) }))
+    .mutation(async ({ ctx, input }) => {
+      const teamId = requireTeam(ctx.membership);
+      return mutateLeague(ctx.db, input.leagueId, (L) => {
+        const team = L.teams[teamId];
+        const result = { farm: [] as string[], waivers: [] as string[], up: [] as string[] };
+        try {
+          for (const id of input.down) {
+            const p = L.players[id];
+            if (!p || p.teamId !== teamId) throw new Error('Not one of your players');
+            if (assignToFarm(L, team, p) === 'waivers') result.waivers.push(id);
+            else result.farm.push(id);
+          }
+          for (const id of input.up) {
+            const p = L.players[id];
+            if (!p || p.teamId !== teamId) throw new Error('Not one of your players');
+            callUp(L, team, p);
+            result.up.push(id);
+          }
+          if (nhlRoster(L, team).length < 20) throw new Error('You need at least 20 players on the NHL roster');
+          if (capRoom(L, team) < 0 && L.phase !== 'offseason') throw new Error('Those moves would put you over the cap');
+        } catch (e) {
+          throw badRequest((e as Error).message);
+        }
+        for (const id of [...input.down, ...input.up]) fixLines(L, teamId, id);
+        return result;
+      });
+    }),
+
+  /** Players on waivers, with your claim status and where you stand in the claim order. */
+  waivers: memberProcedure.query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    const my = ctx.membership.teamId;
+    const team = my ? L.teams[my] : null;
+    const table = standings(L);
+    const pct = (id: string) => {
+      const r = table.find((x) => x.teamId === id);
+      return r && r.gp ? r.pts / (2 * r.gp) : 0.5;
+    };
+    const order = Object.keys(L.teams).sort((a, b) => pct(a) - pct(b));
+    return {
+      myPriority: my ? order.indexOf(my) + 1 : null,
+      teams: order.length,
+      players: (L.waivers ?? [])
+        .map((w) => {
+          const p = L.players[w.playerId];
+          if (!p) return null;
+          return {
+            ...publicPlayer(L, p),
+            potential: potentialView(L, my, p),
+            from: teamInfo(L.teams[w.fromTeam]),
+            placedDay: w.day,
+            claimed: !!my && w.claims.includes(my),
+            mine: w.fromTeam === my,
+            outlook: team ? claimOutlook(L, team, p) : null,
+            twoWay: isTwoWay(p.contract),
+          };
+        })
+        .filter((x): x is NonNullable<typeof x> => !!x),
+      /** Recent waiver moves around the league. */
+      recent: L.transactions
+        .filter((t) => (t.type === 'waiver-claim' || t.type === 'waivers' || t.note.includes('cleared waivers')) && t.season === L.season)
+        .slice(-25)
+        .reverse()
+        .map((t) => ({ ...t, team: teamInfo(L.teams[t.teamId]) })),
+    };
+  }),
+
+  claimWaiver: memberProcedure.input(z.object({ playerId: z.string(), claim: z.boolean() })).mutation(async ({ ctx, input }) => {
+    const teamId = requireTeam(ctx.membership);
+    await mutateLeague(ctx.db, input.leagueId, (L) => {
+      try {
+        if (input.claim) claimOnWaivers(L, L.teams[teamId], input.playerId);
+        else withdrawClaim(L, L.teams[teamId], input.playerId);
+      } catch (e) {
+        throw badRequest((e as Error).message);
+      }
     });
     return { ok: true };
   }),

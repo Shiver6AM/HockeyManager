@@ -12,7 +12,8 @@
  *    the free-agent pool on a one-year league-minimum deal. AI teams send
  *    call-ups back down once they have more than 23 healthy players again.
  */
-import { activeRoster, balanceRoster, bestOnFarm, callUp as callUpFromFarm, farmRoster, nhlRoster, sendDown } from './farm';
+import { activeRoster, balanceRoster, bestOnFarm, callUp as callUpFromFarm, capHit, farmRoster, nhlRoster, sendDown } from './farm';
+import { assignToFarm, needsWaivers } from './waivers';
 import { capRoom } from './contracts';
 import { generatePlayer } from './generate';
 import { autoLines, completeLines } from './lines';
@@ -48,6 +49,7 @@ function callUp(league: League, team: Team, need: 'F' | 'D' | 'G'): void {
   const farmer = bestOnFarm(league, team, need);
   if (farmer) {
     callUpFromFarm(league, team, farmer, ' to cover for injuries');
+    farmer.injuryCallUp = true;
     return;
   }
   const pool = Object.values(league.players).filter(
@@ -66,7 +68,9 @@ function callUp(league: League, team: Team, need: 'F' | 'D' | 'G'): void {
     league.players[best.id] = best;
   }
   best.teamId = team.id;
-  best.contract = { salary: LEAGUE_MINIMUM, yearsLeft: 1, kind: 'standard', expiresAs: league.season - best.birthYear + 1 >= 27 ? 'UFA' : 'RFA' };
+  best.injuryCallUp = true;
+  best.recalledOn = { season: league.season, day: league.day };
+  best.contract = { salary: LEAGUE_MINIMUM, yearsLeft: 1, kind: 'standard', expiresAs: league.season - best.birthYear + 1 >= 27 ? 'UFA' : 'RFA', twoWay: true, minorSalary: 100_000 };
   team.roster.push(best.id);
   league.transactions.push({
     day: league.day,
@@ -211,14 +215,26 @@ export function aiRosterMoves(league: League, team: Team, margin = 2) {
         .filter((p) => !p.injury && grp(p) === g)
         .sort((a, b) => overall(a) - overall(b))[0];
       if (!up || !down || overall(up) < overall(down) + margin) continue;
-      sendDown(league, team, down);
-      up.farm = false;
-      if (capRoom(league, team) < 0) {
-        // Can't afford him up top: undo.
-        up.farm = true;
-        down.farm = false;
+      // Risking a veteran on waivers takes a clearer upgrade.
+      const waive = needsWaivers(league, down);
+      if (waive && overall(up) < overall(down) + margin) continue;
+      if (waive) {
+        // Can he be afforded with the veteran's full salary still on the books until he clears?
+        if (capRoom(league, team) - ((up.contract?.salary ?? 0) - capHit(up)) < 0) continue;
+        assignToFarm(league, team, down);
+        callUpFromFarm(league, team, up, '');
         league.transactions.pop();
-        continue;
+      } else {
+        sendDown(league, team, down);
+        up.farm = false;
+        if (capRoom(league, team) < 0) {
+          // Can't afford him up top: undo.
+          up.farm = true;
+          down.farm = false;
+          league.transactions.pop();
+          continue;
+        }
+        up.recalledOn = { season: league.season, day: league.day };
       }
       league.transactions.push({ day: league.day, season: league.season, type: 'call-up', teamId: team.id, playerId: up.id, note: `${up.firstName} ${up.lastName} earns a call-up (${down.firstName} ${down.lastName} goes down)` });
       swapped = true;

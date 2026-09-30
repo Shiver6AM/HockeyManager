@@ -1,10 +1,12 @@
+import { TraitList } from '../components/Traits';
+import { ColumnChart, LineChart } from '../components/Charts';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Badge, Card, Empty, ErrorBox, Rating, Spinner, TeamChip, TeamLink } from '../components/ui';
 import { gaa, ht, money, signed, svPct, toi } from '../format';
 import { useSort } from '../sort';
-import { useTRPC } from '../trpc';
+import { useTRPC, type Outputs } from '../trpc';
 import { useLeague } from './LeagueLayout';
 
 const SKATER_RATINGS: Array<[string, string]> = [
@@ -125,7 +127,8 @@ export function PlayerPage() {
         {p?.contract && (
           <p className="mt-3 text-sm text-ice-300">
             Contract: <span className="text-white">{money(p.contract.salary)}</span> × {p.contract.yearsLeft} more season
-            {p.contract.yearsLeft > 1 ? 's' : ''} · {p.contract.kind === 'ELC' ? 'entry-level' : 'standard'} · becomes {p.contract.expiresAs}
+            {p.contract.yearsLeft > 1 ? 's' : ''} · {p.contract.kind === 'ELC' ? 'entry-level' : 'standard'} ·{' '}
+            {p.twoWay ? `two-way (${money(p.minorSalary ?? 0)} in the AHL)` : 'one-way'} · becomes {p.contract.expiresAs}
           </p>
         )}
         {d.myOffer && (
@@ -149,6 +152,12 @@ export function PlayerPage() {
       <div className="grid gap-5 lg:grid-cols-3">
         {ratings && (
           <Card title="Ratings">
+            {p && p.traits.length > 0 && (
+              <div className="mb-4 border-b border-rink-700 pb-4">
+                <p className="mb-2 text-[11px] font-semibold tracking-wider text-ice-500 uppercase">Traits</p>
+                <TraitList traits={p.traits} />
+              </div>
+            )}
             <ul className="space-y-2">
               {(isG ? GOALIE_RATINGS : SKATER_RATINGS).map(([k, label]) => (
                 <li key={k} className="text-sm">
@@ -246,6 +255,7 @@ export function PlayerPage() {
               )}
             </Card>
           )}
+          <CareerCharts career={d.career} isG={isG} />
           <Card title={`Career · ${totals.gp} GP${isG ? ` · ${totals.w} W · ${totals.so} SO` : ` · ${totals.g} G · ${totals.a} A · ${totals.g + totals.a} P`}`}>
             {d.career.length === 0 ? <Empty>No games yet.</Empty> : <CareerTables career={d.career} isG={isG} />}
           </Card>
@@ -473,5 +483,43 @@ function CareerTables({ career, isG }: { career: CareerRow[]; isG: boolean }) {
         </div>
       )}
     </>
+  );
+}
+
+/** Season-by-season production and rating, once there's more than one season to compare. */
+function CareerCharts({ career, isG }: { career: Outputs['data']['player']['career']; isG: boolean }) {
+  const nhl = career.filter((c) => (isG ? c.goalie?.gp : c.skater?.gp));
+  const bySeason = new Map<number, (typeof nhl)[number][]>();
+  for (const c of nhl) bySeason.set(c.season, [...(bySeason.get(c.season) ?? []), c]);
+  const seasons = [...bySeason.keys()].sort((a, b) => a - b);
+  if (seasons.length < 2) return null;
+  const label = (y: number) => `${String(y).slice(2)}-${String(y + 1).slice(2)}`;
+  const sum = (y: number, f: (c: (typeof nhl)[number]) => number) => bySeason.get(y)!.reduce((s, c) => s + f(c), 0);
+  const overallOf = (y: number) => Math.max(...bySeason.get(y)!.map((c) => c.overall || 0));
+  return (
+    <div className="grid gap-5 xl:grid-cols-2">
+      <Card title={isG ? 'Save percentage by season' : 'Points by season'}>
+        {isG ? (
+          <LineChart
+            x={seasons.map(label)}
+            series={[{ name: 'Save %', values: seasons.map((y) => { const sa = sum(y, (c) => c.goalie?.sa ?? 0); return sa ? 1 - sum(y, (c) => c.goalie?.ga ?? 0) / sa : null; }) }]}
+            fmt={(v) => v.toFixed(3).replace(/^0/, '')}
+            endLabels={false}
+          />
+        ) : (
+          <ColumnChart
+            data={seasons.map((y) => {
+              const g = sum(y, (c) => c.skater?.g ?? 0);
+              const a = sum(y, (c) => c.skater?.a ?? 0);
+              return { label: label(y), value: g + a, sub: `${g} G, ${a} A in ${sum(y, (c) => c.skater?.gp ?? 0)} GP` };
+            })}
+            valueName="Points"
+          />
+        )}
+      </Card>
+      <Card title="Overall rating by season">
+        <LineChart x={seasons.map(label)} series={[{ name: 'Overall', values: seasons.map((y) => overallOf(y) || null) }]} fmt={(v) => String(Math.round(v))} endLabels={false} />
+      </Card>
+    </div>
   );
 }

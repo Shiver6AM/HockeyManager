@@ -84,8 +84,8 @@ export function FantasyDraftPage() {
         </Card>
       )}
 
-      <div className="grid gap-5 xl:grid-cols-3">
-        <div className="min-w-0 space-y-5 xl:col-span-2">
+      <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className="min-w-0 space-y-5">
           <Available
             b={b}
             canPick={mine && b.started && !pick.isPending}

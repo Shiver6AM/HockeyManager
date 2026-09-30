@@ -60,6 +60,12 @@ export interface Contract {
   kind: 'ELC' | 'standard';
   /** Status when this deal expires. */
   expiresAs: 'RFA' | 'UFA';
+  /**
+   * Two-way deal: he earns `minorSalary` while in the AHL (one-way deals pay the
+   * NHL salary wherever he plays). Missing on older saves: see isTwoWay().
+   */
+  twoWay?: boolean;
+  minorSalary?: number;
 }
 
 export type InjurySeverity = 'day-to-day' | 'short-term' | 'medium-term' | 'long-term' | 'season-ending';
@@ -101,6 +107,12 @@ export interface Player {
   minorTeam?: { season: number; league: string; team: string };
   /** Signed but assigned to the team's AHL affiliate (farm team). */
   farm?: boolean;
+  /** On waivers (off the active roster until he's claimed or clears). */
+  onWaivers?: boolean;
+  /** Last recalled from the farm (recent recalls go back down without waivers). */
+  recalledOn?: { season: number; day: number };
+  /** Called up to cover for an injury (goes back down when the regulars return, for auto-managed lineups). */
+  injuryCallUp?: boolean;
   /** Waiting to be picked in a new league's fantasy draft. */
   inFantasyPool?: boolean;
   /** Height in inches and weight in pounds (derived from his frame when missing; see body.ts). */
@@ -114,6 +126,10 @@ export interface Player {
   trainingProgress?: Record<string, number>;
   /** Points gained from coaching this season, by skill. */
   trainingLog?: { season: number; gains: Record<string, number> };
+  /** Rare badges (see traits.ts), by tier 1–4. Re-checked each season. */
+  traits?: Partial<Record<import('./traits').TraitId, import('./traits').TraitTier>>;
+  /** Season his traits were last worked out. */
+  traitsSeason?: number;
 }
 
 /** Who makes decisions for a team. Adding human managers never changes the team count. */
@@ -389,7 +405,9 @@ export interface Transaction {
     | 'qualifying-offer'
     | 'offer-sheet'
     | 'arbitration'
-    | 'trade';
+    | 'trade'
+    | 'waivers'
+    | 'waiver-claim';
   teamId: TeamId;
   playerId: PlayerId;
   note: string;
@@ -446,6 +464,8 @@ export interface League {
   staffPool?: StaffMember[];
   skillsCoachPool?: SkillsCoach[];
   goalieCoachPool?: SkillsCoach[];
+  /** Players on waivers right now. */
+  waivers?: import('./waivers').WaiverEntry[];
   /** Next draft's class, generated when the season starts so scouts can watch it. */
   draftClass?: { season: number; ids: PlayerId[] };
   /** Central Scouting's latest published list (see css.ts). */
@@ -518,6 +538,8 @@ export interface DraftState {
 export interface ContractOffer {
   salary: number;
   years: number;
+  /** Two-way (a lower AHL salary while in the minors). Left out, the usual default applies (see defaultTwoWay). */
+  twoWay?: boolean;
 }
 
 export interface OffseasonState {

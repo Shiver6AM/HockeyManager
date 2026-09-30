@@ -68,8 +68,8 @@ export function DraftPage() {
         <CssRankings players={b.available} leagueId={L.id} edition="Final" top={16} />
       </Card>
 
-      <div className="grid gap-5 xl:grid-cols-3">
-        <div className="space-y-5 xl:col-span-2">
+      <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className="min-w-0 space-y-5">
           <Card
             title={`Available prospects (${b.available.length})`}
           >

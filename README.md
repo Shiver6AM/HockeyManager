@@ -156,6 +156,19 @@ middle. Advancers can
   comes up from the farm instead of a free agent being signed, and when he's healthy the
   weakest extra player goes back down. Only the part of a buried salary above $1.15M
   counts against the cap. AI teams promote farm players who outgrow the AHL.
+- **Roster moves tool:** the "Roster moves" button on your team page lists the NHL roster
+  and the farm side by side. Tick players to send down or call up and a preview shows the
+  healthy roster by position against the 23-man limit, the change in cap hit, cap space
+  afterwards, and who would need waivers, before you make every move at once.
+- **Injury call-ups go back down:** if the assistant coach runs your lines (and for every
+  AI team), the call-up who covered for an injured player is sent back down when the
+  regular returns, as long as the call-up is the weaker player.
+- **Waivers:** from training camp through the regular season, a player who isn't
+  waiver-exempt goes on waivers for a day before reaching the farm, and any team can
+  claim him (taking on his contract). If several do, the team with the worst record gets
+  him. Exempt: 22 and under, under 80 NHL games, under 160 games at 24 or younger, or
+  recalled in the last 30 days. The **Waivers** page lists who's available, your claim
+  priority and recent claims; AI teams claim clear upgrades they can afford.
 - **Contracts tab:** every player's cap hit season by season for seven seasons (current
   deal, agreed extensions, then UFA/RFA), the cap outlook for each season (committed,
   dead cap, space), each player's interest in re-signing (team success, role, loyalty,
@@ -328,6 +341,10 @@ anyone who hasn't acted gets sensible defaults.
 
 ## Contracts
 
+- **One-way and two-way deals:** a two-way contract pays a much smaller AHL salary
+  whenever the player is on the farm (entry-level deals are always two-way). Every offer
+  form lets you choose. Established NHL players dislike two-way offers: they want more
+  money or counter with a one-way deal. Team finances pay the salaries actually earned.
 - **Interest in your team (0–100):** each player rates every team on whether it can win
   (weighted by his ambition), the role he'd have, loyalty to his current or drafting team,
   market size (greedier players like the spotlight), the head coach (young players) and
@@ -458,6 +475,32 @@ anyone who hasn't acted gets sensible defaults.
   An explicit "let go" is always respected.
 
 <img src="docs/screenshots/front-office.png" width="49%"> <img src="docs/screenshots/history.png" width="49%">
+
+## Traits
+
+Rare badges in the spirit of NBA 2K, each in four tiers (Bronze, Silver, Gold, Hall of
+Fame): Sniper, Playmaker, Clutch, Net-Front Presence, Power-Play Quarterback, Dangler,
+Speedster, Faceoff Ace, Shot Blocker, Shutdown, Penalty Killer, Enforcer, Iron Man, Leader
+and Shootout Artist for skaters; Brick Wall, Big-Game Goalie and Rebound Control for
+goalies. Each nudges one part of the engine (a Sniper's shots go in more often, a Shot
+Blocker blocks more, an Iron Man tires more slowly and gets hurt less...). A player earns a
+trait when the ratings behind it are elite and he has a hidden knack for it. Traits are
+re-checked every season, so they can be earned, upgraded or lost. About a quarter of NHL
+players have one, and nobody has more than three (two for goalies). They show on the
+roster, free-agent and waiver lists and, in full, on the player page. Effects are sized
+so the season still calibrates against the NHL.
+
+## Graphs
+
+- **Team → Trends:** points pace against the conference's playoff line and the league
+  average, 10-game rolling goals for and against, and goal differential game by game,
+  with points, pace, gap to the playoff line and goal differential up top.
+- **Standings:** every team's goals for vs goals against per game (yours highlighted),
+  and points percentage by team.
+- **Player page:** points (or save %) and overall rating by season, once he has two
+  seasons.
+
+All charts size to the screen and show values on hover.
 
 ## The simulation
 

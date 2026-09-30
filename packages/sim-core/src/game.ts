@@ -14,6 +14,7 @@ import { CHEMISTRY, SLOT_BASIS, slotBonusOf, unitChemistry } from './chemistry';
 import { completeLines } from './lines';
 import { defensiveDrive, goalieQuality, offensiveDrive } from './ratings';
 import { slider } from './sliders';
+import { tierOf } from './traits';
 import {
   combine,
   DEFAULT_TACTICS,
@@ -77,7 +78,7 @@ export const TUNING = {
   missBase: 0.34,
   /** Base shooting % on shots on goal, by situation. */
   shPct: { EV: 0.089, PP: 0.118, SH: 0.09, OT: 0.1, EN: 0.92 } as Record<string, number>,
-  shooterEffect: 0.14, // per 10 shooting points
+  shooterEffect: 0.13, // per 10 shooting points (a little flatter now that elite shooters carry traits)
   supportEffect: 0.1, // teammates' passing/IQ vs defense
   goalieEffect: 0.19, // per 10 goalie points
   defenseShotFactor: 0.62, // D point shots are lower quality
@@ -159,6 +160,56 @@ interface GP {
   dB: number;
   /** This player's box-score line (skaters). */
   st?: SkaterGameLine;
+  /** Trait effects (see traits.ts); absent for players without any. */
+  tb?: TraitBoosts;
+}
+
+/** What a player's traits do in a game (all zero/one for none). */
+interface TraitBoosts {
+  /** Shooting points added to his shots on goal. */
+  snipe: number;
+  /** Extra shooting points on the power play. */
+  pp: number;
+  /** Extra shooting points late in close games and in overtime. */
+  clutch: number;
+  /** Multiplier on his shots being blocked or missing the net. */
+  miss: number;
+  /** Rebound finishing and pursuit. */
+  reb: number;
+  /** Weight when an assist is handed out. */
+  assist: number;
+  /** Weight when a hit or a fight is handed out. */
+  hit: number;
+  fight: number;
+  /** Penalty-kill defense points. */
+  pk: number;
+  /** Leadership: points added to everyone on the ice with him. */
+  lead: number;
+  /** Shootout scoring chance (skaters), or stopping chance (goalies). */
+  so: number;
+  /** Goalies: extra quality in big moments; rebound multiplier. */
+  big: number;
+  rebCtl: number;
+}
+
+function traitBoosts(p: Parameters<typeof tierOf>[0]): TraitBoosts | undefined {
+  if (!p.traits) return undefined;
+  const t = (id: Parameters<typeof tierOf>[1]) => tierOf(p, id);
+  return {
+    snipe: 0.4 * t('sniper'),
+    pp: 0.5 * t('ppSpecialist'),
+    clutch: 1.0 * t('clutch'),
+    miss: 1 - 0.035 * t('dangler'),
+    reb: t('netFront'),
+    assist: 1 + 0.06 * t('playmaker'),
+    hit: 1 + 0.35 * t('enforcer'),
+    fight: 1 + 0.8 * t('enforcer'),
+    pk: 1.5 * t('pkSpecialist'),
+    lead: 0.3 * t('leader'),
+    so: 0.03 * t('shootoutArtist') + 0.02 * t('reboundControl'),
+    big: 1.0 * t('bigGame'),
+    rebCtl: 1 - 0.12 * t('reboundControl'),
+  };
 }
 
 interface Side {
@@ -269,28 +320,31 @@ export function simulateGame(
       const p = league.players[id];
       const s = p.skater!;
       const form = rng.normal(0, T.formSd.skater * (1.4 - p.hidden.consistency) * K.random);
+      const tb = traitBoosts(p);
+      const tr = (id: Parameters<typeof tierOf>[1]) => (tb ? tierOf(p, id) : 0);
       gp[id] = {
         id,
         pos: p.pos,
-        off: offensiveDrive(s) + form,
-        def: defensiveDrive(s) + form,
+        off: offensiveDrive(s) + form + 0.25 * tr('speedster'),
+        def: defensiveDrive(s) + form + 0.5 * tr('shutdown'),
         shoot: s.shooting + form,
         pass: s.passing + form,
-        support: (s.passing + s.offIQ) / 2 + form,
+        support: (s.passing + s.offIQ) / 2 + form + 0.35 * tr('playmaker'),
         check: s.checking,
         disc: s.discipline,
-        fo: s.faceoffs + form,
-        block: 0.5 * s.defIQ + 0.5 * s.checking,
+        fo: s.faceoffs + form + 1.2 * tr('faceoffAce'),
+        block: 0.5 * s.defIQ + 0.5 * s.checking + 1.2 * tr('shotBlocker'),
         gq: 0,
         endurance: s.endurance,
-        prone: p.hidden.injuryProneness,
+        prone: p.hidden.injuryProneness * (1 - 0.15 * tr('ironMan')),
         energy: startEnergy,
         lastT: 0,
         on: false,
-        drainMult,
+        drainMult: drainMult * (1 - 0.06 * tr('ironMan')),
         roles: roleSkills(p),
         oB: 0,
         dB: 0,
+        tb,
       };
       skaters[id] = newSkaterLine();
       gp[id].st = skaters[id];
@@ -300,11 +354,12 @@ export function simulateGame(
       const form = rng.normal(0, T.formSd.goalie * (1.4 - p.hidden.consistency) * K.random);
       gp[id] = {
         id, pos: 'G', off: 0, def: 0, shoot: 0, pass: 0, support: 0, check: 0, disc: 0, fo: 0, block: 0,
-        gq: goalieQuality(p.goalie!) + form - (backToBack ? 1.5 : 0),
+        gq: goalieQuality(p.goalie!) + form - (backToBack ? 1.5 : 0) + 0.6 * tierOf(p, 'brickWall'),
         endurance: 100, prone: p.hidden.injuryProneness, energy: 100, lastT: 0, on: false, drainMult: 1,
         roles: {} as Record<Role, number>,
         oB: 0,
         dB: 0,
+        tb: traitBoosts(p),
       };
     }
   };
@@ -455,7 +510,19 @@ export function simulateGame(
         if (sit === 'SH') dB[i] += b;
         else oB[i] += b;
       });
-    } else if (sit === 'EV' && base >= 5 && !s.goaliePulled) {
+    }
+    // Traits: penalty killers dig in short-handed; a leader lifts everyone on the ice with him.
+    let lead = 0;
+    unit.forEach((p, i) => {
+      if (!p.tb) return;
+      if (sit === 'SH') dB[i] += p.tb.pk;
+      lead = Math.max(lead, p.tb.lead);
+    });
+    if (lead) for (let i = 0; i < unit.length; i++) {
+      oB[i] += lead;
+      dB[i] += lead;
+    }
+    if (!slots && sit === 'EV' && base >= 5 && !s.goaliePulled) {
       for (const [ids, defense] of [
         [L.forwards[s.fIdx], false],
         [L.defense[s.dIdx], true],
@@ -644,7 +711,7 @@ export function simulateGame(
     const nA = rng.weighted([0.05, 0.2, 0.75]);
     let pool = [...mates];
     for (let i = 0; i < nA && pool.length; i++) {
-      const a = weightedPick(rng, pool, (p) => Math.exp((0.6 * p.pass + 0.4 * p.off - 70) / 12) * (p.pos === 'D' ? 0.8 : 1) * (rebound && i === 0 ? 1.3 : 1));
+      const a = weightedPick(rng, pool, (p) => Math.exp((0.6 * p.pass + 0.4 * p.off - 70) / 12) * (p.pos === 'D' ? 0.8 : 1) * (rebound && i === 0 ? 1.3 : 1) * (p.tb?.assist ?? 1));
       assists.push(a.id);
       pool = pool.filter((p) => p !== a);
     }
@@ -681,7 +748,7 @@ export function simulateGame(
     const sit = situation(s);
     // Rebounds go to whoever is at the net; special-teams slots decide who shoots.
     const shooter = rebound
-      ? weightedPick(rng, s.onIce.some((p) => p.pos !== 'D') ? s.onIce.filter((p) => p.pos !== 'D') : s.onIce, (p) => Math.exp((p.shoot - 70) / 30) * Math.exp((p.roles.netFront - 70) / 45))
+      ? weightedPick(rng, s.onIce.some((p) => p.pos !== 'D') ? s.onIce.filter((p) => p.pos !== 'D') : s.onIce, (p) => Math.exp((p.shoot - 70) / 30) * Math.exp((p.roles.netFront - 70) / 45) * (1 + 0.3 * (p.tb?.reb ?? 0)))
       : weightedPick(
           rng,
           s.onIce,
@@ -693,7 +760,7 @@ export function simulateGame(
 
     // Blocked?
     if (!rebound && !emptyNet) {
-      const pBlock = clamp(T.blockBase * Math.exp((0.2 * (o.block - 70)) / 10) * (sit === 'PP' ? 0.9 : 1), 0.1, 0.4);
+      const pBlock = clamp(T.blockBase * Math.exp((0.2 * (o.block - 70)) / 10) * (sit === 'PP' ? 0.9 : 1) * (shooter.tb?.miss ?? 1), 0.1, 0.4);
       if (rng.chance(pBlock)) {
         const blocker = weightedPick(rng, o.onIce, (p) => (p.pos === 'D' ? 1.8 : 1) * Math.exp((p.block - 70) / 15));
         skaters[blocker.id].blk++;
@@ -702,7 +769,7 @@ export function simulateGame(
       }
     }
     // Missed the net?
-    const pMiss = clamp(T.missBase * Math.exp((-0.2 * (shooter.shoot - 70)) / 10) * (emptyNet ? 1.3 : 1), 0.1, 0.5);
+    const pMiss = clamp(T.missBase * Math.exp((-0.2 * (shooter.shoot - 70)) / 10) * (emptyNet ? 1.3 : 1) * (shooter.tb?.miss ?? 1), 0.1, 0.5);
     if (rng.chance(pMiss)) return rng.chance(T.missStoppage) ? 'stoppage' : 'play';
 
     // On goal.
@@ -720,13 +787,18 @@ export function simulateGame(
     const mates = s.onIce.filter((p) => p !== shooter);
     const support = mates.length ? mates.reduce((a, p) => a + p.support, 0) / mates.length : shooter.support;
     const g = gp[o.goalie];
+    // Traits: a sniper's finish, power-play and clutch shooters, a big-game goalie.
+    const close = (period >= 3 || overtime) && Math.abs(s.line.goals - o.line.goals) <= 1;
+    const tb = shooter.tb;
+    const shotBonus = tb ? tb.snipe + (sit === 'PP' ? tb.pp : 0) + (close ? tb.clutch : 0) : 0;
+    const gBonus = g.tb && playoff && close ? g.tb.big : 0;
     let pGoal =
       T.shPct[baseKey] *
-      Math.exp((T.shooterEffect * (shooter.shoot + shooter.oB - fat(shooter) - 72)) / 10) *
+      Math.exp((T.shooterEffect * (shooter.shoot + shooter.oB + shotBonus - fat(shooter) - 72)) / 10) *
       Math.exp((T.supportEffect * (support - o.def)) / 10) *
-      Math.exp((-T.goalieEffect * (g.gq - 76)) / 10);
+      Math.exp((-T.goalieEffect * (g.gq + gBonus - 76)) / 10);
     if (shooter.pos === 'D') pGoal *= T.defenseShotFactor;
-    if (rebound) pGoal *= T.reboundBoost;
+    if (rebound) pGoal *= T.reboundBoost * (1 + 0.06 * (tb?.reb ?? 0));
     pGoal *= s.sys.shq * o.sys.oppShq;
     pGoal *= K.scoring;
     pGoal = clamp(pGoal, 0.01, 0.6);
@@ -734,7 +806,7 @@ export function simulateGame(
       creditGoal(s, shooter, rebound);
       return 'goal';
     }
-    if (!rebound && rng.chance(T.reboundChance * s.sys.rebound)) return 'rebound';
+    if (!rebound && rng.chance(T.reboundChance * s.sys.rebound * (g.tb?.rebCtl ?? 1))) return 'rebound';
     return rng.chance(T.freezeChance) ? 'stoppage' : 'play';
   };
 
@@ -756,7 +828,7 @@ export function simulateGame(
 
   /** Fighting majors: offsetting 5-minute penalties, no power play. */
   const fight = () => {
-    const pick = (s: Side) => weightedPick(rng, s.onIce, (p) => Math.exp((p.check - 70) / 6) * Math.exp(-(p.disc - 72) / 15));
+    const pick = (s: Side) => weightedPick(rng, s.onIce, (p) => Math.exp((p.check - 70) / 6) * Math.exp(-(p.disc - 72) / 15) * (p.tb?.fight ?? 1));
     const h = pick(home);
     const a = pick(away);
     for (const [s, p] of [[home, h], [away, a]] as const) {
@@ -767,7 +839,7 @@ export function simulateGame(
   };
 
   const hit = (s: Side) => {
-    const h = weightedPick(rng, s.onIce, (p) => Math.exp((p.check - 70) / 10));
+    const h = weightedPick(rng, s.onIce, (p) => Math.exp((p.check - 70) / 10) * (p.tb?.hit ?? 1));
     skaters[h.id].hits++;
     s.line.hits++;
   };
@@ -1056,9 +1128,15 @@ function runShootout(rng: Rng, league: League, home: Lines, away: Lines, homeGq:
   };
   const hs = shooters(home);
   const as = shooters(away);
+  const hg = league.players[home.goalies[0]];
+  const ag = league.players[away.goalies[0]];
   const pScore = (id: string, gq: number) => {
-    const skill = roleSkills(league.players[id]).shootout;
-    return clamp(0.32 + (skill - 78) * 0.008 - (gq - 76) * 0.008, 0.12, 0.6);
+    const p = league.players[id];
+    const skill = roleSkills(p).shootout;
+    // Shootout Artist shooters score more; Rebound Control goalies give up fewer.
+    const goalie = home.forwards.flat().includes(id) || home.defense.flat().includes(id) ? ag : hg;
+    const bonus = 0.03 * tierOf(p, 'shootoutArtist') - 0.02 * (goalie ? tierOf(goalie, 'reboundControl') : 0);
+    return clamp(0.32 + (skill - 78) * 0.008 - (gq - 76) * 0.008 + bonus, 0.12, 0.65);
   };
   let h = 0;
   let a = 0;
