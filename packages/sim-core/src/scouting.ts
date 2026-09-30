@@ -31,6 +31,25 @@ export interface Scout {
   assignment: Region | 'auto' | 'players';
   /** With 'players': the prospects he's following (up to 10, all in one league). */
   targets?: { league: string; ids: PlayerId[] };
+  /** A schedule of assignments, one after another (the last one carries on to the end of the season). */
+  plan?: ScoutPlan;
+}
+
+export type ScoutAssignment = Region | 'auto' | 'players';
+
+/** One stop on a scout's schedule. */
+export interface ScoutLeg {
+  weeks: number;
+  assignment: ScoutAssignment;
+  targets?: { league: string; ids: PlayerId[] };
+}
+
+export interface ScoutPlan {
+  /** The season it's for. */
+  season: number;
+  /** Regular-season day the first leg starts. */
+  startDay: number;
+  legs: ScoutLeg[];
 }
 
 export interface TeamScouting {
@@ -55,6 +74,8 @@ export const SCOUTING = {
   maxTargets: 10,
   /** His daily knowledge split across them, times this (1 target: 15× a region day; 10: 1.5× each). */
   targetFocus: 15,
+  /** Most stops on one scout's schedule. */
+  maxLegs: 12,
 };
 
 export function scoutSalary(skill: number): number {
@@ -124,12 +145,10 @@ export function assignScout(team: Team, scoutId: string, region: Region | 'auto'
   if (!s) throw new Error('Not one of your scouts');
   s.assignment = region;
   s.targets = undefined;
+  s.plan = undefined;
 }
 
-/** Send a scout to follow specific draft-eligible prospects (up to 10, all in one league). */
-export function assignScoutTargets(league: League, team: Team, scoutId: string, leagueName: string, ids: PlayerId[]) {
-  const s = team.scouts?.find((x) => x.id === scoutId);
-  if (!s) throw new Error('Not one of your scouts');
+function checkTargets(league: League, leagueName: string, ids: PlayerId[]): { league: string; ids: PlayerId[] } {
   const unique = [...new Set(ids)];
   if (!unique.length) throw new Error('Pick at least one prospect');
   if (unique.length > SCOUTING.maxTargets) throw new Error(`A scout can follow at most ${SCOUTING.maxTargets} prospects`);
@@ -139,8 +158,90 @@ export function assignScoutTargets(league: League, team: Team, scoutId: string, 
     const lg = minorLeagueOf(league, p).league;
     if (lg !== leagueName && MINOR_LEAGUES[lg]?.name !== leagueName) throw new Error(`All of them have to play in the ${leagueName}`);
   }
+  return { league: leagueName, ids: unique };
+}
+
+/** Send a scout to follow specific draft-eligible prospects (up to 10, all in one league). */
+export function assignScoutTargets(league: League, team: Team, scoutId: string, leagueName: string, ids: PlayerId[]) {
+  const s = team.scouts?.find((x) => x.id === scoutId);
+  if (!s) throw new Error('Not one of your scouts');
+  s.targets = checkTargets(league, leagueName, ids);
   s.assignment = 'players';
-  s.targets = { league: leagueName, ids: unique };
+  s.plan = undefined;
+}
+
+// ---- Schedules ----
+
+/** Last regular-season day. */
+function lastRegularDay(league: League) {
+  return league.schedule.reduce((m, g) => Math.max(m, g.day), 0) || 181;
+}
+
+/**
+ * The window a new schedule covers: from today to the end of the regular
+ * season, or the whole of next season when set in the summer. Null during the
+ * playoffs (scouts carry on with what they're doing until the draft).
+ */
+export function scoutPlanWindow(league: League): { season: number; startDay: number; weeks: number; nextSeason: boolean } | null {
+  const last = lastRegularDay(league);
+  if (league.phase === 'regular-season') return { season: league.season, startDay: league.day, weeks: Math.max(1, Math.ceil((last + 1 - league.day) / 7)), nextSeason: false };
+  if (league.phase === 'offseason') return { season: league.season + 1, startDay: 0, weeks: Math.ceil((last + 1) / 7), nextSeason: true };
+  return null;
+}
+
+/**
+ * Give a scout a schedule: a list of assignments with durations in weeks,
+ * run back to back, adding up to no more than the weeks left in the season.
+ * Following specific prospects needs a draft class to follow.
+ */
+export function setScoutPlan(league: League, team: Team, scoutId: string, legs: ScoutLeg[]) {
+  const s = team.scouts?.find((x) => x.id === scoutId);
+  if (!s) throw new Error('Not one of your scouts');
+  const w = scoutPlanWindow(league);
+  if (!w) throw new Error('The regular season is over. Scouts keep their current assignment until the draft.');
+  if (!legs.length) throw new Error('Add at least one assignment');
+  if (legs.length > SCOUTING.maxLegs) throw new Error(`At most ${SCOUTING.maxLegs} assignments`);
+  const total = legs.reduce((n, l) => n + l.weeks, 0);
+  for (const l of legs) if (!Number.isInteger(l.weeks) || l.weeks < 1) throw new Error('Each assignment lasts at least a week');
+  if (total > w.weeks) throw new Error(`That's ${total} weeks; there ${w.weeks === 1 ? 'is 1 week' : `are ${w.weeks} weeks`} left in the ${w.nextSeason ? 'next ' : ''}season`);
+  const clean: ScoutLeg[] = legs.map((l) => {
+    if (l.assignment === 'players') {
+      if (w.nextSeason) throw new Error("Next season's draft class isn't known yet: plan regions for now");
+      if (!l.targets) throw new Error('Choose the prospects to follow');
+      return { weeks: l.weeks, assignment: 'players', targets: checkTargets(league, l.targets.league, l.targets.ids) };
+    }
+    if (l.assignment !== 'auto' && !REGIONS.some((r) => r.id === l.assignment)) throw new Error('Unknown region');
+    return { weeks: l.weeks, assignment: l.assignment };
+  });
+  s.plan = { season: w.season, startDay: w.startDay, legs: clean };
+  if (!w.nextSeason) applyPlan(league, s);
+}
+
+/** Clear a scout's schedule (he keeps whatever he's doing now). */
+export function clearScoutPlan(team: Team, scoutId: string) {
+  const s = team.scouts?.find((x) => x.id === scoutId);
+  if (!s) throw new Error('Not one of your scouts');
+  s.plan = undefined;
+}
+
+/** Which leg of his schedule a scout is on (the last one carries on after the schedule runs out). */
+export function currentLeg(league: League, s: Scout): { index: number; leg: ScoutLeg } | null {
+  const plan = s.plan;
+  if (!plan || plan.season !== league.season || league.phase === 'offseason') return null;
+  let day = plan.startDay;
+  for (let i = 0; i < plan.legs.length; i++) {
+    day += plan.legs[i].weeks * 7;
+    if (league.day < day) return { index: i, leg: plan.legs[i] };
+  }
+  return { index: plan.legs.length - 1, leg: plan.legs[plan.legs.length - 1] };
+}
+
+/** Put a scout on today's leg of his schedule. */
+function applyPlan(league: League, s: Scout) {
+  const cur = currentLeg(league, s);
+  if (!cur) return;
+  s.assignment = cur.leg.assignment;
+  s.targets = cur.leg.assignment === 'players' ? cur.leg.targets : undefined;
 }
 
 /** The prospects a scout is following (still draft-eligible). */
@@ -195,9 +296,15 @@ function state(league: League, teamId: TeamId): TeamScouting {
   return st;
 }
 
+/** Move every scout with a schedule onto today's stop. */
+export function applyScoutPlans(league: League) {
+  for (const t of Object.values(league.teams)) for (const s of t.scouts ?? []) if (s.plan) applyPlan(league, s);
+}
+
 /** One day on the road for every team's scouts (regular season and playoffs). */
 export function scoutingDay(league: League) {
   for (const t of Object.values(league.teams)) {
+    for (const scout of t.scouts ?? []) if (scout.plan) applyPlan(league, scout);
     const st = state(league, t.id);
     for (const { scout, region } of scoutRegions(league, t)) st.points[region] = (st.points[region] ?? 0) + scoutRate(t, scout, region);
     for (const scout of t.scouts ?? []) {
@@ -256,6 +363,9 @@ export function offseasonScouts(league: League) {
         s.assignment = 'auto';
         s.targets = undefined;
       }
+      // Last season's schedule is done; one made in the summer for the new season stands.
+      if (s.plan && s.plan.season <= league.season) s.plan = undefined;
+      else if (s.plan) s.assignment = s.plan.legs[0].assignment;
     }
     if (t.controller.kind === 'ai' && (t.scouts?.length ?? 0) < 3) {
       const pick = [...(league.scoutPool ?? [])].sort((a, b) => b.skill - a.skill)[rng.int(0, 5)];

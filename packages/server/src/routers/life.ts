@@ -45,6 +45,10 @@ import {
   scoutTargets,
   scoutConfidence,
   assignScoutTargets,
+  clearScoutPlan,
+  currentLeg,
+  scoutPlanWindow,
+  setScoutPlan,
 } from '@hockey-gm/sim-core';
 import { z } from 'zod';
 import { mutateLeague } from '../advance';
@@ -272,12 +276,36 @@ export const lifeRouter = router({
     const conf = (r: Region) => (isMine ? Math.round(regionConfidence(L, t.id, r) * 100) / 100 : null);
     const classIds = L.draftClass?.ids ?? L.offseason?.draft.classIds ?? [];
     const inRegion = (r: Region) => classIds.filter((id) => L.players[id] && L.players[id].draftClass !== undefined && playerRegion(L, L.players[id]) === r).length;
+    const nameOf = (id: string) => (L.players[id] ? `${L.players[id].firstName} ${L.players[id].lastName}` : id);
+    const planView = (sc: Scout) => {
+      const plan = sc.plan!;
+      const cur = currentLeg(L, sc);
+      let day = plan.startDay;
+      return {
+        season: plan.season,
+        startDay: plan.startDay,
+        current: cur?.index ?? null,
+        legs: plan.legs.map((l, i) => {
+          const from = day;
+          day += l.weeks * 7;
+          return {
+            ...l,
+            from,
+            to: day - 1,
+            done: plan.season === L.season && L.phase !== 'offseason' && cur !== null && i < cur.index,
+            targets: l.targets ? { league: l.targets.league, players: l.targets.ids.map((id) => ({ id, name: nameOf(id) })) } : undefined,
+          };
+        }),
+      };
+    };
     const scoutView = (sc: Scout) => {
       const targets = isMine ? scoutTargets(L, sc) : [];
       return {
         ...sc,
         region: where.get(sc.id) ?? null,
         ratePerDay: where.get(sc.id) ? Math.round(scoutRate(t, sc, where.get(sc.id)!) * 100) / 100 : null,
+        /** His schedule: each stop with the days it covers (the last one carries on to season's end). */
+        plan: isMine && sc.plan ? planView(sc) : null,
         /** Prospects he's following (with your confidence in each). */
         following:
           sc.assignment === 'players' && sc.targets
@@ -292,6 +320,11 @@ export const lifeRouter = router({
       isMine,
       maxScouts: SCOUTING.maxScouts,
       maxTargets: SCOUTING.maxTargets,
+      maxLegs: SCOUTING.maxLegs,
+      /** What a new schedule would cover: weeks left in this season (or all of next season in the summer). */
+      planWindow: isMine ? scoutPlanWindow(L) : null,
+      season: L.season,
+      day: L.day,
       headScout: t.staff?.scout ?? null,
       draftSeason: L.draftClass?.season ?? L.offseason?.draft.season ?? null,
       regions: REGIONS.map((r) => ({ ...r, confidence: conf(r.id), prospects: inRegion(r.id) })),
@@ -363,6 +396,49 @@ export const lifeRouter = router({
       });
       return { ok: true };
     }),
+
+  /** Give a scout a schedule of assignments (region, head scout's call, or specific prospects), each for a number of weeks. */
+  setScoutPlan: memberProcedure
+    .input(
+      z.object({
+        scoutId: z.string(),
+        legs: z
+          .array(
+            z.object({
+              weeks: z.number().int().min(1).max(60),
+              assignment: z.enum(['auto', 'players', 'west', 'ontario', 'quebec', 'usa', 'sweden', 'finland', 'russia', 'central']),
+              targets: z.object({ league: z.string(), ids: z.array(z.string()).min(1).max(10) }).optional(),
+            }),
+          )
+          .min(1)
+          .max(20),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const teamId = ctx.membership.teamId;
+      if (!teamId) throw badRequest('You do not manage a team');
+      await mutateLeague(ctx.db, input.leagueId, (L) => {
+        try {
+          setScoutPlan(L, L.teams[teamId], input.scoutId, input.legs);
+        } catch (e) {
+          throw badRequest((e as Error).message);
+        }
+      });
+      return { ok: true };
+    }),
+
+  clearScoutPlan: memberProcedure.input(z.object({ scoutId: z.string() })).mutation(async ({ ctx, input }) => {
+    const teamId = ctx.membership.teamId;
+    if (!teamId) throw badRequest('You do not manage a team');
+    await mutateLeague(ctx.db, input.leagueId, (L) => {
+      try {
+        clearScoutPlan(L.teams[teamId], input.scoutId);
+      } catch (e) {
+        throw badRequest((e as Error).message);
+      }
+    });
+    return { ok: true };
+  }),
 
   assignScout: memberProcedure
     .input(z.object({ scoutId: z.string(), region: z.enum(['auto', 'west', 'ontario', 'quebec', 'usa', 'sweden', 'finland', 'russia', 'central']) }))
