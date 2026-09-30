@@ -45,6 +45,7 @@ import {
   scoutTargets,
   scoutConfidence,
   assignScoutTargets,
+  isDraftClass,
   clearScoutPlan,
   currentLeg,
   scoutPlanWindow,
@@ -342,8 +343,17 @@ export const lifeRouter = router({
     const d = L.draftClass ?? (L.offseason?.draft ? { season: L.offseason.draft.season, ids: L.offseason.draft.classIds } : null);
     if (!d) return null;
     const my = ctx.membership.teamId;
+    // Scouts follow prospects while they're playing: the regular season and playoffs, before the draft.
+    const followable = L.phase !== 'offseason';
     return {
       season: d.season,
+      /** Can scouts be sent to follow specific prospects right now? */
+      followable,
+      followNote: followable
+        ? null
+        : L.offseason?.stage === 'draft' || L.offseason?.stage === 'fantasy-draft'
+          ? 'This class has stopped playing: the draft is on. Next season’s class takes the ice on opening night.'
+          : 'Next season’s draft class takes the ice on opening night. Until then you can plan regions; specific prospects can be followed once the season starts.',
       /** Which Central Scouting list is out ("Preliminary", "Update 4", "Final") and when it was published. */
       cssEdition: cssEdition(L),
       cssUpdate: cssUpdate(L),
@@ -352,7 +362,7 @@ export const lifeRouter = router({
       players: d.ids
         .map((id) => L.players[id])
         .filter((p) => p && p.draftClass !== undefined)
-        .map((p) => classView(L, my, p, d.season))
+        .map((p) => ({ ...classView(L, my, p, d.season), followable: followable && isDraftClass(L, p) }))
         .sort((a, b) => b.scoutValue - a.scoutValue),
     };
   }),

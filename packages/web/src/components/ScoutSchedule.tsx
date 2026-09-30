@@ -7,8 +7,9 @@ import { useState } from 'react';
 import { dayLabel } from '../format';
 import { useLeague } from '../pages/LeagueLayout';
 import { useTRPC, type Outputs } from '../trpc';
-import { ConfidenceBar, type ClassPlayer } from './ClassTable';
-import { Button, cx, ErrorBox, Modal } from './ui';
+import { useSort } from '../sort';
+import { ConfidenceBar, CssMove, GRADE_TONE, type ClassPlayer } from './ClassTable';
+import { Button, cx, ErrorBox, Modal, Rating } from './ui';
 
 type Data = Outputs['life']['scouting'];
 type Scout = Data['scouts'][number];
@@ -75,12 +76,14 @@ export function ScheduleEditor({
   cls,
   maxLegs,
   maxTargets,
+  followNote,
   onClose,
 }: {
   scout: Scout;
   window: Window;
   labels: Record<string, string>;
   cls: ClassPlayer[];
+  followNote?: string | null;
   maxLegs: number;
   maxTargets: number;
   onClose: () => void;
@@ -112,8 +115,10 @@ export function ScheduleEditor({
     return (
       <TargetPicker
         scout={scout}
+        labels={labels}
         initial={pickingLeg.targets ?? null}
         cls={cls}
+        note={followNote}
         max={maxTargets}
         saving={false}
         error={null}
@@ -276,19 +281,27 @@ function initialLegs(scout: Scout, w: Window, today: number): Leg[] {
   ];
 }
 
-/** Pick up to 10 draft-eligible prospects in one league for a scout to follow. */
+/**
+ * Pick up to 10 draft-eligible prospects for a scout to follow: first a region
+ * (with how well he knows it), then a league in it, then the prospects, with
+ * Central Scouting's rank, your scouts' read and how confident you are in it.
+ */
 export function TargetPicker({
   scout,
+  labels,
   initial,
   saveLabel,
   cls,
   max,
   saving,
   error,
+  note,
   onClose,
   onSave,
 }: {
-  scout: { name: string };
+  scout: { name: string; familiarity: Record<string, number> };
+  /** Region id → label. */
+  labels: Record<string, string>;
   /** Start from this league and these prospects. */
   initial?: { league: string; ids: string[] } | null;
   saveLabel?: (n: number) => string;
@@ -296,65 +309,171 @@ export function TargetPicker({
   max: number;
   saving: boolean;
   error: unknown;
+  /** Why nobody can be followed right now (the offseason). */
+  note?: string | null;
   onClose: () => void;
   onSave: (league: string, ids: string[]) => void;
 }) {
-  const leagues = [...new Set(cls.map((p) => p.league))].sort();
-  const [league, setLeague] = useState(initial?.league ?? leagues[0] ?? '');
+  // Only prospects who are still draft-eligible and playing this season can be followed.
+  const pool = cls.filter((p) => p.followable !== false);
+  const fam = (r: string) => scout.familiarity[r] ?? 0;
+  const leagues = [...new Set(pool.map((p) => p.league))]
+    .map((name) => {
+      const ps = pool.filter((p) => p.league === name);
+      return { name, region: ps[0].region as string, count: ps.length, top: Math.min(...ps.map((p) => p.css?.rank ?? 999)) };
+    })
+    // Leagues in the regions he knows best first.
+    .sort((x, y) => fam(y.region) - fam(x.region) || y.count - x.count || x.name.localeCompare(y.name));
+  const [league, setLeague] = useState(initial?.league && leagues.some((l) => l.name === initial.league) ? initial.league : (leagues[0]?.name ?? ''));
   const [ids, setIds] = useState<string[]>(initial?.ids ?? []);
-  const inLeague = cls.filter((p) => p.league === league).sort((a, b) => (a.css?.rank ?? 999) - (b.css?.rank ?? 999));
+  const [scoutedOnly, setScoutedOnly] = useState(false);
+  const pickLeague = (l: string) => {
+    if (l === league) return;
+    setLeague(l);
+    setIds([]);
+  };
+  const inLeague = pool.filter((p) => p.league === league && (!scoutedOnly || p.scouted));
+  const { sorted, Th } = useSort(
+    inLeague,
+    {
+      name: (p) => p.name.split(' ').slice(-1)[0],
+      pos: (p) => p.pos,
+      age: (p) => p.age,
+      gp: (p) => p.stats?.gp ?? 0,
+      pts: (p) => (p.pos === 'G' ? null : (p.stats?.g ?? 0) + (p.stats?.a ?? 0)),
+      css: (p) => (p.css ? -p.css.rank : null),
+      ovr: (p) => p.overall,
+      pot: (p) => (p.scouted ? p.scoutValue : null),
+      conf: (p) => p.confidence,
+    },
+    { key: 'css' },
+    'target-picker',
+  );
   const toggle = (id: string) => setIds(ids.includes(id) ? ids.filter((x) => x !== id) : ids.length >= max ? ids : [...ids, id]);
+  if (!pool.length)
+    return (
+      <Modal title={`${scout.name}: follow specific prospects`} onClose={onClose}>
+        <p className="text-sm text-ice-300">{note ?? 'There are no draft-eligible prospects to follow right now.'}</p>
+        <div className="mt-3">
+          <Button variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </Modal>
+    );
+  const chosen = leagues.find((l) => l.name === league);
   return (
-    <Modal title={`${scout.name}: follow specific prospects`} onClose={onClose}>
+    <Modal title={`${scout.name}: follow specific prospects`} onClose={onClose} wide>
       <p className="mb-3 text-sm text-ice-300">
         Send him to watch up to {max} prospects in one league. He learns about each of them much faster than he would covering a whole region (the fewer
-        he follows, the faster), but nobody else in the region.
+        he follows, the faster), and faster still in a region he knows well.
       </p>
-      <div className="mb-3 flex flex-wrap items-center gap-3">
-        <select
-          className="slot w-auto"
-          value={league}
-          onChange={(e) => {
-            setLeague(e.target.value);
-            setIds([]);
-          }}
-        >
-          {leagues.map((l) => (
-            <option key={l} value={l}>
-              {l} ({cls.filter((p) => p.league === l).length} prospects)
-            </option>
-          ))}
-        </select>
-        <span className={cx('text-sm', ids.length >= max ? 'text-warn' : 'text-ice-400')}>
+
+      <p className="mb-1.5 text-[11px] font-semibold tracking-wider text-ice-500 uppercase">1 · League</p>
+      <div role="radiogroup" aria-label="League" className="grid max-h-[15rem] grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3 lg:grid-cols-4">
+        {leagues.map((l) => {
+          const v = fam(l.region);
+          return (
+            <button
+              key={l.name}
+              role="radio"
+              aria-checked={league === l.name}
+              onClick={() => pickLeague(l.name)}
+              className={cx(
+                'rounded-lg border p-2 text-left transition-colors',
+                league === l.name ? 'border-blueline bg-blueline/15' : 'border-rink-700 bg-rink-850 hover:border-rink-500',
+              )}
+            >
+              <span className="flex items-baseline justify-between gap-2">
+                <span className="truncate text-sm font-semibold text-white">{l.name}</span>
+                <span className="shrink-0 text-[11px] text-ice-500">{l.count}</span>
+              </span>
+              <span className="block truncate text-[11px] text-ice-400">{labels[l.region] ?? l.region}</span>
+              <span className="mt-1 flex items-center gap-1.5 text-[11px] text-ice-400" title={`How well ${scout.name} knows ${labels[l.region] ?? 'the region'}`}>
+                <span className="h-1 flex-1 rounded-full bg-rink-700">
+                  <span className={cx('block h-1 rounded-full', v >= 70 ? 'bg-win' : v >= 40 ? 'bg-blueline' : 'bg-rink-500')} style={{ width: `${v}%` }} />
+                </span>
+                <span className="tabular">knows it {v}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-ice-400">
+        <span>
+          {chosen ? (
+            <>
+              {chosen.count} prospects in the <span className="text-ice-100">{chosen.name}</span>
+              {chosen.top < 999 ? ` · best Central Scouting rank #${chosen.top}` : ''}
+            </>
+          ) : null}
+        </span>
+        <label className="flex items-center gap-1.5">
+          <input type="checkbox" checked={scoutedOnly} onChange={(e) => setScoutedOnly(e.target.checked)} /> Scouted only
+        </label>
+      </div>
+
+      <p className="mt-4 mb-1.5 flex items-center justify-between text-[11px] font-semibold tracking-wider text-ice-500 uppercase">
+        <span>2 · Prospects</span>
+        <span className={cx('normal-case tracking-normal', ids.length >= max ? 'text-warn' : 'text-ice-400')}>
           {ids.length}/{max} chosen
         </span>
-      </div>
-      <div className="max-h-[26rem] overflow-y-auto rounded-lg border border-rink-700">
+      </p>
+      <div className="max-h-[24rem] overflow-auto rounded-lg border border-rink-700">
         <table className="table text-sm">
-          <thead className="sticky top-0 bg-rink-900">
+          <thead className="sticky top-0 z-10 bg-rink-900">
             <tr>
               <th />
-              <th>Prospect</th>
-              <th>Pos</th>
+              <Th k="name">Prospect</Th>
+              <Th k="pos">Pos</Th>
+              <Th k="age" className="num">Age</Th>
               <th>Club</th>
-              <th className="num">GP</th>
-              <th className="num">P</th>
-              <th className="num" title="Central Scouting rank">CSS</th>
-              <th>Your confidence</th>
+              <Th k="gp" className="num">GP</Th>
+              <Th k="pts" className="num">P</Th>
+              <Th k="css" className="num" title="Central Scouting rank (overall, then on its North American or international list), and movement since the last update">
+                CSS
+              </Th>
+              <Th k="ovr" className="num" title="Current ability, as your scouts see it">
+                OVR
+              </Th>
+              <Th k="pot" className="num" title="Your scouts' read on his potential">
+                Pot
+              </Th>
+              <th>Projection</th>
+              <Th k="conf" title="How sure your scouts are of their read">
+                Confidence
+              </Th>
             </tr>
           </thead>
           <tbody>
-            {inLeague.map((p) => (
-              <tr key={p.id} className={cx('cursor-pointer', ids.includes(p.id) && 'bg-blueline/10')} onClick={() => toggle(p.id)}>
+            {sorted.map((p) => (
+              <tr key={p.id} className={cx('cursor-pointer', ids.includes(p.id) && 'bg-blueline/10', !p.scouted && 'text-ice-400')} onClick={() => toggle(p.id)}>
                 <td>
-                  <input type="checkbox" checked={ids.includes(p.id)} readOnly disabled={!ids.includes(p.id) && ids.length >= max} />
+                  <input type="checkbox" aria-label={`Follow ${p.name}`} checked={ids.includes(p.id)} readOnly disabled={!ids.includes(p.id) && ids.length >= max} />
                 </td>
                 <td className="whitespace-nowrap text-ice-50">{p.name}</td>
                 <td className="text-ice-400">{p.pos}</td>
-                <td className="text-xs text-ice-300">{p.club}</td>
+                <td className="num">{p.age}</td>
+                <td className="text-xs whitespace-nowrap text-ice-300">{p.club}</td>
                 <td className="num">{p.stats?.gp ?? 0}</td>
                 <td className="num">{p.pos === 'G' ? '—' : (p.stats?.g ?? 0) + (p.stats?.a ?? 0)}</td>
-                <td className="num">{p.css?.rank ?? '—'}</td>
+                <td className="num whitespace-nowrap" title={p.css ? `Central Scouting: #${p.css.rank} overall · #${p.css.listRank} ${p.css.list}` : undefined}>
+                  {p.css ? (
+                    <>
+                      <span className="font-semibold text-ice-50">{p.css.rank}</span>
+                      <span className="ml-1 text-[10px] text-ice-500">
+                        {p.css.list.startsWith('NA') ? 'NA' : 'INT'}
+                        {p.css.list.endsWith('goalies') ? ' G' : ''} {p.css.listRank}
+                      </span>{' '}
+                      <CssMove css={p.css} />
+                    </>
+                  ) : (
+                    '—'
+                  )}
+                </td>
+                <td className="num">{p.overall !== null ? <Rating value={p.overall} /> : <span className="text-ice-600">?</span>}</td>
+                <td className={cx('num font-display text-base', p.grade ? GRADE_TONE[p.grade[0]] : 'text-ice-600')}>{p.grade ?? '?'}</td>
+                <td className="text-xs whitespace-nowrap text-ice-300">{p.projection ?? <span className="text-ice-600">Unscouted</span>}</td>
                 <td>
                   <ConfidenceBar value={p.confidence} />
                 </td>
@@ -362,6 +481,7 @@ export function TargetPicker({
             ))}
           </tbody>
         </table>
+        {!sorted.length && <p className="p-4 text-center text-sm text-ice-500">No prospects here{scoutedOnly ? ' that you have scouted' : ''}.</p>}
       </div>
       <ErrorBox error={error} />
       <div className="mt-3 flex gap-2">

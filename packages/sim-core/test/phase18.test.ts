@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { advanceDays, currentLeg, generateLeague, minorLeagueOf, scoutPlanWindow, setScoutPlan, advanceToNextSeason, type League, type Player } from '../src/index';
+import { advanceDays, createLeague, currentLeg, isDraftClass, generateLeague, minorLeagueOf, scoutPlanWindow, setScoutPlan, advanceToNextSeason, type League, type Player } from '../src/index';
 
 describe('scout schedules', () => {
   let L: League;
@@ -70,5 +70,19 @@ describe('scout schedules', () => {
     expect(sc.assignment).toBe('finland');
     advanceDays(L, 21);
     expect(sc.assignment).toBe('russia');
+  }, 120_000);
+
+  it('the draft class is on the ice (and followable) from opening night', () => {
+    const fresh = createLeague({ seed: 1802, name: 'x', start: 'season' } as never);
+    expect(fresh.day).toBe(0);
+    expect(fresh.draftClass?.season).toBe(fresh.season);
+    expect(fresh.teams.HAL.scouts!.length).toBeGreaterThan(0);
+    const p = fresh.players[fresh.draftClass!.ids[0]];
+    expect(isDraftClass(fresh, p)).toBe(true);
+    // After a summer, the new class is there before the first game too.
+    advanceDays(L, 400);
+    advanceToNextSeason(L);
+    expect(L.day).toBe(0);
+    expect(L.draftClass?.season).toBe(L.season);
   }, 120_000);
 });

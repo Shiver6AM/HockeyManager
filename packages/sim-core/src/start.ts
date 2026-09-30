@@ -22,7 +22,7 @@
  */
 import { askingContract, capRoom, LEAGUE_MIN_SALARY } from './contracts';
 import { contenderScore } from './negotiation';
-import { createDraft, runDraft, scoutedPotential } from './draft';
+import { createDraft, ensureDraftClass, runDraft, scoutedPotential } from './draft';
 import { initFarm } from './farmInit';
 import { generateLeague, type GenerateOptions } from './generate';
 import { ensureLeagueLife, standings } from './league';
@@ -32,7 +32,7 @@ import { prospectGameDay } from './prospects';
 import { age, overall } from './ratings';
 import { ensureBodies, healthyRoster } from './roster';
 import { deriveSeed, Rng } from './rng';
-import { scoutingDay } from './scouting';
+import { initScouts, scoutingDay } from './scouting';
 import { suggestTactics } from './systems';
 import type { ContractOffer, FantasyDraft, League, Player, PlayerId, Team, TeamId } from './types';
 
@@ -52,7 +52,13 @@ export interface NewLeagueOptions extends GenerateOptions {
 export function createLeague(opts: NewLeagueOptions): League {
   const start = opts.start ?? 're-sign';
   const first = opts.season ?? 2026; // the first regular season played
-  if (start === 'season' && !opts.fantasy) return generateLeague({ ...opts, season: first });
+  if (start === 'season' && !opts.fantasy) {
+    const L = generateLeague({ ...opts, season: first });
+    // Scouts and this season's draft class exist from opening night, so managers can plan before the first game.
+    initScouts(L);
+    ensureDraftClass(L);
+    return L;
+  }
 
   // The summer before `first`: the league exists as of the end of the previous season.
   const L = generateLeague({ ...opts, season: first - 1 });

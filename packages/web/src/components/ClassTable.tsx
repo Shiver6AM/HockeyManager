@@ -10,7 +10,7 @@ import { useSort } from '../sort';
 import type { Outputs } from '../trpc';
 import { cx, Rating } from './ui';
 
-export type ClassPlayer = NonNullable<Outputs['life']['draftClass']>['players'][number];
+export type ClassPlayer = Omit<NonNullable<Outputs['life']['draftClass']>['players'][number], 'followable'> & { followable?: boolean };
 
 export const GRADE_TONE: Record<string, string> = { A: 'text-win', B: 'text-blue-300', C: 'text-ice-200', D: 'text-ice-400', F: 'text-ice-500' };
 

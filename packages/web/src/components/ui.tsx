@@ -98,7 +98,7 @@ export function Rating({ value }: { value: number }) {
 }
 
 /** Centered dialog; closes on Escape or a click on the backdrop. */
-export function Modal({ title, onClose, children }: { title: ReactNode; onClose: () => void; children: ReactNode }) {
+export function Modal({ title, onClose, children, wide }: { title: ReactNode; onClose: () => void; children: ReactNode; wide?: boolean }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     document.addEventListener('keydown', onKey);
@@ -106,7 +106,7 @@ export function Modal({ title, onClose, children }: { title: ReactNode; onClose:
   }, [onClose]);
   return (
     <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/60 p-4 pt-16" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div role="dialog" aria-modal="true" className="w-full max-w-3xl rounded-xl border border-rink-600 bg-rink-900 shadow-2xl shadow-black/60">
+      <div role="dialog" aria-modal="true" className={cx('w-full rounded-xl', wide ? 'max-w-5xl' : 'max-w-3xl', 'border border-rink-600 bg-rink-900 shadow-2xl shadow-black/60')}>
         <header className="flex items-center justify-between border-b border-rink-700 px-4 py-2.5">
           <h2 className="font-display text-sm font-semibold tracking-wider text-ice-200 uppercase">{title}</h2>
           <button onClick={onClose} className="rounded px-2 text-lg text-ice-400 hover:text-white" aria-label="Close">
