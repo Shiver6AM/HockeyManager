@@ -68,7 +68,12 @@ export function ScoutingPage() {
         </div>
       </Card>
 
-      <Scouts d={d} labels={labels} cls={cls.data?.players ?? []} />
+      <Scouts
+        d={d}
+        labels={labels}
+        cls={cls.data?.players ?? []}
+        followNote={cls.data ? cls.data.followNote : cls.isLoading ? 'Loading the draft class…' : 'Next season’s draft class takes the ice on opening night.'}
+      />
 
       {cls.data && (
         <Card title={`Central Scouting rankings · ${cls.data.cssEdition}`}>
@@ -88,7 +93,7 @@ export function ScoutingPage() {
   );
 }
 
-function Scouts({ d, labels, cls }: { d: Data; labels: Record<string, string>; cls: ClassPlayer[] }) {
+function Scouts({ d, labels, cls, followNote }: { d: Data; labels: Record<string, string>; cls: ClassPlayer[]; followNote: string | null }) {
   const L = useLeague();
   const trpc = useTRPC();
   const qc = useQueryClient();
@@ -120,8 +125,10 @@ function Scouts({ d, labels, cls }: { d: Data; labels: Record<string, string>; c
         {picking && (
           <TargetPicker
             scout={picking}
+            labels={labels}
             initial={picking.following ? { league: picking.following.league, ids: picking.following.players.map((p) => p.id) } : null}
             cls={cls}
+            note={followNote}
             max={d.maxTargets}
             saving={target.isPending}
             error={target.error}
@@ -137,6 +144,7 @@ function Scouts({ d, labels, cls }: { d: Data; labels: Record<string, string>; c
             window={d.planWindow}
             labels={labels}
             cls={cls}
+            followNote={followNote}
             maxLegs={d.maxLegs}
             maxTargets={d.maxTargets}
             onClose={() => setPlanning(null)}

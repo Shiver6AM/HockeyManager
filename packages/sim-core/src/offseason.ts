@@ -34,7 +34,7 @@ import {
 import { aiValuation, askFromTeam, offerUtility, respondToOffer, type OfferResult } from './negotiation';
 import { aiWouldQualify, holdArbitration, openCase, openRfaCase, resolveOfferSheets, settlePending, settleRfaCase } from './rfa';
 import { developPlayer, retirementChance } from './development';
-import { createDraft, runDraft, scoutedPotential } from './draft';
+import { createDraft, ensureDraftClass, runDraft, scoutedPotential } from './draft';
 import { generatePlayer, talentStats } from './generate';
 import { autoLines } from './lines';
 import { age, overall } from './ratings';
@@ -1073,6 +1073,8 @@ function startNewSeason(league: League) {
   }
   league.schedule = buildSchedule(Object.values(league.teams), new Rng(deriveSeed(league.seed, `schedule:${league.season}`)));
   setOwnerGoals(league);
+  // Next summer's draft class takes the ice now, so scouts can plan to follow it from opening night.
+  ensureDraftClass(league);
   if (league.newsState) league.newsState.streaks = {};
 }
 
