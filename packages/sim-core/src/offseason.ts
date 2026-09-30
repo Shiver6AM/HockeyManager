@@ -37,7 +37,7 @@ import {
 import { aiValuation, askFromTeam, offerUtility, respondToOffer, type OfferResult } from './negotiation';
 import { aiWouldQualify, holdArbitration, openCase, openRfaCase, resolveOfferSheets, settlePending, settleRfaCase } from './rfa';
 import { developPlayer, retirementChance } from './development';
-import { createDraft, ensureDraftClass, runDraft, scoutedPotential } from './draft';
+import { createDraft, ensureDraftClass, holdLottery, resetDraftClock, runDraft, scoutedPotential, startDraftClock } from './draft';
 import { generatePlayer, talentStats } from './generate';
 import { autoLines } from './lines';
 import { age, overall } from './ratings';
@@ -199,7 +199,7 @@ export function startOffseason(league: League, st: StandingsRow[]) {
     }
   }
 
-  const { state: draft, prospects } = createDraft(league, st, league.season);
+  const { state: draft, prospects } = createDraft(league, st, league.season, { lotteryPending: true });
   for (const p of prospects) league.players[p.id] = p;
 
   league.negotiations = {};
@@ -213,7 +213,7 @@ export function startOffseason(league: League, st: StandingsRow[]) {
     development,
   };
   league.phase = 'offseason';
-  runDraft(league, { force: false });
+  // The lottery is drawn next, then the draft runs on the clock (or is simmed).
 }
 
 /**
@@ -262,13 +262,13 @@ export interface StepResult {
  * Advance the offseason. In the draft, one step makes picks until a human is
  * on the clock; with `force` it auto-picks for humans and finishes the draft.
  */
-export function offseasonStep(league: League, opts: { force: boolean }): StepResult {
+export function offseasonStep(league: League, opts: { force: boolean; now?: number }): StepResult {
   const r = offseasonStepInner(league, opts);
   newsFromTransactions(league);
   return r;
 }
 
-function offseasonStepInner(league: League, opts: { force: boolean }): StepResult {
+function offseasonStepInner(league: League, opts: { force: boolean; now?: number }): StepResult {
   if (league.phase !== 'offseason') throw new Error('Not in the offseason');
   if (!league.offseason) {
     startOffseason(league, standings(league));
@@ -284,8 +284,25 @@ function offseasonStepInner(league: League, opts: { force: boolean }): StepResul
       return { from, to: next, note: 'The fantasy draft is complete' };
     }
     case 'draft': {
+      const d = os.draft;
+      // First the lottery (simmed: the result is shown at once).
+      if (d.lotteryHeld === false) {
+        holdLottery(league);
+        return { from, to: 'draft', note: 'The draft lottery has been drawn' };
+      }
+      const now = opts.now ?? Date.now();
+      if (!opts.force && !d.clock && d.current < d.picks.length) {
+        // Not simmed: the draft runs on the clock, pick by pick.
+        startDraftClock(league, now);
+        return { from, to: 'draft', note: 'The draft is under way' };
+      }
+      // Simmed (or skipping ahead): AI teams pick until a manager is on the clock.
       const made = runDraft(league, { force: opts.force });
-      if (os.draft.current < os.draft.picks.length) return { from, to: 'draft', note: `${made} picks made; a manager is on the clock` };
+      if (d.current < d.picks.length) {
+        if (d.clock) resetDraftClock(league, now);
+        return { from, to: 'draft', note: `${made} picks made; a manager is on the clock` };
+      }
+      delete d.clock;
       finishDraft(league);
       answerPendingOffers(league);
       os.stage = 're-sign';

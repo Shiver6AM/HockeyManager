@@ -23,6 +23,8 @@ import {
   type League,
   type TradeAsset,
   type TradeProposal,
+  OWNER_GOAL_LABEL,
+  standings,
 } from '@hockey-gm/sim-core';
 import { z } from 'zod';
 import { mutateLeague } from '../advance';
@@ -166,6 +168,42 @@ export const tradesRouter = router({
           };
         }),
     };
+  }),
+
+  /**
+   * Every team, in league-standings order, with its record, the owner's goal
+   * for the season and (AI teams) its front office's direction: who's buying,
+   * who's selling.
+   */
+  partners: memberProcedure.query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    const st = standings(L);
+    const managers = new Map(
+      (
+        await ctx.db.query<{ team_id: string; display_name: string }>(
+          'select m.team_id, u.display_name from league_members m join users u on u.id = m.user_id where m.league_id = $1 and m.team_id is not null',
+          [input.leagueId],
+        )
+      ).map((r) => [r.team_id, r.display_name]),
+    );
+    return st.map((r, i) => {
+      const t = L.teams[r.teamId];
+      return {
+        rank: i + 1,
+        team: teamInfo(t),
+        gp: r.gp,
+        w: r.w,
+        l: r.l,
+        otl: r.otl,
+        pts: r.pts,
+        pointsPct: r.gp ? r.pts / (2 * r.gp) : null,
+        diff: r.gf - r.ga,
+        manager: managers.get(t.id) ?? null,
+        goal: t.owner ? OWNER_GOAL_LABEL[t.owner.goal] : null,
+        goalKey: t.owner?.goal ?? null,
+        strategy: t.controller.kind === 'ai' ? t.controller.strategy : null,
+      };
+    });
   }),
 
   status: memberProcedure.query(async ({ ctx, input }) => {

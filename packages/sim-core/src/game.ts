@@ -9,7 +9,7 @@
  *
  * All tuning constants live in TUNING so the calibration harness can adjust them.
  */
-import { clamp, Rng } from './rng';
+import { clamp, deriveSeed, Rng } from './rng';
 import { CHEMISTRY, SLOT_BASIS, slotBonusOf, unitChemistry } from './chemistry';
 import { completeLines } from './lines';
 import { defensiveDrive, goalieQuality, offensiveDrive } from './ratings';
@@ -47,6 +47,7 @@ import type {
   GoalieGameLine,
   League,
   PenaltyEvent,
+  PlayEvent,
   PlayerId,
   SkaterGameLine,
   Strength,
@@ -252,6 +253,8 @@ export interface GameContext {
   playoff?: boolean;
   homeBackToBack?: boolean;
   awayBackToBack?: boolean;
+  /** Record a play-by-play here (for simcasts). Recording never changes the result. */
+  pbp?: PlayEvent[];
 }
 
 const SEVERITIES: InjurySeverity[] = ['day-to-day', 'short-term', 'medium-term', 'long-term', 'season-ending'];
@@ -408,6 +411,50 @@ export function simulateGame(
   let overtime = false;
   /** Regular-season OT is 3v3; playoff OT is full-strength sudden death. */
   let threeOnThree = false;
+
+  // ---- Play-by-play (simcasts): its own random stream, so the game plays out exactly the same ----
+  const rec = ctx.pbp;
+  const locRng = rec ? new Rng(deriveSeed(seed, 'pbp')) : null;
+  const ev = (e: Omit<PlayEvent, 't' | 'period' | 'clock' | 'homeScore' | 'awayScore' | 'homeShots' | 'awayShots'>) => {
+    if (!rec) return;
+    rec.push({
+      t: gameT,
+      period,
+      clock,
+      homeScore: home.line.goals,
+      awayScore: away.line.goals,
+      homeShots: home.line.shots,
+      awayShots: away.line.shots,
+      ...e,
+    });
+  };
+  /** Where a shot came from: defensemen from the point, rebounds from the crease, the rest mostly from the slot. */
+  const shotSpot = (s: Side, shooter: GP, kind: 'rebound' | 'shot' | 'goal' | 'empty') => {
+    const r = locRng!;
+    let dist: number;
+    let spread: number;
+    if (kind === 'empty') {
+      dist = 25 + r.next() * 90;
+      spread = 0.5;
+    } else if (kind === 'rebound') {
+      dist = 4 + r.next() * 10;
+      spread = 0.9;
+    } else if (shooter.pos === 'D' && r.chance(0.8)) {
+      dist = 42 + r.next() * 20;
+      spread = 0.75;
+    } else {
+      dist = 8 + Math.pow(r.next(), 1.4) * (kind === 'goal' ? 30 : 45);
+      spread = 1.05;
+    }
+    const a = (r.next() * 2 - 1) * spread;
+    let x = 89 - dist * Math.cos(a);
+    let y = dist * Math.sin(a);
+    y = clamp(y, -38, 38);
+    x = clamp(x, -95, 86);
+    // Teams change ends every period: home attacks the right-hand net in periods 1, 3 and 5.
+    const right = (s === home) === (period % 2 === 1);
+    return { x: Math.round((right ? x : -x) * 10) / 10, y: Math.round((right ? y : -y) * 10) / 10 };
+  };
 
   // ---- Fatigue: energy is updated lazily whenever a player's on-ice status is touched ----
   const touch = (p: GP) => {
@@ -742,6 +789,11 @@ export function simulateGame(
     goals.push({ period, time: clock, teamId: s.team.id, scorer: scorer.id, assists, strength });
   };
 
+  const goalEvent = (s: Side, scorer: GP, rebound: boolean, spot: { x: number; y: number }) => {
+    const g = goals[goals.length - 1];
+    ev({ type: 'goal', side: s.key, player: scorer.id, assists: g.assists, strength: g.strength, rebound, ...spot });
+  };
+
   /** Resolve one shot attempt. Returns 'goal' | 'stoppage' | 'rebound' | 'play'. */
   const shotAttempt = (s: Side, rebound: boolean): 'goal' | 'stoppage' | 'rebound' | 'play' => {
     const o = other(s);
@@ -765,12 +817,16 @@ export function simulateGame(
         const blocker = weightedPick(rng, o.onIce, (p) => (p.pos === 'D' ? 1.8 : 1) * Math.exp((p.block - 70) / 15));
         skaters[blocker.id].blk++;
         o.line.blocks++;
+        if (rec) ev({ type: 'block', side: s.key, player: shooter.id, other: blocker.id, ...shotSpot(s, shooter, 'shot') });
         return 'play';
       }
     }
     // Missed the net?
     const pMiss = clamp(T.missBase * Math.exp((-0.2 * (shooter.shoot - 70)) / 10) * (emptyNet ? 1.3 : 1) * (shooter.tb?.miss ?? 1), 0.1, 0.5);
-    if (rng.chance(pMiss)) return rng.chance(T.missStoppage) ? 'stoppage' : 'play';
+    if (rng.chance(pMiss)) {
+      if (rec) ev({ type: 'miss', side: s.key, player: shooter.id, rebound, ...shotSpot(s, shooter, emptyNet ? 'empty' : rebound ? 'rebound' : 'shot') });
+      return rng.chance(T.missStoppage) ? 'stoppage' : 'play';
+    }
 
     // On goal.
     skaters[shooter.id].sog++;
@@ -778,8 +834,10 @@ export function simulateGame(
     if (emptyNet) {
       if (rng.chance(T.shPct.EN)) {
         creditGoal(s, shooter, false);
+        if (rec) goalEvent(s, shooter, false, shotSpot(s, shooter, 'empty'));
         return 'goal';
       }
+      if (rec) ev({ type: 'shot', side: s.key, player: shooter.id, ...shotSpot(s, shooter, 'empty'), text: 'wide of the empty net' });
       return 'play';
     }
     goalies[o.goalie].sa++;
@@ -804,10 +862,17 @@ export function simulateGame(
     pGoal = clamp(pGoal, 0.01, 0.6);
     if (rng.chance(pGoal)) {
       creditGoal(s, shooter, rebound);
+      if (rec) goalEvent(s, shooter, rebound, shotSpot(s, shooter, rebound ? 'rebound' : 'goal'));
       return 'goal';
     }
-    if (!rebound && rng.chance(T.reboundChance * s.sys.rebound * (g.tb?.rebCtl ?? 1))) return 'rebound';
-    return rng.chance(T.freezeChance) ? 'stoppage' : 'play';
+    const spot = rec ? shotSpot(s, shooter, rebound ? 'rebound' : 'shot') : null;
+    if (!rebound && rng.chance(T.reboundChance * s.sys.rebound * (g.tb?.rebCtl ?? 1))) {
+      if (rec) ev({ type: 'shot', side: s.key, player: shooter.id, other: o.goalie, rebound, ...spot!, text: 'rebound' });
+      return 'rebound';
+    }
+    const frozen = rng.chance(T.freezeChance);
+    if (rec) ev({ type: 'shot', side: s.key, player: shooter.id, other: o.goalie, rebound, ...spot!, text: frozen ? 'covered' : undefined });
+    return frozen ? 'stoppage' : 'play';
   };
 
   const takePenalty = (s: Side) => {
@@ -824,6 +889,7 @@ export function simulateGame(
     o.ppClock = 0;
     s.ppClock = 0;
     penalties.push({ period, time: clock, teamId: s.team.id, playerId: offender.id, minutes, infraction: inf });
+    if (rec) ev({ type: 'penalty', side: s.key, player: offender.id, text: `${inf}, ${minutes} minutes` });
   };
 
   /** Fighting majors: offsetting 5-minute penalties, no power play. */
@@ -836,12 +902,14 @@ export function simulateGame(
       s.line.pim += 5;
       penalties.push({ period, time: clock, teamId: s.team.id, playerId: p.id, minutes: 5, infraction: 'Fighting' });
     }
+    if (rec) ev({ type: 'fight', side: 'home', player: h.id, other: a.id, text: 'Fighting, 5 minutes each' });
   };
 
   const hit = (s: Side) => {
     const h = weightedPick(rng, s.onIce, (p) => Math.exp((p.check - 70) / 10) * (p.tb?.hit ?? 1));
     skaters[h.id].hits++;
     s.line.hits++;
+    if (rec) ev({ type: 'hit', side: s.key, player: h.id, other: locRng!.pick(other(s).onIce).id });
   };
 
   /** A skater (or occasionally a goalie) gets hurt and leaves the game. */
@@ -862,6 +930,7 @@ export function simulateGame(
     const inj = sampleInjury(rng);
     if (K.injuryLength !== 1) inj.days = Math.max(1, Math.round(inj.days * K.injuryLength));
     injuries.push({ period, time: clock, teamId: s.team.id, playerId: victim, type: inj.type, severity: inj.severity, days: inj.days });
+    if (rec) ev({ type: 'injury', side: s.key, player: victim, other: goalie ? s.goalie : undefined, text: `${inj.type} injury` });
     return true;
   };
 
@@ -875,6 +944,7 @@ export function simulateGame(
     if (shouldPull !== s.goaliePulled) {
       s.goaliePulled = shouldPull;
       s.goalieIn = !shouldPull;
+      if (rec) ev({ type: shouldPull ? 'goalie-pulled' : 'goalie-back', side: s.key, player: s.goalie });
       return true;
     }
     return false;
@@ -936,6 +1006,7 @@ export function simulateGame(
       s.dLeft = clamp(rng.normal(50, 9), 25, 80);
     }
     refreshBoth();
+    if (rec) ev({ type: 'period-start', side: null });
     faceoff();
     const len = periodLength(period);
     // Event rates that are constant through the period.
@@ -986,7 +1057,7 @@ export function simulateGame(
         lastWasRebound = null;
         const r = shotAttempt(s, true);
         if (r === 'goal') {
-          if (overtime) return;
+          if (overtime) return endPeriod();
           refreshBoth();
           faceoff();
         } else if (r === 'stoppage') faceoff();
@@ -1007,7 +1078,7 @@ export function simulateGame(
         const s = shooterSide;
         const r = shotAttempt(s, false);
         if (r === 'goal') {
-          if (overtime) return;
+          if (overtime) return endPeriod();
           refreshBoth();
           faceoff();
         } else if (r === 'rebound') lastWasRebound = s;
@@ -1035,6 +1106,10 @@ export function simulateGame(
         injury(away, true);
       } else faceoff();
     }
+    endPeriod();
+  };
+  const endPeriod = () => {
+    if (rec) ev({ type: 'period-end', side: null });
   };
 
   for (period = 1; period <= 3; period++) {
@@ -1047,6 +1122,7 @@ export function simulateGame(
           s.goalie = s.backup;
           s.backup = out;
           goalies[s.goalie] ??= { sa: 0, ga: 0, toi: 0, decision: null };
+          if (rec) ev({ type: 'goalie-change', side: s.key, player: out, other: s.goalie });
         }
       }
     }
@@ -1069,8 +1145,10 @@ export function simulateGame(
       shootout = true;
       const winner = runShootout(rng, league, home.lines, away.lines, gp[home.goalie].gq, gp[away.goalie].gq);
       (winner === 'home' ? home : away).line.goals++;
+      if (rec) ev({ type: 'shootout', side: winner, text: 'wins the shootout' });
     }
   }
+  if (rec) ev({ type: 'final', side: home.line.goals > away.line.goals ? 'home' : 'away' });
 
   // ---- Decisions, GWG, stars ----
   const homeWon = home.line.goals > away.line.goals;

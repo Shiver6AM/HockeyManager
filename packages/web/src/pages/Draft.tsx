@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Rating, Spinner, TeamChip } from '../components/ui';
 import { useTRPC } from '../trpc';
 import { ClassTable, CssRankings, GRADE_TONE } from '../components/ClassTable';
+import { DraftClockBar, DraftLottery, useDraftOverview, useServerNow } from '../components/DraftRoom';
 import { useLeague } from './LeagueLayout';
 
 
@@ -11,10 +12,11 @@ export function DraftPage() {
   const L = useLeague();
   const trpc = useTRPC();
   const qc = useQueryClient();
-  const board = useQuery({ ...trpc.offseason.draftBoard.queryOptions({ leagueId: L.id }), refetchInterval: 4000 });
+  const board = useQuery({ ...trpc.offseason.draftBoard.queryOptions({ leagueId: L.id }), refetchInterval: 2500 });
+  const ov = useDraftOverview(L.id);
+  const now = useServerNow(ov.data?.draft.clock?.serverNow, ov.dataUpdatedAt);
   const pick = useMutation(trpc.offseason.makePick.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));
   const saveList = useMutation(trpc.offseason.setDraftList.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));
-  const start = useMutation(trpc.offseason.proceed.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));
   const [round, setRound] = useState<number | null>(null);
   const b = board.data;
   const byId = useMemo(() => new Map(b?.available.map((p) => [p.id, p]) ?? []), [b]);
@@ -24,7 +26,10 @@ export function DraftPage() {
   const clock = b.picks[b.current];
   const done = b.current >= b.picks.length;
   const mine = !!clock && clock.teamId === b.myTeamId;
-  const inDraftStage = L.phase === 'offseason';
+  const inDraftStage = L.phase === 'offseason' && ov.data?.stage === 'draft';
+  const d = ov.data?.draft;
+  const lotteryLive = !!d?.lotteryShow && now < d.lotteryShow.startedAt + d.lotteryShow.length;
+  const canPick = mine && inDraftStage && !!d?.lotteryHeld && !lotteryLive;
   const shownRound = round ?? (clock?.round ?? 1);
   const list = b.myList;
   const setList = (ids: string[]) => saveList.mutate({ leagueId: L.id, playerIds: ids });
@@ -33,35 +38,38 @@ export function DraftPage() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-display text-2xl font-semibold tracking-wide text-white uppercase">{b.season} Entry Draft</h1>
-        {done ? (
-          <Badge tone="good">Draft complete</Badge>
-        ) : (
-          clock && (
-            <div className={cx('flex items-center gap-3 rounded-lg border px-3 py-2', mine ? 'border-goal bg-goal/10' : 'border-rink-600 bg-rink-900')}>
-              <TeamChip team={clock.team} />
-              <div className="text-sm">
-                <p className="font-semibold text-white">{mine ? "You're on the clock" : `${clock.team.city} ${clock.team.name}`}</p>
-                <p className="text-ice-400">
-                  Round {clock.round} · Pick #{clock.overall}
-                </p>
-              </div>
-            </div>
-          )
-        )}
+        {done && <Badge tone="good">Draft complete</Badge>}
       </div>
-      <ErrorBox error={pick.error ?? saveList.error ?? start.error} />
-      {!done && b.current === 0 && inDraftStage && L.freshStart && (
-        <Card>
-          <p className="text-sm text-ice-200">
-            The draft hasn't started. Managers: claim your team first, and set your draft list if you like. Once it starts, picks run automatically for AI
-            teams and stop whenever a manager is on the clock.
-          </p>
-          {L.canAdvance && (
-            <Button className="mt-3" disabled={start.isPending} onClick={() => start.mutate({ leagueId: L.id })}>
-              {start.isPending ? 'Starting…' : 'Start the draft'}
-            </Button>
-          )}
-        </Card>
+      <ErrorBox error={pick.error ?? saveList.error} />
+      {d && inDraftStage && <DraftLottery leagueId={L.id} draft={d} canAdvance={!!L.canAdvance} now={now} />}
+      {d && inDraftStage && !done && !lotteryLive && (
+        <DraftClockBar
+          leagueId={L.id}
+          draft={d}
+          canAdvance={!!L.canAdvance}
+          now={now}
+          mine={mine}
+          onClockTeam={
+            clock && (
+              <div className="flex items-center gap-3">
+                <TeamChip team={clock.team} />
+                <div className="text-sm">
+                  <p className="font-semibold text-white">{mine ? "You're on the clock" : `${clock.team.city} ${clock.team.name}`}</p>
+                  <p className="text-ice-400">
+                    Round {clock.round} · Pick #{clock.overall}
+                    {clock.originalTeamId !== clock.teamId && ` · via ${clock.originalTeamId}`}
+                  </p>
+                </div>
+              </div>
+            )
+          }
+        />
+      )}
+      {!done && inDraftStage && (
+        <p className="text-xs text-ice-400">
+          Trades stay open all draft long, picks included: <Link to={`/league/${L.id}/trades`} className="text-ice-200 hover:underline">make a deal</Link>{' '}
+          while the clock runs. If you run out of time, you get the top player on your list (or your scouts' pick).
+        </p>
       )}
 
       <Card title="Central Scouting final rankings">
@@ -82,7 +90,7 @@ export function DraftPage() {
               leagueId={L.id}
               storageKey="draft-board"
               action={(p) =>
-                mine && inDraftStage ? (
+                canPick ? (
                   <Button className="px-2 py-0.5 text-xs" onClick={() => pick.mutate({ leagueId: L.id, playerId: p.id })} disabled={pick.isPending}>
                     Draft
                   </Button>

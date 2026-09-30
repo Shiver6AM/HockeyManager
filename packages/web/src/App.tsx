@@ -22,6 +22,7 @@ import { StatsPage } from './pages/Stats';
 import { TeamPage } from './pages/Team';
 import { TeamsPage } from './pages/Teams';
 import { TradesPage } from './pages/Trades';
+import { SimcastPage } from './pages/Simcast';
 import { useTRPC } from './trpc';
 import { FantasyDraftPage } from './pages/FantasyDraft';
 
@@ -51,6 +52,7 @@ export function App() {
         <Route path="waivers" element={<WaiversPage />} />
         <Route path="player/:playerId" element={<PlayerPage />} />
         <Route path="trades" element={<TradesPage />} />
+        <Route path="simcast" element={<SimcastPage />} />
         <Route path="news" element={<NewsPage />} />
         <Route path="history" element={<HistoryPage />} />
       </Route>

@@ -413,6 +413,31 @@ export interface Transaction {
   note: string;
 }
 
+/** One play in a game's play-by-play (recorded only when a game is simcast). */
+export interface PlayEvent {
+  /** Seconds since the opening faceoff. */
+  t: number;
+  period: number;
+  /** Seconds into the period. */
+  clock: number;
+  type: 'period-start' | 'period-end' | 'faceoff' | 'shot' | 'miss' | 'block' | 'goal' | 'penalty' | 'fight' | 'hit' | 'injury' | 'goalie-pulled' | 'goalie-back' | 'goalie-change' | 'shootout' | 'final';
+  side: 'home' | 'away' | null;
+  player?: PlayerId;
+  /** The goalie who saved it, the blocker, the player hit, the other fighter, a new goalie. */
+  other?: PlayerId;
+  assists?: PlayerId[];
+  strength?: Strength;
+  rebound?: boolean;
+  /** Where the shot was taken, in feet from center ice (x toward the far goal, y across). */
+  x?: number;
+  y?: number;
+  text?: string;
+  homeScore: number;
+  awayScore: number;
+  homeShots: number;
+  awayShots: number;
+}
+
 export interface GameSummary {
   homeScore: number;
   awayScore: number;
@@ -480,6 +505,8 @@ export interface League {
   scoutPool?: Scout[];
   /** This season's junior/AHL stats for prospects. */
   prospectStats?: Record<PlayerId, MinorLine>;
+  /** Games already played out for a simcast, used when their day is simmed. */
+  presimmed?: PresimmedGame[];
   news?: NewsItem[];
   /** Bookkeeping for news generation (streaks, processed transactions). */
   newsState?: { txCursor: number; streaks: Record<TeamId, number>; nextId: number };
@@ -533,6 +560,39 @@ export interface DraftState {
   current: number;
   /** Teams that moved up in the lottery: [teamId, from, to]. */
   lottery: Array<[TeamId, number, number]>;
+  /** False until the lottery is drawn (left out: already drawn, as in older saves). */
+  lotteryHeld?: boolean;
+  /** Lottery teams worst first, with their odds (%) of winning a draw. */
+  lotteryOdds?: Array<[TeamId, number]>;
+  /** The draw's result, decided when the draft was created and applied when it's held. Never shown before then. */
+  lotteryPlan?: { order: TeamId[]; lottery: Array<[TeamId, number, number]> };
+  /** When the draw was shown live (ms since epoch): clients reveal it pick by pick from then. */
+  lotteryShow?: number;
+  /** The draft clock. Absent until the draft is started (or when it's simmed straight through). */
+  clock?: DraftClock;
+}
+
+/** A game already played out for a simcast; the day's sim uses this result. */
+export interface PresimmedGame {
+  season: number;
+  day: number;
+  gameId: number;
+  result: GameSummary;
+  events?: PlayEvent[];
+}
+
+export interface DraftClock {
+  /** Time allowed per pick (ms). */
+  perPick: number;
+  /** The pick (index into picks) and team the clock is running for. */
+  pick: number;
+  teamId: TeamId;
+  /** When the manager on the clock runs out of time (his scouts' choice is taken). */
+  deadline: number;
+  /** When an AI team on the clock makes its pick. */
+  aiAt: number | null;
+  /** Paused: the time that was left (ms), and for an AI team, until its pick. */
+  paused?: { left: number; aiLeft: number | null };
 }
 
 export interface ContractOffer {

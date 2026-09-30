@@ -15,8 +15,11 @@ import {
   advanceDays,
   ensureLeagueLife,
   newsFromTransactions,
+  draftClockDue,
+  draftTick,
   offseasonStep,
   onTheClock,
+  syncDraftClock,
   tradeDeadline,
   type AdvanceMode,
   type AdvanceResult,
@@ -31,6 +34,7 @@ import { Cron } from 'croner';
 import type { Db, Queryable } from './db';
 import { deliver, deliverAll, humanTeams, type Notice } from './notify';
 import { extractBoxScores, loadForUpdate, saveLeague } from './state';
+import { simcastBlocking } from './simcast';
 
 export type AdvanceTarget = { days: number } | { to: 'playoffs' | 'end-of-season' | 'next-season' | 'trade-deadline' | 'free-agency' | 'training-camp' };
 
@@ -184,6 +188,7 @@ export async function startAdvance(
   opts: { startedBy?: string | null; onDone?: (j: SimJob) => void } = {},
 ): Promise<{ job: SimJob; finished: Promise<SimJob> }> {
   if (isSimming(leagueId)) throw new Error('The league is already simming');
+  if (simcastBlocking(leagueId)) throw new Error('A game is being simcast. The league can sim once it ends (or its host ends it).');
   const first = await db.tx(async (q) => loadForUpdate(q, leagueId));
   const L = first.league;
   ensureLeagueLife(L);
@@ -284,6 +289,7 @@ async function runJob(db: Db, job: SimJob, L: League, version: number, triggered
     all.toDay = L.day;
     job.toDay = L.day;
     await persist(true);
+    noteDraftClock(db, job.leagueId, L);
     job.status = job.cancel ? 'cancelled' : 'done';
   } finally {
     job.finishedAt = Date.now();
@@ -442,10 +448,70 @@ export function mutateLeague<T>(db: Db, leagueId: string, fn: (league: League, q
       const { league, version } = await loadForUpdate(q, leagueId);
       const out = await fn(league, q);
       newsFromTransactions(league); // trades, signings and releases made between advances
+      // A pick made or traded mid-draft: keep the draft clock in step.
+      syncDraftClock(league, Date.now());
       await saveLeague(q, leagueId, league, version);
+      noteDraftClock(db, leagueId, league);
       return out;
     }),
   );
+}
+
+/*
+ * The draft clock. Leagues with a running draft are kept here with the time
+ * their clock next needs attention; a timer makes AI picks when they're due and
+ * auto-picks for managers who run out of time. (After a restart, a league is
+ * picked up again the next time anyone looks at it.)
+ */
+const draftDue = new Map<string, { at: number; db: Db }>();
+let draftTimer: ReturnType<typeof setInterval> | null = null;
+const DRAFT_TICK_MS = 1000;
+
+export function noteDraftClock(db: Db, leagueId: string, L: League) {
+  const at = draftClockDue(L);
+  if (at == null) draftDue.delete(leagueId);
+  else draftDue.set(leagueId, { at, db });
+  if (draftDue.size && !draftTimer) {
+    draftTimer = setInterval(() => void runDraftClocks(), DRAFT_TICK_MS);
+    draftTimer.unref?.();
+  }
+  if (!draftDue.size && draftTimer) {
+    clearInterval(draftTimer);
+    draftTimer = null;
+  }
+}
+
+let clocksBusy = false;
+async function runDraftClocks() {
+  if (clocksBusy) return;
+  clocksBusy = true;
+  try {
+    const now = Date.now();
+    for (const [leagueId, e] of [...draftDue]) {
+      if (now < e.at || isSimming(leagueId)) continue;
+      try {
+        await mutateLeague(e.db, leagueId, async (L, q) => {
+          const before = onTheClock(L);
+          const made = draftTick(L, Date.now());
+          if (L.offseason?.stage === 'draft' && !onTheClock(L)) {
+            offseasonStep(L, { force: false }); // the draft is over: on to re-signing
+            await deliverAll(q, leagueId, 'offseason', 'The draft is complete. The re-signing window is open.', '/offseason');
+          }
+          const next = onTheClock(L);
+          if (made && next && next.overall !== before?.overall && L.teams[next.teamId].controller.kind === 'human') {
+            await deliver(q, leagueId, [{ teamId: next.teamId, kind: 'draft', text: `You're on the clock: round ${next.round}, pick #${next.overall}.`, link: '/draft' }]);
+          }
+        });
+      } catch (err) {
+        if (!(err instanceof SimBusyError)) {
+          // Try again shortly rather than spinning on a broken league.
+          draftDue.set(leagueId, { at: Date.now() + 10_000, db: e.db });
+        }
+      }
+    }
+  } finally {
+    clocksBusy = false;
+  }
 }
 
 /** True when every human-managed team's manager has readied up. */

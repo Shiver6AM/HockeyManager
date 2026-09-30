@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 154 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 183 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -127,6 +127,20 @@ Pick one of two modes on the **League** tab (commissioner only):
 Your **Ready** toggle (with the count of ready managers) and, if you can advance, the
 **Sim 1 day ▾** button sit in the top bar on every screen. The home page shows today's
 games and the most recent results.
+
+The badge in the top bar says exactly where the league is: *Opening night*, *Regular
+season · deadline in 3d*, *Conference finals*, *Draft lottery*, *Pre-draft*, *Entry draft ·
+pick 25 of 224*, *Re-signing window · day 2 of 7*, *Free agency · day 4 of 10*,
+*Pre-season · training camp*.
+
+**Simcast.** Any manager can watch one of the next game day's games live (📺 *Simcast* in
+the top bar): a rink with every shot where it was taken (goals, saves, misses and blocks
+in each team's color), the home team's logo at center ice, a scoreboard and a running
+play-by-play. Whoever started it (or a commissioner) can change the speed (1× to 30×),
+pause, skip a period or intermission, or skip to the final. Everyone else in the league
+gets a **Join simcast** button next to *Ready* and *Sim*. While a simcast is on, the league
+can't sim; the game is played out when the simcast starts and the day's sim uses that
+exact result.
 
 Every advance, whatever triggered it, goes through the same code path: take a lock,
 simulate, save the state and box scores, clear ready flags, and write to the audit log
@@ -269,7 +283,7 @@ anyone who hasn't acted gets sensible defaults.
 | Stage | What happens | What you do |
 |---|---|---|
 | **Season review** | Nothing changes yet, so final stats and awards can be browsed | Look around |
-| **Entry draft** | A new class of ~260 teenagers and an NHL-style lottery (two draws, max 10-spot jump); 7 rounds | Pick when you're on the clock, or rank a **draft list** that's used if you're away. Trades stay open, including this year's unused picks |
+| **Entry draft** | A new class of ~260 teenagers and an NHL-style lottery (two draws, max 10-spot jump); 7 rounds on a **3-minute clock** per pick | The commissioner **sims the lottery** or runs it **live** (the odds table, then picks revealed from #16 up to #1 for everyone watching). Each pick gets 3 minutes; AI teams pick after 90 seconds to 3 minutes, and a manager who runs out of time gets his **draft list**'s (or scouts') top choice. The commissioner can pause, **skip to the next manager's pick**, or sim the rest. Trades stay open throughout, including this year's unused picks; a pick traded to an AI team while it's on the clock is made within a minute |
 | **Re-signing week** | Seven days of exclusive talks with your own pending UFAs and RFAs. Offers are answered by the player's agent the next day (close calls can take an extra day); AI teams re-sign theirs through the week | Make offers, accept counters, qualify RFAs, or let players go |
 | **Free agency** | Ten days of **sealed offers**: each free agent listens for 3–5 days from his first offer, then takes the best one or turns them all down; AI teams bid too | Make sealed offers; leftover players sign at their ask during camp |
 | **Training camp** | AI teams promote ready prospects and cut to 23 | Promote prospects, send down, release |
@@ -400,6 +414,10 @@ anyone who hasn't acted gets sensible defaults.
 
 ## Trades
 
+- **Trade partners** are listed in standings order with each team's record, points and
+  owner's goal (Contend / Playoffs / Youth / Profit), and a **Standings & team goals**
+  sidebar shows the same with each AI front office's posture (buying, balanced, selling);
+  click a row to trade with that team.
 - **Trade center:** pick a team and tick any number of players, prospects and draft picks
   on both sides. A **trade preview** at the top lists each side's assets (players by
   overall, then picks by round) with cap impact. Both sides are sortable tables (overall,
@@ -490,6 +508,8 @@ players have one, and nobody has more than three (two for goalies). They show on
 roster, free-agent and waiver lists and, in full, on the player page. Effects are sized
 so the season still calibrates against the NHL.
 
+Hover (or tap) a trait chip anywhere for a card with its tier, what it does and its kind.
+
 ## Graphs
 
 - **Team → Trends:** points pace against the conference's playoff line and the league
@@ -503,6 +523,11 @@ so the season still calibrates against the NHL.
 All charts size to the screen and show values on hover.
 
 ## The simulation
+
+Player names are generated from pools of about 400 first names and 8,000 surnames across
+the hockey countries (English/Canadian, French-Canadian, Swedish, Finnish, Russian, Czech,
+Slovak, German and more), built from name parts rather than lists of real players; famous
+hockey surnames are left out.
 
 Each second, each team can generate a shot attempt, penalty, hit, fight, injury or
 stoppage, with rates driven by the skaters on the ice:
@@ -542,6 +567,8 @@ playoff OT rate. Some targets are approximate.
   It should move to a worker thread before the game is hosted.
 - Live updates use 5-second polling. Supabase Realtime can replace it later.
 - No retained salary in trades.
+- Simcasts and the draft clock run in the server's memory: a restart ends a simcast (its
+  game result is kept) and the draft clock resumes the next time anyone opens the league.
 - The league document grows about 0.5 MB per season of history (careers including junior/AHL seasons, retirees).
 
 ## Roadmap

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { advanceLeague, allHumansReady, cancelSim, simJob, startAdvance, summaryOf, type AdvanceSummary, type SimJob } from '../advance';
+import { simcastBlocking } from '../simcast';
 import { advancerProcedure, badRequest, commissionerProcedure, memberProcedure, router } from '../trpc';
 
 const target = z.union([
@@ -59,7 +60,8 @@ export const simRouter = router({
         [input.leagueId],
       );
       const adv = rows[0].advance;
-      if (adv.mode === 'scheduled' && adv.advanceEarlyWhenAllReady && (await allHumansReady(ctx.db, input.leagueId))) {
+      // (Not while a game is being simcast: the league waits for it.)
+      if (adv.mode === 'scheduled' && adv.advanceEarlyWhenAllReady && !simcastBlocking(input.leagueId) && (await allHumansReady(ctx.db, input.leagueId))) {
         advanced = await advanceLeague(ctx.db, input.leagueId, { days: adv.daysPerTick ?? 1 }, 'all-ready');
         await ctx.scheduler.sync(input.leagueId);
       }

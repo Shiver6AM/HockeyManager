@@ -20,7 +20,7 @@ const STAGE_HELP: Record<string, { what: string; link?: [string, string] }> = {
     link: ['stats', 'See final stats & awards'],
   },
   draft: {
-    what: 'Teams take turns picking from this year’s class of 18-year-olds. When you’re on the clock the draft waits for you, unless the commissioner or the schedule moves on, in which case your draft list (or your scouts’ top choice) is used. Trades are open during the draft, including this year’s unused picks.',
+    what: 'First the lottery for the teams that missed the playoffs, then teams take turns picking from this year’s class of 18-year-olds. Every pick has a 3-minute clock (AI teams take 90 seconds to 3 minutes); if yours runs out, your draft list (or your scouts’ top choice) is used. The commissioner can skip ahead to the next manager’s pick. Trades are open throughout, including this year’s unused picks.',
     link: ['draft', 'Go to the draft room'],
   },
   're-sign': {
@@ -73,7 +73,16 @@ export function OffseasonPanel() {
 
       <p className="text-sm text-ice-300">{help.what}</p>
 
-      {o?.stage === 'draft' && o.draft.onTheClock && (
+      {o?.stage === 'draft' && !o.draft.lotteryHeld && (
+        <p className="mt-3 rounded-lg border border-blueline/40 bg-blueline/10 px-3 py-2 text-sm text-ice-100">
+          The draft lottery comes first.{' '}
+          <Link to={`/league/${L.id}/draft`} className="font-semibold text-white hover:underline">
+            Go to the draft room
+          </Link>{' '}
+          to see the odds{L.canAdvance ? ' and hold the draw' : ''}.
+        </p>
+      )}
+      {o?.stage === 'draft' && o.draft.lotteryHeld && o.draft.onTheClock && (
         <div className={cx('mt-3 flex items-center gap-3 rounded-lg border p-3', o.draft.onTheClock.isMe ? 'border-goal bg-goal/10' : 'border-rink-600')}>
           <TeamChip team={o.draft.onTheClock.team} />
           <p className="text-sm">
@@ -127,7 +136,9 @@ export function OffseasonPanel() {
               {stage === 'review'
                 ? 'Begin the offseason'
                 : stage === 'draft'
-                  ? 'Finish the draft'
+                  ? o?.draft.lotteryHeld === false
+                    ? 'Sim the lottery'
+                    : 'Sim the whole draft'
                   : stage === 'training-camp'
                     ? 'Start the new season'
                     : stage === 're-sign' && L.resignDay !== null
@@ -212,7 +223,7 @@ export function SummerNews() {
         ) : (
           <Empty>No notable retirements.</Empty>
         )}
-        {o.draft.lottery.length > 0 && (
+        {o.draft.lottery.length > 0 && !(o.draft.lotteryShow && Date.now() < o.draft.lotteryShow.startedAt + o.draft.lotteryShow.length) && (
           <>
             <p className="mt-4 mb-2 text-xs font-semibold tracking-wider text-ice-400 uppercase">Draft lottery</p>
             {o.draft.lottery.map((x) => (

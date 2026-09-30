@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useLeague } from '../pages/LeagueLayout';
 import { useTRPC } from '../trpc';
 import { useSim, type Target } from '../sim';
@@ -112,9 +113,37 @@ export function HeaderActions() {
         {L.daysToDeadline === 0 ? 'Trade deadline today' : `Deadline in ${L.daysToDeadline}d`}
       </span>
     ) : null;
+  const cast = L.simcast;
+  const inSeason = L.phase === 'regular-season' || L.phase === 'playoffs';
+  const simcastButton = cast ? (
+    <Link
+      to={`/league/${L.id}/simcast`}
+      title={cast.live ? `${cast.host} is simcasting ${cast.away.city} at ${cast.home.city}. The league can't sim until it ends.` : 'The simcast is over'}
+      className={cx(
+        'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-bold whitespace-nowrap shadow transition',
+        cast.live ? 'bg-goal text-white hover:brightness-110' : 'bg-rink-800 text-ice-200 ring-1 ring-rink-600 hover:bg-rink-700',
+      )}
+    >
+      {cast.live && <span className="h-2 w-2 animate-pulse rounded-full bg-white" />}
+      {cast.live ? 'Join simcast' : 'Simcast final'}
+      <span className="rounded bg-black/20 px-1 text-[11px] font-semibold">
+        {cast.away.abbr} @ {cast.home.abbr}
+      </span>
+    </Link>
+  ) : inSeason ? (
+    <Link
+      to={`/league/${L.id}/simcast`}
+      title="Watch one of the next game day's games play by play"
+      className="inline-flex items-center gap-1.5 rounded-lg bg-rink-800 px-3 py-1.5 text-sm font-semibold whitespace-nowrap text-ice-100 ring-1 ring-rink-600 transition hover:bg-rink-700"
+    >
+      📺 Simcast
+    </Link>
+  ) : null;
+  const castBlocks = !!cast?.live;
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center justify-end gap-2">
       {deadlineChip}
+      {simcastButton}
       {L.myTeamId && (
         <button
           onClick={() => ready.mutate({ leagueId: L.id, ready: !L.myReady })}
@@ -137,15 +166,15 @@ export function HeaderActions() {
         <div className="relative flex" ref={ref}>
           <button
             onClick={() => go(primary.target)}
-            disabled={busy}
+            disabled={busy || castBlocks}
             className="rounded-l-lg bg-blueline px-3 py-1.5 text-sm font-bold whitespace-nowrap text-white shadow hover:bg-blue-500 disabled:opacity-60"
-            title={sim.running ? 'The league is simming' : L.isCoCommissioner ? 'Co-commissioner: advance the league' : 'Advance the league'}
+            title={castBlocks ? 'A game is being simcast: the league can sim once it ends' : sim.running ? 'The league is simming' : L.isCoCommissioner ? 'Co-commissioner: advance the league' : 'Advance the league'}
           >
             {sim.running ? 'Simming…' : `▶ ${primary.label}`}
           </button>
           <button
             onClick={() => setMenu((m) => !m)}
-            disabled={busy}
+            disabled={busy || castBlocks}
             aria-label="More advance options"
             className="rounded-r-lg border-l border-white/20 bg-blueline px-2 py-1.5 text-sm text-white shadow hover:bg-blue-500 disabled:opacity-60"
           >
