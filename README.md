@@ -133,6 +133,15 @@ season · deadline in 3d*, *Conference finals*, *Draft lottery*, *Pre-draft*, *E
 pick 25 of 224*, *Re-signing window · day 2 of 7*, *Free agency · day 4 of 10*,
 *Pre-season · training camp*.
 
+**Team logos.** Every franchise has its own original mark, drawn in SVG in its colors and
+built division by division rather than from one template: free-standing marks (Halifax's
+wave, London's helm, Atlanta's phoenix), roundels and crests that carry the city
+(Quebec, Kingston, Regina), letter monograms with a symbol built in (Moncton's clawed W,
+Rochester's starred A, Omaha's lanced O), wordmark-led logos (Hamilton's arched FORGE,
+Providence's script), and badges where the name calls for one (Spokane, Austin). Each has
+a simpler secondary mark for small sizes, and a light outer contour so dark marks read on
+dark backgrounds. See them all at */logos* (linked from the Teams page).
+
 **Ratings over time.** On your roster, prospects and contracts, each overall is tinted
 green or red with the change since the end of last season (▲3, ▼1).
 

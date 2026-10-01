@@ -24,6 +24,7 @@ import { TeamsPage } from './pages/Teams';
 import { TradesPage } from './pages/Trades';
 import { SimcastPage } from './pages/Simcast';
 import { CalendarPage } from './pages/Calendar';
+import { LogoGalleryPage } from './pages/LogoGallery';
 import { useTRPC } from './trpc';
 import { FantasyDraftPage } from './pages/FantasyDraft';
 
@@ -35,6 +36,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/" element={<LeaguesPage />} />
+      <Route path="/logos" element={<LogoGalleryPage />} />
       <Route path="/league/:leagueId" element={<LeagueLayout />}>
         <Route index element={<Dashboard />} />
         <Route path="standings" element={<StandingsPage />} />
