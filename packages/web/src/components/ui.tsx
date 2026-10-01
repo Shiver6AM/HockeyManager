@@ -1,4 +1,4 @@
-import { useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { TeamLogo } from './TeamLogo';
 import { errorMessage } from '../format';
@@ -25,6 +25,60 @@ export function Card({ title, action, children, className }: { title?: ReactNode
         </header>
       )}
       <div className="p-4">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * A card you can fold away: for information you only need now and then. It
+ * remembers (per browser) whether you left it open; `summary` is shown in the
+ * header while it's closed.
+ */
+export function CollapsibleCard({
+  id,
+  title,
+  summary,
+  action,
+  children,
+  defaultOpen = false,
+  className,
+}: {
+  id: string;
+  title: ReactNode;
+  summary?: ReactNode;
+  action?: ReactNode;
+  children: ReactNode;
+  defaultOpen?: boolean;
+  className?: string;
+}) {
+  const key = `card-open:${id}`;
+  const [open, setOpen] = useState(() => {
+    try {
+      const v = localStorage.getItem(key);
+      return v === null ? defaultOpen : v === '1';
+    } catch {
+      return defaultOpen;
+    }
+  });
+  const toggle = () => {
+    setOpen(!open);
+    try {
+      localStorage.setItem(key, open ? '0' : '1');
+    } catch {
+      /* private mode */
+    }
+  };
+  return (
+    <section className={cx('min-w-0 rounded-xl border border-rink-700 bg-rink-900 shadow-sm shadow-black/30', className)}>
+      <header className={cx('flex items-center justify-between gap-3 px-4 py-2.5', open && 'border-b border-rink-700')}>
+        <button onClick={toggle} aria-expanded={open} className="group flex min-w-0 flex-1 items-center gap-2 text-left">
+          <span className={cx('text-xs text-ice-500 transition-transform group-hover:text-white', open && 'rotate-90')}>▶</span>
+          <h2 className="font-display text-sm font-semibold tracking-wider text-ice-300 uppercase group-hover:text-white">{title}</h2>
+          {!open && summary && <span className="min-w-0 truncate text-xs text-ice-500">{summary}</span>}
+        </button>
+        {open && action}
+      </header>
+      {open && <div className="p-4">{children}</div>}
     </section>
   );
 }
@@ -95,6 +149,30 @@ export function Empty({ children }: { children: ReactNode }) {
 export function Rating({ value }: { value: number }) {
   const tone = value >= 85 ? 'text-win' : value >= 75 ? 'text-ice-50' : value >= 65 ? 'text-ice-300' : 'text-ice-500';
   return <span className={cx('tabular font-semibold', tone)}>{value}</span>;
+}
+
+/**
+ * His overall, tinted by how it's moved since the end of last season (green up,
+ * red down) with the change beside it.
+ */
+export function RatingChange({ value, change, prevSeason }: { value: number; change?: number | null; prevSeason?: number | null }) {
+  if (change === null || change === undefined) return <Rating value={value} />;
+  const up = change > 0;
+  const down = change < 0;
+  const big = Math.abs(change) >= 3;
+  return (
+    <span
+      className={cx(
+        'inline-flex items-center gap-1 rounded px-1 tabular',
+        up && (big ? 'bg-win/25' : 'bg-win/10'),
+        down && (big ? 'bg-goal/30' : 'bg-goal/15'),
+      )}
+      title={`${change === 0 ? 'No change' : `${up ? 'Up' : 'Down'} ${Math.abs(change)}`} since the end of ${prevSeason ?? 'last'}-${prevSeason ? String(prevSeason + 1).slice(2) : ''} (was ${value - change})`}
+    >
+      <span className={cx('font-semibold', up ? 'text-win' : down ? 'text-red-300' : 'text-ice-200')}>{value}</span>
+      {change !== 0 && <span className={cx('text-[10px] font-semibold', up ? 'text-win' : 'text-red-300')}>{up ? `▲${change}` : `▼${-change}`}</span>}
+    </span>
+  );
 }
 
 /** Centered dialog; closes on Escape or a click on the backdrop. */

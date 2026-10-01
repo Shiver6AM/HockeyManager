@@ -198,6 +198,8 @@ export interface Team {
    * lines: a line or group of lines, a position, or a healthy scratch.
    */
   linePins?: Record<PlayerId, LinePin>;
+  /** Draft-eligible prospects the manager is keeping an eye on. */
+  watchlist?: PlayerId[];
   /** Human managers' trade block (AI blocks are computed). */
   tradeBlock?: TradeBlock;
   /** Coaching systems (AI teams pick theirs to suit the roster). */

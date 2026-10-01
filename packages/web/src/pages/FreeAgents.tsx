@@ -4,7 +4,7 @@ import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { InterestPill, OfferForm, Priorities } from '../components/OfferForm';
 import { OfferSheetTargets } from '../components/RfaPanels';
-import { Badge, Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip } from '../components/ui';
+import { Badge, Button, Card, CollapsibleCard, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip } from '../components/ui';
 import { ht, money, svPct, posLabel } from '../format';
 import { useSort } from '../sort';
 import { useTRPC, type Outputs } from '../trpc';
@@ -79,6 +79,7 @@ export function FreeAgentsPage() {
       )}
 
       <OfferSheetTargets />
+      {d.pending.length > 0 && <PendingFreeAgents d={d} />}
 
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="min-w-0">
@@ -418,5 +419,109 @@ function FreeAgentTable({ d, open, setOpen }: { d: FAData; open: string | null; 
         </div>
       )}
     </Card>
+  );
+}
+
+/** Before free agency: who's still unsigned and could hit the market. */
+function PendingFreeAgents({ d }: { d: FAData }) {
+  const L = useLeague();
+  const [mineToo, setMineToo] = useState(false);
+  const [onlyLeaving, setOnlyLeaving] = useState(false);
+  const rows = d.pending.filter((p) => (mineToo || !p.mine) && (!onlyLeaving || p.lettingGo));
+  const { sorted, Th } = useSort(
+    rows,
+    {
+      name: (p) => p.lastName,
+      team: (p) => p.team.abbr,
+      pos: (p) => p.pos,
+      age: (p) => p.age,
+      ovr: (p) => p.overall,
+      status: (p) => p.status,
+      ask: (p) => p.ask.salary,
+    },
+    { key: 'ovr' },
+    'pending-fa',
+  );
+  const leaving = d.pending.filter((p) => p.lettingGo && !p.mine).length;
+  return (
+    <CollapsibleCard
+      id="fa-pending"
+      defaultOpen
+      title={`Pending free agents (${d.pending.filter((p) => !p.mine).length})`}
+      summary={`Still unsigned by their teams${leaving ? ` · ${leaving} expected to hit the market` : ''}`}
+    >
+      <p className="mb-3 text-sm text-ice-400">
+        Players around the league whose contracts are running out and who haven't re-signed yet. Their teams have until free agency opens; anyone still
+        unsigned then becomes a free agent (RFAs who get a qualifying offer stay with their team, though you can tender an offer sheet). Asks are what
+        they'd want today.
+      </p>
+      <div className="mb-2 flex flex-wrap gap-4 text-xs text-ice-300">
+        <label className="flex items-center gap-1.5">
+          <input type="checkbox" checked={onlyLeaving} onChange={(e) => setOnlyLeaving(e.target.checked)} /> Only players their team is letting go
+        </label>
+        <label className="flex items-center gap-1.5">
+          <input type="checkbox" checked={mineToo} onChange={(e) => setMineToo(e.target.checked)} /> Include my own
+        </label>
+      </div>
+      <div className="-mx-4 -mb-4 max-h-[28rem] overflow-auto">
+        <table className="table text-sm">
+          <thead className="sticky top-0 z-10 bg-rink-900">
+            <tr>
+              <Th k="name">Player</Th>
+              <Th k="team">Team</Th>
+              <Th k="pos">Pos</Th>
+              <Th k="age" className="num">Age</Th>
+              <Th k="ovr" className="num">OVR</Th>
+              <th>Pot</th>
+              <Th k="status">Status</Th>
+              <Th k="ask" className="num">Asking</Th>
+              <th>Outlook</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((p) => (
+              <tr key={p.id} className={cx(p.mine && 'bg-blueline/10')}>
+                <td className="whitespace-nowrap">
+                  <Link to={`/league/${L.id}/player/${p.id}`} className="text-ice-50 hover:underline">
+                    {p.name}
+                  </Link>
+                  <TraitChips traits={p.traits} />
+                </td>
+                <td>
+                  <span className="inline-flex items-center gap-1.5">
+                    <TeamChip team={p.team} size="sm" /> {p.team.abbr}
+                  </span>
+                </td>
+                <td className="text-ice-400">{posLabel(p)}</td>
+                <td className="num">{p.age}</td>
+                <td className="num">
+                  <Rating value={p.overall} />
+                </td>
+                <td>
+                  <PotentialBadge potential={p.potential} />
+                </td>
+                <td>
+                  <Badge tone={p.status === 'RFA' ? 'info' : 'neutral'}>{p.status}</Badge>
+                </td>
+                <td className="num whitespace-nowrap">
+                  {money(p.ask.salary)} × {p.ask.years}y
+                </td>
+                <td className="text-xs whitespace-nowrap">
+                  {p.mine ? (
+                    <span className="text-blue-200">Yours: decide on the Re-sign page</span>
+                  ) : p.lettingGo ? (
+                    <span className="text-win">Expected to hit the market</span>
+                  ) : p.qualified ? (
+                    <span className="text-ice-300">Qualified (RFA)</span>
+                  ) : (
+                    <span className="text-ice-400">Undecided</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </CollapsibleCard>
   );
 }

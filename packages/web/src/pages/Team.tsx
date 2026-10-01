@@ -12,7 +12,7 @@ import { ContractsTab } from '../components/ContractsTab';
 import { FranchiseRecords } from '../components/FranchiseRecords';
 import { RosterMoves } from '../components/RosterMoves';
 import { TeamTrends } from '../components/TeamTrends';
-import { Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip } from '../components/ui';
+import { Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, RatingChange, Spinner, TeamChip } from '../components/ui';
 import { useSort } from '../sort';
 import { money, svPct, posLabel } from '../format';
 import { useTRPC, type Outputs } from '../trpc';
@@ -274,7 +274,7 @@ function Prospects({ t }: { t: TeamData }) {
                   <td className="text-ice-400">{posLabel(p)}</td>
                   <td className="num">{p.age}</td>
                   <td className="num">
-                    <Rating value={p.overall} />
+                    <RatingChange value={p.overall} change={p.ovrChange} prevSeason={p.ovrPrevSeason} />
                   </td>
                   <td className="whitespace-nowrap">
                     <PotentialBadge potential={p} showLabel />

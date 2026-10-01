@@ -114,6 +114,17 @@ export function TradesPage() {
   useEffect(() => {
     if (partner && loadedFor.current === partner) saveDeal(L.id, partner, { give, get });
   }, [give, get, partner, L.id]);
+  // Linked from elsewhere ("trade for this pick / player"): ?get=pick:<key> or ?get=player:<id> lands in the deal.
+  useEffect(() => {
+    const want = params.get('get');
+    if (!want || !partner) return;
+    const [kind, ...rest] = want.split(':');
+    const a: Asset | null = kind === 'pick' ? { kind: 'pick', key: rest.join(':') } : kind === 'player' ? { kind: 'player', id: rest.join(':') } : null;
+    if (a) setGet((xs) => (xs.some((x) => keyOf(x) === keyOf(a)) ? xs : [...xs, a]));
+    const next = new URLSearchParams(params);
+    next.delete('get');
+    setParams(next, { replace: true });
+  }, [params, partner]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A remembered deal can go stale (a player traded or released since): drop what's no longer there.
   const pruneTo = (data: Assets | undefined, set: (f: (xs: Asset[]) => Asset[]) => void) => {
@@ -445,7 +456,11 @@ function PreviewSide({
         <span className="flex items-center gap-2 text-xs font-semibold tracking-wider text-ice-400 uppercase">
           <TeamChip team={data.team} size="sm" /> {title}
         </span>
-        {players.length > 0 && <span className="text-xs text-ice-500">{money(salary)} in salary</span>}
+        {players.length + picks.length > 0 && (
+          <span className="text-xs text-ice-500" title={VALUE_HELP}>
+            {players.length > 0 && `${money(salary)} in salary · `}value {Math.round(players.reduce((s, p) => s + p.value, 0) + picks.reduce((s, p) => s + p.value, 0))}
+          </span>
+        )}
       </div>
       {players.length + picks.length === 0 ? (
         <p className="rounded-md border border-dashed border-rink-600 px-3 py-4 text-center text-sm text-ice-500">Nothing yet</p>
@@ -600,6 +615,7 @@ function AssetPicker({
             <SortTh label="Age" k="age" sort={sort} className="num" />
             <SortTh label="OVR" k="overall" sort={sort} className="num" />
             <SortTh label="Pot" k="pot" sort={sort} title="Scouts' grade for his ceiling (hover for the projected role)" />
+            <SortTh label="Value" k="value" sort={sort} className="num" title={VALUE_HELP} />
             <SortTh label="AAV" k="aav" sort={sort} className="num" />
             <SortTh label="Yrs" k="years" sort={sort} className="num" />
             <SortTh label="Expiry" k="status" sort={sort} />
@@ -632,6 +648,9 @@ function AssetPicker({
               </td>
               <td>
                 <PotentialBadge potential={p.potential} />
+              </td>
+              <td className="num">
+                <TradeValue v={p.value} />
               </td>
               <td className="num tabular">{p.contract ? money(p.contract.salary) : '—'}</td>
               <td className="num tabular">{p.contract ? p.contract.yearsLeft : '—'}</td>
@@ -703,6 +722,22 @@ function AssetPicker({
   );
 }
 
+const VALUE_HELP =
+  "Trade value: what he (or the pick) is worth league-wide, from a neutral front office's view: current ability on a steep scale (stars are worth far more), upside for young players by league-consensus scouting, age, contract surplus or overpay, and injuries. Each AI team adjusts it for its own scouting, needs and plans (contenders want help now, rebuilders want youth and picks), and asks for a little extra to say yes. Several smaller pieces add up to less than one star of the same total.";
+
+/** A trade value with a small bar (about 600 is a franchise player). */
+function TradeValue({ v }: { v: number }) {
+  const w = Math.max(0, Math.min(100, (v / 600) * 100));
+  return (
+    <span className="inline-flex items-center justify-end gap-1.5" title={VALUE_HELP}>
+      <span className="hidden h-1.5 w-12 overflow-hidden rounded bg-rink-800 xl:inline-block">
+        <span className={cx('block h-full', v >= 300 ? 'bg-win' : v >= 120 ? 'bg-blueline' : v > 0 ? 'bg-ice-500' : 'bg-goal')} style={{ width: `${w}%` }} />
+      </span>
+      <span className={cx('tabular font-semibold', v < 0 ? 'text-red-300' : 'text-ice-100')}>{v}</span>
+    </span>
+  );
+}
+
 function PickChip({ pk, selected, onToggle, own, onPin }: { pk: AssetPick; selected: boolean; onToggle: () => void; own: boolean; onPin?: () => void }) {
   return (
     <span
@@ -716,6 +751,9 @@ function PickChip({ pk, selected, onToggle, own, onPin }: { pk: AssetPick; selec
         <span className="font-semibold">{ROUND[pk.round]}</span>
         {!own && <span className="text-ice-400">({pk.original})</span>}
       </label>
+      <span className="tabular text-[10px] text-ice-400" title={VALUE_HELP}>
+        {pk.value}
+      </span>
       {pk.onBlock && !onPin && <span className="text-[10px] font-semibold text-warn">BLOCK</span>}
       {pk.fits.length > 0 && <span className="text-[10px] text-win">★</span>}
       {onPin && (

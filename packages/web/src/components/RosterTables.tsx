@@ -11,7 +11,7 @@ import { useLeague } from '../pages/LeagueLayout';
 import { useSort } from '../sort';
 import { useTRPC, type Outputs } from '../trpc';
 import { OfferForm } from './OfferForm';
-import { Badge, Button, Card, cx, Modal, PotentialBadge, Rating, ValueBar } from './ui';
+import { Badge, Button, Card, cx, Modal, PotentialBadge, Rating, RatingChange, ValueBar } from './ui';
 
 type TeamData = Outputs['data']['team'];
 export type P = TeamData['players'][number];
@@ -151,7 +151,7 @@ export function SkaterTable({ title, players, t, statsLabel }: { title: string; 
                   <td className="num whitespace-nowrap">{ht(p.height)}</td>
                   <td className="num">{p.weight}</td>
                   <td className="num">
-                    <Rating value={p.overall} />
+                    <RatingChange value={p.overall} change={p.ovrChange} prevSeason={p.ovrPrevSeason} />
                   </td>
                   <td>
                     <PotentialBadge potential={p.potential} />
@@ -261,7 +261,7 @@ export function GoalieTable({ players, t, statsLabel }: { players: P[]; t: TeamD
                   <td className="num whitespace-nowrap">{ht(p.height)}</td>
                   <td className="num">{p.weight}</td>
                   <td className="num">
-                    <Rating value={p.overall} />
+                    <RatingChange value={p.overall} change={p.ovrChange} prevSeason={p.ovrPrevSeason} />
                   </td>
                   <td>
                     <PotentialBadge potential={p.potential} />
@@ -357,7 +357,7 @@ export function FarmTable({ players, t }: { players: P[]; t: TeamData }) {
                   <td className="num whitespace-nowrap">{ht(p.height)}</td>
                   <td className="num">{p.weight}</td>
                   <td className="num">
-                    <Rating value={p.overall} />
+                    <RatingChange value={p.overall} change={p.ovrChange} prevSeason={p.ovrPrevSeason} />
                   </td>
                   <td>
                     <PotentialBadge potential={p.potential} />

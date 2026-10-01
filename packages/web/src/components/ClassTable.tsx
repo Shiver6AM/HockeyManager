@@ -3,11 +3,12 @@
  * this season, and (only where you've scouted) a projection with how confident
  * your scouts are. Every column sorts.
  */
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ht, svPct } from '../format';
 import { useSort } from '../sort';
-import type { Outputs } from '../trpc';
+import { useTRPC, type Outputs } from '../trpc';
 import { cx, Rating } from './ui';
 
 export type ClassPlayer = Omit<NonNullable<Outputs['life']['draftClass']>['players'][number], 'followable'> & { followable?: boolean };
@@ -60,13 +61,41 @@ export function ClassTable({
   const [pos, setPos] = useState('All');
   const [region, setRegion] = useState('All');
   const [scoutedOnly, setScoutedOnly] = useState(false);
+  const [watchOnly, setWatchOnly] = useState(() => {
+    try {
+      return localStorage.getItem(`${storageKey}:watch`) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleWatchOnly = (v: boolean) => {
+    setWatchOnly(v);
+    try {
+      localStorage.setItem(`${storageKey}:watch`, v ? '1' : '0');
+    } catch {
+      /* private mode */
+    }
+  };
+  const trpc = useTRPC();
+  const qc = useQueryClient();
+  // Optimistic: the star flips at once, the list refreshes behind it.
+  const [flip, setFlip] = useState<Record<string, boolean>>({});
+  const watch = useMutation(trpc.offseason.setWatch.mutationOptions({ onSettled: () => qc.invalidateQueries() }));
+  const watched = (p: ClassPlayer) => flip[p.id] ?? !!p.watched;
+  const toggleWatch = (p: ClassPlayer) => {
+    const next = !watched(p);
+    setFlip((f) => ({ ...f, [p.id]: next }));
+    watch.mutate({ leagueId, playerId: p.id, watched: next });
+  };
   const regions = [...new Map(players.map((p) => [p.region, p.regionLabel])).entries()];
   const filtered = players.filter(
     (p) =>
       (pos === 'All' || (pos === 'F' ? ['C', 'LW', 'RW'].includes(p.pos) : p.pos === pos)) &&
       (region === 'All' || p.region === region) &&
-      (!scoutedOnly || p.scouted),
+      (!scoutedOnly || p.scouted) &&
+      (!watchOnly || watched(p)),
   );
+  const watchCount = players.filter(watched).length;
   const { sorted, Th } = useSort(
     filtered,
     {
@@ -113,6 +142,9 @@ export function ClassTable({
         <label className="flex items-center gap-1.5 text-ice-300">
           <input type="checkbox" checked={scoutedOnly} onChange={(e) => setScoutedOnly(e.target.checked)} /> Scouted only
         </label>
+        <label className="flex items-center gap-1.5 text-ice-300">
+          <input type="checkbox" checked={watchOnly} onChange={(e) => toggleWatchOnly(e.target.checked)} /> <span className="text-warn">★</span> Watchlist only ({watchCount})
+        </label>
         <span className="text-ice-500">
           {filtered.length} prospects · {filtered.filter((p) => p.scouted).length} scouted
         </span>
@@ -122,6 +154,7 @@ export function ClassTable({
           <thead className="sticky top-0 z-10 bg-rink-900">
             <tr>
               {action && <th className="w-0" />}
+              <th className="w-0" title="Your watchlist" />
               <Th k="name">Prospect</Th>
               <Th k="pos">Pos</Th>
               <Th k="age" className="num">Age</Th>
@@ -147,6 +180,16 @@ export function ClassTable({
             {sorted.slice(0, maxRows).map((p) => (
               <tr key={p.id} className={cx(!p.scouted && 'text-ice-400')}>
                 {action && <td className="w-0 whitespace-nowrap">{action(p)}</td>}
+                <td className="w-0 px-1">
+                  <button
+                    onClick={() => toggleWatch(p)}
+                    aria-label={watched(p) ? `Take ${p.name} off your watchlist` : `Add ${p.name} to your watchlist`}
+                    title={watched(p) ? 'On your watchlist (click to remove)' : 'Add to your watchlist'}
+                    className={cx('text-base leading-none transition hover:scale-125', watched(p) ? 'text-warn' : 'text-rink-500 hover:text-ice-300')}
+                  >
+                    {watched(p) ? '★' : '☆'}
+                  </button>
+                </td>
                 <td className="whitespace-nowrap">
                   <Link to={`/league/${leagueId}/player/${p.id}`} className="text-ice-50 hover:underline">
                     {p.name}

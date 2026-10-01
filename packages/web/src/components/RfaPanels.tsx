@@ -5,7 +5,7 @@ import { money } from '../format';
 import { useLeague } from '../pages/LeagueLayout';
 import { useTRPC, type Outputs } from '../trpc';
 import { compensationText, InterestPill, OfferForm } from './OfferForm';
-import { Badge, Button, Card, cx, ErrorBox, Rating, TeamChip } from './ui';
+import { CollapsibleCard, Badge, Button, Card, cx, ErrorBox, Rating, TeamChip } from './ui';
 
 type Rfa = NonNullable<Outputs['offseason']['rfa']>;
 
@@ -142,7 +142,7 @@ export function OfferSheetTargets() {
   const d = q.data;
   if (!d || d.stage !== 'free-agency' || !d.others.length || !L.myTeamId) return null;
   return (
-    <Card title={`Restricted free agents: offer sheets (${d.others.length})`}>
+    <CollapsibleCard id="fa-offer-sheets" title={`Restricted free agents: offer sheets (${d.others.length})`} summary="Tender offer sheets to other teams' unsigned RFAs">
       <p className="mb-3 text-sm text-ice-400">
         These RFAs are unsigned but still belong to their teams. Tender an offer sheet: if he signs it, his team can match or let him go, and you pay
         compensation in your own draft picks, scaled by salary ({compensationTable(d.compensation)}).
@@ -200,7 +200,7 @@ export function OfferSheetTargets() {
         ))}
       </ul>
       <ErrorBox error={withdraw.error} />
-    </Card>
+    </CollapsibleCard>
   );
 }
 
