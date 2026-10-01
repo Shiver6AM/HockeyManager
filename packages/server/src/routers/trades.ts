@@ -9,6 +9,8 @@ import {
   capRoom,
   describeAsset,
   evaluateForAi,
+  playerValue,
+  pickValue,
   retainedAmount,
   retainedCount,
   retainedSeasons,
@@ -25,6 +27,7 @@ import {
   validateTrade,
   withdrawTrade,
   type League,
+  type Team,
   type TradeAsset,
   type TradeProposal,
   OWNER_GOAL_LABEL,
@@ -68,6 +71,9 @@ async function tradeNotices(L: League, q: Queryable, leagueId: string, t: TradeP
   }
   await deliver(q, leagueId, notices);
 }
+
+/** A neutral front office (consensus scouting, no contend/rebuild lean) for league-wide trade values. */
+const MARKET = { id: 'league', controller: { kind: 'human', userId: '' }, roster: [] } as unknown as Team;
 
 function requireTeam(m: Membership): string {
   if (!m.teamId) throw badRequest('You do not manage a team');
@@ -116,6 +122,8 @@ export const tradesRouter = router({
     const needs = input.fitsFor && L.teams[input.fitsFor] ? tradeBlock(L, L.teams[input.fitsFor]).needs : [];
     const player = (id: string, prospect: boolean) => ({
       ...publicPlayer(L, L.players[id]),
+      /** League-wide trade value (a neutral front office's view: league scouting, no strategy). */
+      value: Math.round(playerValue(L, MARKET, L.players[id])),
       potential: potentialView(L, ctx.membership.teamId, L.players[id]),
       prospect,
       onBlock: onBlock.has(id),
@@ -131,7 +139,7 @@ export const tradesRouter = router({
       prospects: (t.prospects ?? []).filter((id) => L.players[id]).map((id) => player(id, true)).sort((a, b) => b.overall - a.overall),
       picks: teamPicks(L, t.id).map((key) => {
         const [season, round, orig] = key.split(':');
-        return { key, label: pickLabel(key, L), season: Number(season), round: Number(round), original: orig, onBlock: onBlock.has(key), fits: assetFits(L, { kind: 'pick', key }, needs) };
+        return { key, label: pickLabel(key, L), season: Number(season), round: Number(round), original: orig, onBlock: onBlock.has(key), fits: assetFits(L, { kind: 'pick', key }, needs), value: Math.round(pickValue(L, MARKET, key)) };
       }),
     };
   }),

@@ -178,7 +178,7 @@ export function PlayerFilterBar({
 // Sorting
 // ---------------------------------------------------------------------------
 
-export type SortKey = 'name' | 'pos' | 'type' | 'age' | 'overall' | 'aav' | 'years' | 'status' | 'pot' | 'team';
+export type SortKey = 'name' | 'pos' | 'type' | 'age' | 'overall' | 'aav' | 'years' | 'status' | 'pot' | 'team' | 'value';
 const GRADE_ORDER = ['F', 'D', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A-', 'A', 'A+'];
 const POS_ORDER: Record<string, number> = { C: 0, LW: 1, RW: 2, D: 3, G: 4 };
 const STATUS_ORDER: Record<string, number> = { UFA: 0, RFA: 1 };
@@ -194,9 +194,10 @@ const SORTERS: Record<SortKey, (p: FilterablePlayer) => number | string> = {
   status: (p) => (p.contract ? (p.contract.kind === 'ELC' ? 2 : (STATUS_ORDER[p.contract.expiresAs] ?? 3)) : 4),
   pot: (p) => (p.potential ? GRADE_ORDER.indexOf(p.potential.grade) : -1),
   team: (p) => p.team?.abbr ?? '',
+  value: (p) => (p as { value?: number }).value ?? 0,
 };
 /** Numbers read best high-to-low first; text and positions low-to-high. */
-const DEFAULT_DESC: Record<SortKey, boolean> = { name: false, pos: false, type: false, age: false, overall: true, aav: true, years: true, status: false, pot: true, team: false };
+const DEFAULT_DESC: Record<SortKey, boolean> = { name: false, pos: false, type: false, age: false, overall: true, aav: true, years: true, status: false, pot: true, team: false, value: true };
 
 export function useSort(initial: SortKey = 'overall') {
   const [key, setKey] = useState<SortKey>(initial);

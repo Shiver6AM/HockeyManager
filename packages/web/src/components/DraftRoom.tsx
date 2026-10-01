@@ -5,7 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTRPC } from '../trpc';
-import { Badge, Button, Card, cx, ErrorBox, TeamChip } from './ui';
+import { Badge, Button, Card, CollapsibleCard, cx, ErrorBox, TeamChip } from './ui';
 import type { Outputs } from '../trpc';
 
 type Overview = NonNullable<Outputs['offseason']['overview']>;
@@ -48,7 +48,7 @@ export function DraftLottery({ leagueId, draft, canAdvance, now }: { leagueId: s
   const show = draft.lotteryShow;
   const elapsed = show ? now - show.startedAt : Infinity;
   const live = !!show && elapsed < show.length;
-  const [open, setOpen] = useState(true);
+  const open = true;
   if (!n) return null;
 
   // Before the draw: the odds.
@@ -95,16 +95,7 @@ export function DraftLottery({ leagueId, draft, canAdvance, now }: { leagueId: s
   const bySlot = [...teams].sort((a, b) => (a.pick ?? 99) - (b.pick ?? 99));
   const nextReveal = live ? bySlot.map((t) => t.pick!).filter((s) => revealAt(s, n) > elapsed).sort((a, b) => b - a)[0] : undefined;
   return (
-    <Card
-      title={live ? 'Draft lottery · live' : 'Draft lottery results'}
-      action={
-        !live && (
-          <button className="text-xs text-ice-400 hover:text-white" onClick={() => setOpen(!open)}>
-            {open ? 'Hide' : 'Show'}
-          </button>
-        )
-      }
-    >
+    <Shell live={live} winners={teams.filter((t) => t.pick! < t.seed).map((t) => `${t.team.abbr} to #${t.pick}`).join(', ')}>
       {live && (
         <p className="mb-3 text-sm text-ice-200" aria-live="polite">
           {elapsed < 3000
@@ -157,7 +148,18 @@ export function DraftLottery({ leagueId, draft, canAdvance, now }: { leagueId: s
           })}
         </ol>
       )}
-    </Card>
+    </Shell>
+  );
+}
+
+/** Live: always shown. Afterwards: a fold-away card, closed by default. */
+function Shell({ live, winners, children }: { live: boolean; winners: string; children: React.ReactNode }) {
+  return live ? (
+    <Card title="Draft lottery · live">{children}</Card>
+  ) : (
+    <CollapsibleCard id="draft-lottery-results" title="Draft lottery results" summary={winners ? `Moved up: ${winners}` : 'No team moved up'}>
+      {children}
+    </CollapsibleCard>
   );
 }
 

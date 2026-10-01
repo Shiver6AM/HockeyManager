@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Badge, Button, Card, cx, Empty, ErrorBox, Rating, Spinner, TeamChip } from '../components/ui';
+import { Badge, Button, Card, CollapsibleCard, cx, Empty, ErrorBox, Rating, Spinner, TeamChip } from '../components/ui';
 import { useTRPC } from '../trpc';
 import { ClassTable, CssRankings, GRADE_TONE } from '../components/ClassTable';
 import { DraftClockBar, DraftLottery, useDraftOverview, useServerNow } from '../components/DraftRoom';
@@ -72,9 +72,9 @@ export function DraftPage() {
         </p>
       )}
 
-      <Card title="Central Scouting final rankings">
+      <CollapsibleCard id="draft-css" title="Central Scouting final rankings" summary="The consensus top of the class" defaultOpen>
         <CssRankings players={b.available} leagueId={L.id} edition="Final" top={16} />
-      </Card>
+      </CollapsibleCard>
 
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="min-w-0 space-y-5">
@@ -184,6 +184,15 @@ export function DraftPage() {
                         <span className="text-ice-500">{p.overall - 1 === b.current ? 'On the clock' : '—'}</span>
                       )}
                     </span>
+                    {!p.player && b.myTeamId && p.teamId !== b.myTeamId && !done && (
+                      <Link
+                        to={`/league/${L.id}/trades?with=${p.teamId}&get=${encodeURIComponent(`pick:${b.season}:${p.round}:${p.originalTeamId}`)}`}
+                        className="shrink-0 rounded px-1.5 text-[11px] font-semibold text-blue-300 hover:bg-blueline/20 hover:text-white"
+                        title={`Open a trade with ${p.team.city} with this pick in it`}
+                      >
+                        Trade for
+                      </Link>
+                    )}
                   </li>
                 ))}
             </ol>

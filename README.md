@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 192 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 196 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -132,6 +132,17 @@ The badge in the top bar says exactly where the league is: *Opening night*, *Reg
 season · deadline in 3d*, *Conference finals*, *Draft lottery*, *Pre-draft*, *Entry draft ·
 pick 25 of 224*, *Re-signing window · day 2 of 7*, *Free agency · day 4 of 10*,
 *Pre-season · training camp*.
+
+**Ratings over time.** On your roster, prospects and contracts, each overall is tinted
+green or red with the change since the end of last season (▲3, ▼1).
+
+**Pending free agents.** Before free agency opens (the draft and the re-signing week), the
+Free agents page lists every player around the league whose contract is running out and
+who hasn't re-signed, with his ask and whether his team is expected to let him go.
+
+**Fold-away cards.** Information you need only now and then (offer-sheet RFAs, player
+placement, draft lottery results, Central Scouting's final list, pending free agents)
+sits in cards you can collapse; each remembers how you left it.
 
 **Calendar.** A month-by-month calendar of the season: every game day's matchups (click a
 day to see them all), your team's games and results at a glance, and the key dates
@@ -339,6 +350,8 @@ anyone who hasn't acted gets sensible defaults.
   Signing one gives him a 3-year entry-level deal. Unsigned prospects are released at 23.
 - **Goalie coaches:** every team has a goalie coach who trains up to four goalies'
   reflexes, positioning, rebound control or mental game, alongside the skills coaches.
+- **Watchlist:** star any draft-eligible prospect (Scouting page or draft board) and filter
+  the class to your watchlist. It's saved with your team.
 - **Central Scouting:** the league publishes consensus rankings of the draft class, the
   same for every team, split into North American and international skaters and goalies:
   a preliminary list in the fall, an update every two weeks through the season, and a
@@ -445,6 +458,12 @@ anyone who hasn't acted gets sensible defaults.
   the share next to him in the trade preview; the cap changes and what each side will carry
   are shown before you send it, and AI teams value the cheaper contract (or charge for
   keeping part of one).
+- **Trade value:** every player and pick shows a league-wide value (a neutral front office's
+  view: ability on a steep scale, upside by consensus scouting, age, contract, injuries),
+  with each side's total in the preview. AI teams adjust it for their own scouting, needs
+  and plans, and want a little extra.
+- **Trade for a pick:** in the draft order, any unused pick has a *Trade for* link that
+  opens the trade center with that pick already in the deal.
 - **Trade partners** are listed in standings order with each team's record, points and
   owner's goal (Contend / Playoffs / Youth / Profit), and a **Standings & team goals**
   sidebar shows the same with each AI front office's posture (buying, balanced, selling);

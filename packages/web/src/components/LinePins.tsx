@@ -6,7 +6,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useTRPC, type Outputs } from '../trpc';
-import { Card, cx, ErrorBox, Rating } from './ui';
+import { CollapsibleCard, cx, ErrorBox, Rating } from './ui';
 
 type TeamData = Outputs['data']['team'];
 type Pin = { slot?: string; pos?: 'C' | 'LW' | 'RW' };
@@ -66,8 +66,10 @@ export function LinePins({ t, leagueId }: { t: TeamData; leagueId: string }) {
   const count = Object.keys(pins).length;
 
   return (
-    <Card
+    <CollapsibleCard
+      id="line-placement"
       title="Player placement"
+      summary={count ? `${count} player${count > 1 ? 's' : ''} placed` : 'Tell the assistant coach where to play people'}
       action={
         count > 0 && (
           <button className="text-xs text-ice-400 hover:text-white" onClick={() => save.mutate({ leagueId, pins: {} })}>
@@ -145,6 +147,6 @@ export function LinePins({ t, leagueId }: { t: TeamData; leagueId: string }) {
           </div>
         ))}
       </div>
-    </Card>
+    </CollapsibleCard>
   );
 }

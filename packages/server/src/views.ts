@@ -23,6 +23,8 @@ export function publicPlayer(league: League, p: Player) {
     ...bodyOf(p, league.season + (league.phase === 'offseason' ? 1 : 0)),
     teamId: p.teamId,
     overall: overall(p),
+    /** His overall at the end of last season (from his career record), and the change since. */
+    ...ovrChange(league, p),
     skater: p.skater ?? null,
     goalie: p.goalie ?? null,
     contract: p.contract,
@@ -65,4 +67,14 @@ export function teamRating(league: League, t: Team): number {
 export function playerName(league: League, id: string) {
   const p = league.players[id];
   return p ? `${p.firstName} ${p.lastName}` : id;
+}
+
+/** Overall now vs at the end of his most recent season on record (null for players with no record yet). */
+export function ovrChange(league: League, p: Player): { ovrPrev: number | null; ovrChange: number | null; ovrPrevSeason: number | null } {
+  const lines = league.careerStats?.[p.id];
+  // (In season, last season's line; in the summer, the season that just ended.)
+  const last = lines?.length ? lines.reduce((a, b) => (b.season >= a.season ? b : a)) : null;
+  if (!last || last.season < league.season - 1) return { ovrPrev: null, ovrChange: null, ovrPrevSeason: null };
+  const now = overall(p);
+  return { ovrPrev: last.overall, ovrChange: now - last.overall, ovrPrevSeason: last.season };
 }

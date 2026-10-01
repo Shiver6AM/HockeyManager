@@ -10,7 +10,7 @@ import { money } from '../format';
 import { useSort } from '../sort';
 import { useTRPC, type Outputs } from '../trpc';
 import { InterestPill, OfferForm } from './OfferForm';
-import { Badge, Button, Card, cx, ErrorBox, Modal, PotentialBadge, Rating, Spinner } from './ui';
+import { Badge, Button, Card, cx, ErrorBox, Modal, PotentialBadge, Rating, RatingChange, Spinner } from './ui';
 
 type Data = Outputs['data']['contracts'];
 type Row = Data['players'][number];
@@ -225,7 +225,7 @@ function ContractRow({ r, d, leagueId }: { r: Row; d: Data; leagueId: string }) 
       <td className="text-ice-300">{r.pos}</td>
       <td className="num">{r.age}</td>
       <td className="num">
-        <Rating value={r.overall} />
+        <RatingChange value={r.overall} change={r.ovrChange} prevSeason={r.ovrPrevSeason} />
       </td>
       <td>
         <PotentialBadge potential={r.potential} />

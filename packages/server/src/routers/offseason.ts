@@ -146,6 +146,8 @@ export function classView(L: League, viewerTeam: string | null, p: Player, draft
     regionLabel: REGION_LABEL[region],
     stats,
     confidence: Math.round(conf * 100) / 100,
+    /** On the viewer's watchlist. */
+    watched: !!viewerTeam && !!L.teams[viewerTeam]?.watchlist?.includes(p.id),
     /** Central Scouting's consensus ranking (the same for every team). */
     css: centralScouting(L, draftSeason).get(p.id) ?? null,
     scouted,
@@ -440,6 +442,24 @@ export const offseasonRouter = router({
     });
   }),
 
+  /** Add a draft-eligible prospect to your watchlist, or take him off it. */
+  setWatch: memberProcedure.input(z.object({ playerId: z.string(), watched: z.boolean() })).mutation(async ({ ctx, input }) => {
+    const teamId = requireTeam(ctx.membership);
+    await mutateLeague(ctx.db, input.leagueId, (L) => {
+      const p = L.players[input.playerId];
+      const team = L.teams[teamId];
+      if (!p || p.teamId || p.prospectOf) throw badRequest('Only undrafted prospects go on the watchlist');
+      // (Drafted or gone: off the list.)
+      const list = (team.watchlist ?? []).filter((id) => id !== input.playerId && L.players[id] && !L.players[id].teamId && !L.players[id].prospectOf);
+      if (input.watched) {
+        if (list.length >= 100) throw badRequest('Your watchlist is full (100 players)');
+        list.push(input.playerId);
+      }
+      team.watchlist = list;
+    });
+    return { ok: true };
+  }),
+
   setDraftList: memberProcedure.input(z.object({ playerIds: z.array(z.string()).max(100) })).mutation(async ({ ctx, input }) => {
     const teamId = requireTeam(ctx.membership);
     await mutateLeague(ctx.db, input.leagueId, (L) => {
@@ -625,6 +645,32 @@ export const offseasonRouter = router({
       active: team ? activeRoster(L, team).length : null,
       activeMax: ACTIVE_MAX,
       myBids: Object.entries(myBids).map(([id, offer]) => ({ playerId: id, name: nameOf(id), offer, decidesIn: faDecidesIn(L, id) })),
+      /**
+       * Before free agency opens (the draft and the re-signing week): players whose
+       * contracts are expiring and who haven't re-signed yet, with what they're asking.
+       */
+      pending:
+        os && (os.stage === 'draft' || os.stage === 're-sign' || os.stage === 'fantasy-draft')
+          ? Object.entries(os.expiring)
+              .filter(([id]) => L.players[id]?.teamId && !L.players[id].extension)
+              .map(([id, ask]) => {
+                const p = L.players[id];
+                const t = L.teams[p.teamId!];
+                const lettingGo = os.resign[id] === false || (t.controller.kind === 'ai' && !!os.aiDecided?.[id]);
+                return {
+                  ...publicPlayer(L, p),
+                  potential: potentialView(L, my, p),
+                  team: teamInfo(t),
+                  mine: t.id === my,
+                  status: p.contract?.expiresAs ?? 'UFA',
+                  ask,
+                  /** Likely to reach free agency: his team has said it won't re-sign him. */
+                  lettingGo,
+                  qualified: !!os.qualified?.[id],
+                };
+              })
+              .sort((a, b) => b.overall - a.overall)
+          : [],
       results: (os?.faLog ?? [])
         .slice()
         .sort((a, b) => b.round - a.round || b.offer.salary - a.offer.salary)
