@@ -29,7 +29,12 @@ export function TeamsPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="font-display text-2xl font-semibold tracking-wide text-white uppercase">Teams</h1>
+        <div className="flex flex-wrap items-baseline gap-3">
+          <h1 className="font-display text-2xl font-semibold tracking-wide text-white uppercase">Teams</h1>
+          <Link to="/logos" className="text-sm text-ice-400 hover:text-white hover:underline">
+            Logo gallery →
+          </Link>
+        </div>
         <p className="text-sm text-ice-400">
           {L.myTeamId
             ? 'You manage a team. Release it from the League page if you want a different one.'
