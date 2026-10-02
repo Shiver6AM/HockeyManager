@@ -61,6 +61,23 @@ describe('positions, placements and ice time', () => {
     expect(teamLines(L, hal)).toEqual(autoLines(roster, hal.tactics));
   });
 
+  it('still builds lines when the healthy roster is short between games', () => {
+    const G = generateLeague({ seed: 2305, humans: { HAL: 'me' } });
+    const hal = G.teams.HAL;
+    const nhl = hal.roster.map((id) => G.players[id]).filter((p) => !p.farm);
+    // An injured goalie: the lines are built with him until a call-up arrives on game day.
+    const goalie = nhl.find((p) => p.pos === 'G')!;
+    goalie.injury = { type: 'Lower-body', severity: 'short-term', daysLeft: 9 } as never;
+    expect(teamLines(G, hal).goalies).toHaveLength(2);
+    // Five healthy defensemen (and no injured ones to fall back on): a forward fills in on the third pair.
+    const d = nhl.filter((p) => p.pos === 'D');
+    for (const p of d.slice(5)) p.farm = true;
+    const lines = teamLines(G, hal);
+    expect(lines.defense.flat()).toHaveLength(6);
+    expect(new Set([...lines.forwards.flat(), ...lines.defense.flat()]).size).toBe(18);
+    expect(lines.defense.flat().filter((id) => G.players[id].pos !== 'D')).toHaveLength(1);
+  });
+
   it('spreads ice time by the team’s plan', () => {
     const home = L.teams.HAL;
     const away = L.teams.QUE;

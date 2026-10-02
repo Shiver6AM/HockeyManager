@@ -1,16 +1,22 @@
 /**
  * Loading and saving the league document.
  *
- * Reads go through a small in-memory cache keyed by (league id, version), so
- * browsing standings doesn't re-parse ~2 MB of JSON on every request. Any
- * write bumps the version, which invalidates the cache entry.
+ * The server keeps each league it has touched in memory, keyed by (league id,
+ * version): the parsed document for reads, and its JSON text for writes. The
+ * database is asked for the document itself only when the server doesn't have
+ * the current version (after a restart, or if something else wrote it). Every
+ * other read or change costs a one-row version check, so browsing and small
+ * changes don't pull megabytes out of a hosted database each time.
  */
 import type { BoxScore, League, ScheduledGame } from '@hockey-gm/sim-core';
 import type { Queryable } from './db';
 
 interface CacheEntry {
   version: number;
+  /** For reads. Callers must not change it. */
   league: League;
+  /** The document exactly as saved: changes start from a fresh parse of this, never from the shared object. */
+  json: string;
 }
 const cache = new Map<string, CacheEntry>();
 const CACHE_MAX = 20;
@@ -34,43 +40,52 @@ export async function leagueMeta(db: Queryable, id: string): Promise<LeagueRow |
   return rows[0] ?? null;
 }
 
+/** The document from the database (as text, parsed here once). */
+async function fetchState(db: Queryable, id: string, lock: boolean): Promise<{ json: string; version: number }> {
+  const rows = await db.query<{ state: string; version: number }>(`select state::text as state, version from leagues where id = $1${lock ? ' for update' : ''}`, [id]);
+  if (!rows[0]) throw new Error('League not found');
+  return { json: rows[0].state, version: rows[0].version };
+}
+
 /** Read-only view of the league. Callers must not mutate the result. */
 export async function readLeague(db: Queryable, id: string): Promise<League> {
   const meta = await db.query<{ version: number }>('select version from leagues where id = $1', [id]);
   if (!meta[0]) throw new Error('League not found');
   const hit = cache.get(id);
   if (hit && hit.version === meta[0].version) return hit.league;
-  const rows = await db.query<{ state: League | string; version: number }>('select state, version from leagues where id = $1', [id]);
-  const league = typeof rows[0].state === 'string' ? (JSON.parse(rows[0].state) as League) : rows[0].state;
-  remember(id, rows[0].version, league);
+  const { json, version } = await fetchState(db, id, false);
+  const league = JSON.parse(json) as League;
+  remember(id, version, league, json);
   return league;
 }
 
-/** Load for modification inside a transaction, locking the row. */
+/** Load for modification inside a transaction, locking the row. The result is the caller's own copy. */
 export async function loadForUpdate(q: Queryable, id: string): Promise<{ league: League; version: number }> {
-  const rows = await q.query<{ state: League | string; version: number }>(
-    'select state, version from leagues where id = $1 for update',
-    [id],
-  );
-  if (!rows[0]) throw new Error('League not found');
-  const league = typeof rows[0].state === 'string' ? (JSON.parse(rows[0].state) as League) : rows[0].state;
-  return { league, version: rows[0].version };
+  const meta = await q.query<{ version: number }>('select version from leagues where id = $1 for update', [id]);
+  if (!meta[0]) throw new Error('League not found');
+  const hit = cache.get(id);
+  if (hit && hit.version === meta[0].version) return { league: JSON.parse(hit.json) as League, version: hit.version };
+  // Not in memory (a restart), or out of date: fetch it once and keep it.
+  const { json, version } = await fetchState(q, id, false);
+  remember(id, version, JSON.parse(json) as League, json);
+  return { league: JSON.parse(json) as League, version };
 }
 
 export async function saveLeague(q: Queryable, id: string, league: League, prevVersion: number): Promise<number> {
   const next = prevVersion + 1;
+  const json = JSON.stringify(league);
   const res = await q.query<{ version: number }>(
     'update leagues set state = $1, version = $2, updated_at = now() where id = $3 and version = $4 returning version',
-    [JSON.stringify(league), next, id, prevVersion],
+    [json, next, id, prevVersion],
   );
   if (!res[0]) throw new Error('League was modified concurrently; try again');
-  remember(id, next, league);
+  remember(id, next, league, json);
   return next;
 }
 
-function remember(id: string, version: number, league: League) {
+function remember(id: string, version: number, league: League, json: string) {
   cache.delete(id);
-  cache.set(id, { version, league });
+  cache.set(id, { version, league, json });
   while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!);
 }
 

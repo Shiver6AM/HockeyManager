@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 196 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 201 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -625,6 +625,10 @@ playoff OT rate. Some targets are approximate.
 - A full-season "sim to end" takes a few seconds and blocks the API while it runs.
   It should move to a worker thread before the game is hosted.
 - Live updates use 5-second polling. Supabase Realtime can replace it later.
+- The whole league is one JSON document in `leagues.state`. The server keeps the current
+  version in memory, so reads and small changes cost a one-row version check; the document
+  itself is fetched from the database only after a restart. (Fetching it on every change
+  used several megabytes of database egress each time.)
 - Simcasts and the draft clock run in the server's memory: a restart ends a simcast (its
   game result is kept) and the draft clock resumes the next time anyone opens the league.
 - The league document grows about 0.5 MB per season of history (careers including junior/AHL seasons, retirees).

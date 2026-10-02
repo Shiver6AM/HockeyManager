@@ -117,8 +117,7 @@ function buildAutoLines(roster: Player[], tactics: Tactics, pins: Record<PlayerI
   while (dPool.length < 6) {
     const extra = spare.shift();
     if (!extra) throw new Error('Not enough skaters to build defense pairs');
-    used.add(extra.id);
-    dPool.push(extra);
+    dPool.push(extra); // (marked as used when he's put in a pair, below)
   }
   const dPairs: PlayerId[][] = [];
   for (let i = 0; i < 3; i++) {

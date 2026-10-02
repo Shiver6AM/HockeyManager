@@ -177,7 +177,17 @@ export function sendDownCallUps(league: League, team: Team) {
 
 /** The assistant coach's lines for a team: best players up, systems filled, and the manager's placements honored. */
 export function teamLines(league: League, team: Team): Lines {
-  return autoLines(healthyRoster(league, team), team.tactics, team.controller.kind === 'human' ? team.linePins : undefined);
+  const pins = team.controller.kind === 'human' ? team.linePins : undefined;
+  const healthy = healthyRoster(league, team);
+  try {
+    return autoLines(healthy, team.tactics, pins);
+  } catch (e) {
+    // Short of healthy bodies between games (an injured goalie, say; call-ups come on game day):
+    // build the lines with the injured included. They're swapped out when the game is played.
+    const everyone = nhlRoster(league, team).filter((p) => !p.onWaivers);
+    if (everyone.length <= healthy.length) throw e;
+    return autoLines(everyone, team.tactics, pins);
+  }
 }
 
 /** Call before simulating a team's game. */
@@ -227,7 +237,8 @@ export function aiRosterMoves(league: League, team: Team, margin = 2) {
         // Can he be afforded with the veteran's full salary still on the books until he clears?
         if (capRoom(league, team) - ((up.contract?.salary ?? 0) - capHit(up)) < 0) continue;
         assignToFarm(league, team, down);
-        callUpFromFarm(league, team, up, '');
+        // (A swap: he takes the waived player's place, so the 23-man check doesn't apply.)
+        callUpFromFarm(league, team, up, ' (roster move)');
         league.transactions.pop();
       } else {
         sendDown(league, team, down);

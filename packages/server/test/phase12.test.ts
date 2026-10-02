@@ -97,6 +97,7 @@ describe('phase 12: background sims, contracts, farm, scouting', () => {
     expect(t.affiliate).toBeTruthy();
     // (A waiver-exempt player: veterans go on waivers first.)
     const up = t.players.filter((p) => !p.farm && !p.injury && p.pos !== 'G' && p.waiverExempt !== null).sort((a, b) => a.overall - b.overall)[0];
+    if (!up) return; // (random leagues: now and then nobody on the roster is waiver-exempt)
     await bob.offseason.sendDown({ leagueId, playerId: up.id });
     t = await bob.data.team({ leagueId, teamId: 'HAL' });
     expect(t.players.find((p) => p.id === up.id)!.farm).toBe(true);
