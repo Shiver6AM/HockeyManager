@@ -4,16 +4,68 @@
  * team's logo is at center ice.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Button, Card, cx, Empty, ErrorBox, Spinner, TeamChip } from '../components/ui';
 import { TeamLogo } from '../components/TeamLogo';
-import { useTRPC, type Outputs } from '../trpc';
+import { trpcClient, useTRPC, type Outputs } from '../trpc';
 import { useLeague } from './LeagueLayout';
 
-type View = NonNullable<Outputs['simcast']['state']>;
+type Wire = NonNullable<Outputs['simcast']['state']>;
+/** What the page shows: every play so far (the server sends only new ones each second) and the latest box score. */
+type View = Omit<Wire, 'box'> & { box: NonNullable<Wire['box']> };
 type Play = View['plays'][number];
 type TeamV = View['home'];
+
+/**
+ * Follows the simcast: asks once a second for the plays it doesn't have yet
+ * (a few hundred bytes, instead of the whole game every time).
+ */
+function useSimcast(leagueId: string) {
+  const [view, setView] = useState<View | null | undefined>(undefined);
+  const have = useRef<{ sid: string; plays: Play[]; box: View['box'] } | null>(null);
+  const refresh = useCallback(async () => {
+    const h = have.current;
+    const r = await trpcClient.simcast.state.query({ leagueId, sid: h?.sid, after: h?.plays.length });
+    if (!r) {
+      have.current = null;
+      setView(null);
+      return null;
+    }
+    const same = h && h.sid === r.sid;
+    const plays = same ? (r.plays.length || r.from !== h.plays.length ? [...h.plays.slice(0, r.from), ...r.plays] : h.plays) : r.plays;
+    const box = r.box ?? (same ? h.box : null);
+    if (!box || (!same && r.from !== 0)) {
+      // Out of step (a new simcast started): start over.
+      have.current = null;
+      return null;
+    }
+    have.current = { sid: r.sid, plays, box };
+    const v = { ...r, plays, box };
+    setView(v);
+    return v;
+  }, [leagueId]);
+  useEffect(() => {
+    let stop = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const loop = async () => {
+      let v: View | null = null;
+      try {
+        v = await refresh();
+      } catch {
+        /* a blip: try again */
+      }
+      // (No simcast on, or it's over: no need to ask every second.)
+      if (!stop) timer = setTimeout(loop, v && !v.done ? 1000 : 4000);
+    };
+    void loop();
+    return () => {
+      stop = true;
+      clearTimeout(timer);
+    };
+  }, [refresh]);
+  return { view, refresh };
+}
 
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
@@ -21,12 +73,23 @@ export function SimcastPage() {
   const L = useLeague();
   const trpc = useTRPC();
   const qc = useQueryClient();
-  const state = useQuery({ ...trpc.simcast.state.queryOptions({ leagueId: L.id }), refetchInterval: 1000 });
-  const games = useQuery({ ...trpc.simcast.games.queryOptions({ leagueId: L.id }), enabled: !state.data });
-  const start = useMutation(trpc.simcast.start.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));
-  if (state.isLoading) return <Spinner />;
-  const v = state.data;
-  if (v) return <Broadcast v={v} />;
+  const { view: v, refresh } = useSimcast(L.id);
+  const games = useQuery({ ...trpc.simcast.games.queryOptions({ leagueId: L.id }), enabled: v === null });
+  const start = useMutation(
+    trpc.simcast.start.mutationOptions({
+      onSuccess: () => {
+        void refresh();
+        void qc.invalidateQueries();
+      },
+    }),
+  );
+  // Someone else started (or ended) a simcast: the league overview says so before the next slow check.
+  const liveGame = L.simcast?.live ? L.simcast.gameId : null;
+  useEffect(() => {
+    void refresh();
+  }, [liveGame, refresh]);
+  if (v === undefined) return <Spinner />;
+  if (v) return <Broadcast v={v} refresh={refresh} />;
 
   const g = games.data;
   return (
@@ -77,11 +140,18 @@ export function SimcastPage() {
   );
 }
 
-function Broadcast({ v }: { v: View }) {
+function Broadcast({ v, refresh }: { v: View; refresh: () => Promise<unknown> }) {
   const L = useLeague();
   const trpc = useTRPC();
   const qc = useQueryClient();
-  const control = useMutation(trpc.simcast.control.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));
+  const control = useMutation(
+    trpc.simcast.control.mutationOptions({
+      onSuccess: () => {
+        void refresh();
+        void qc.invalidateQueries({ queryKey: trpc.leagues.overview.queryKey({ leagueId: L.id }) });
+      },
+    }),
+  );
   const act = (action: 'speed' | 'pause' | 'resume' | 'skip-period' | 'skip-end' | 'end', speed?: number) => control.mutate({ leagueId: L.id, action, speed });
   const canRun = v.canControl;
   // Follows the period being played unless the viewer picks another one (or all of them).

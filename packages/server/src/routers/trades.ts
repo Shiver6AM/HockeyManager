@@ -32,6 +32,7 @@ import {
   type TradeProposal,
   OWNER_GOAL_LABEL,
   standings,
+  withMemo,
 } from '@hockey-gm/sim-core';
 import { z } from 'zod';
 import { mutateLeague } from '../advance';
@@ -115,6 +116,8 @@ export const tradesRouter = router({
    */
   assets: memberProcedure.input(z.object({ teamId: z.string(), fitsFor: z.string().optional() })).query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
+    // (Read-only from here: team rankings and the like are worked out once for the whole page.)
+    return withMemo(() => {
     const t = L.teams[input.teamId];
     if (!t) throw badRequest('No such team');
     const block = tradeBlock(L, t);
@@ -142,6 +145,7 @@ export const tradesRouter = router({
         return { key, label: pickLabel(key, L), season: Number(season), round: Number(round), original: orig, onBlock: onBlock.has(key), fits: assetFits(L, { kind: 'pick', key }, needs), value: Math.round(pickValue(L, MARKET, key)) };
       }),
     };
+    });
   }),
 
   /** Set your trade block: who and what you're shopping, and what you want back. */
@@ -169,6 +173,7 @@ export const tradesRouter = router({
   /** Every team's trade block, for the league-wide view. */
   leagueBlock: memberProcedure.query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
+    return withMemo(() => {
     const my = ctx.membership.teamId;
     const myNeeds = my ? tradeBlock(L, L.teams[my]).needs : [];
     return {
@@ -189,6 +194,7 @@ export const tradesRouter = router({
           };
         }),
     };
+    });
   }),
 
   /**
@@ -247,6 +253,8 @@ export const tradesRouter = router({
   evaluate: memberProcedure.input(deal).query(async ({ ctx, input }) => {
     const teamId = requireTeam(ctx.membership);
     const L = await readLeague(ctx.db, input.leagueId);
+    // (Read-only from here: team rankings and the like are worked out once for the whole page.)
+    return withMemo(() => {
     const error = validateTrade(L, teamId, input.partner, input.give, input.get);
     const partner = L.teams[input.partner];
     const verdict = partner?.controller.kind === 'ai' && !error ? evaluateForAi(L, input.partner, input.give, input.get) : null;
@@ -273,6 +281,7 @@ export const tradesRouter = router({
       theirRetainedCount: partner ? retainedCount(L, partner) : 0,
       retentionMax: RETENTION,
     };
+    });
   }),
 
   /** For an AI partner: the smallest thing they'd want added from your side. */

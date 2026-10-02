@@ -183,10 +183,19 @@ export function teamLines(league: League, team: Team): Lines {
     return autoLines(healthy, team.tactics, pins);
   } catch (e) {
     // Short of healthy bodies between games (an injured goalie, say; call-ups come on game day):
-    // build the lines with the injured included. They're swapped out when the game is played.
-    const everyone = nhlRoster(league, team).filter((p) => !p.onWaivers);
-    if (everyone.length <= healthy.length) throw e;
-    return autoLines(everyone, team.tactics, pins);
+    // fill only the positions that are short with the injured players there. They're swapped
+    // out when the game is played.
+    const grp = (p: Player): 'F' | 'D' | 'G' => (p.pos === 'G' ? 'G' : p.pos === 'D' ? 'D' : 'F');
+    const hurt = nhlRoster(league, team)
+      .filter((p) => p.injury && !p.onWaivers)
+      .sort((a, b) => overall(b) - overall(a));
+    const roster = [...healthy];
+    for (const [g, need] of [['F', 12], ['D', 6], ['G', 2]] as const) {
+      let short = need - healthy.filter((p) => grp(p) === g).length;
+      for (const p of hurt) if (grp(p) === g && short-- > 0) roster.push(p);
+    }
+    if (roster.length === healthy.length) throw e;
+    return autoLines(roster, team.tactics, pins);
   }
 }
 

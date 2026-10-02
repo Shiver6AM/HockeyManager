@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 204 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 213 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -624,7 +624,19 @@ playoff OT rate. Some targets are approximate.
   several API instances would need a Postgres advisory lock and a single scheduler.
 - A full-season "sim to end" takes a few seconds and blocks the API while it runs.
   It should move to a worker thread before the game is hosted.
-- Live updates use 5-second polling. Supabase Realtime can replace it later.
+- Live updates are pushed: each open league page holds one server-sent-events connection
+  (`GET /api/leagues/:id/events`) and refetches when the server says the league changed
+  (a sim step, a trade, a draft pick, a manager readying up). While the connection is up
+  the browser only polls as a slow safety net (30 s); if it drops, the old polling
+  (2–6 s) takes over until it reconnects. Events are kept in the server's memory, so
+  this also assumes one server process.
+- A simcast sends each viewer only the plays he doesn't have yet, and the box score only
+  when something happened.
+- Read-only pages that price many players at once (free agents, trade block, draft board,
+  "what would they take?") share their intermediate results for the length of the request
+  (`withMemo` in sim-core). Nothing is cached between requests.
+- A lineup may dress an injured player only when the team has no healthy player left in
+  that group (forwards, defense or goalies) to put in his place.
 - The whole league is one JSON document, stored gzipped in `leagues.state_z` (about a
   seventh of its size on the wire); `leagues.state` keeps a small readable summary
   (season, day, phase, counts). The server keeps the current version in memory, so reads
@@ -638,7 +650,7 @@ playoff OT rate. Some targets are approximate.
 
 ## Roadmap
 
-- **Phase 7, hosting:** Supabase for the database, sims moved to a worker thread,
-  Supabase Realtime instead of polling, email or push for notifications, and deployment.
+- **Hosting:** sims moved to a worker thread,
+  email or push for notifications.
 - **Depth:** arena and ticket-price decisions,
   owners who fire GMs, and a minor-league affiliate with its own games.

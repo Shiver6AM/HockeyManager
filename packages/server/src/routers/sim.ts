@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
-import { advanceLeague, allHumansReady, cancelSim, simJob, startAdvance, summaryOf, type AdvanceSummary, type SimJob } from '../advance';
+import { advanceLeague, allHumansReady, cancelSim, jobView, simJob, startAdvance, summaryOf, type AdvanceSummary } from '../advance';
+import { publish } from '../events';
 import { simcastBlocking } from '../simcast';
 import { advancerProcedure, badRequest, commissionerProcedure, memberProcedure, router } from '../trpc';
 
@@ -39,6 +40,8 @@ export const simRouter = router({
 
   cancel: advancerProcedure.mutation(({ input }) => {
     if (!cancelSim(input.leagueId)) throw badRequest('Nothing is simming');
+    const j = simJob(input.leagueId);
+    if (j) publish(input.leagueId, { type: 'sim', job: jobView(j) });
     return { ok: true };
   }),
 
@@ -53,6 +56,7 @@ export const simRouter = router({
       input.leagueId,
       ctx.user.id,
     ]);
+    publish(input.leagueId, { type: 'changed' });
     let advanced: AdvanceSummary | null = null;
     if (input.ready) {
       const rows = await ctx.db.query<{ advance: { mode: string; daysPerTick?: number; advanceEarlyWhenAllReady?: boolean } }>(
@@ -98,23 +102,3 @@ export const simRouter = router({
   }),
 });
 
-function jobView(j: SimJob) {
-  return {
-    id: j.id,
-    status: j.status,
-    label: j.label,
-    startedBy: j.startedBy ?? (j.triggeredBy === 'schedule' ? 'the schedule' : j.triggeredBy === 'all-ready' ? 'everyone being ready' : null),
-    startedAt: j.startedAt,
-    finishedAt: j.finishedAt,
-    season: j.season,
-    day: j.day,
-    phase: j.phase,
-    stage: j.stage,
-    done: j.done,
-    total: j.total,
-    progress: j.status === 'running' ? Math.min(0.99, j.done / Math.max(1, j.total)) : 1,
-    games: j.games,
-    cancelling: j.cancel && j.status === 'running',
-    error: j.error,
-  };
-}

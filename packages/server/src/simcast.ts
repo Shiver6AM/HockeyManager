@@ -60,6 +60,8 @@ interface BoxPlayer {
 }
 
 interface Session {
+  /** Changes with every new simcast, so a browser knows to start its play list over. */
+  sid: string;
   leagueId: string;
   gameId: number;
   season: number;
@@ -225,6 +227,7 @@ export function startSimcast(L: League, leagueId: string, gameId: number, host: 
   const series = game.seriesId ? L.playoffs?.rounds.flat().find((s) => s.id === game.seriesId) : null;
   const now = Date.now();
   const s: Session = {
+    sid: `${gameId}-${now}`,
     leagueId,
     gameId,
     season: L.season,
@@ -252,7 +255,12 @@ export function startSimcast(L: League, leagueId: string, gameId: number, host: 
 }
 
 /** What everyone watching sees now (and note that this viewer is watching). */
-export function simcastView(leagueId: string, viewer: { id: string; name: string } | null) {
+/**
+ * What everyone watching sees now (and note that this viewer is watching).
+ * `after` is how many plays the browser already has for this simcast (`sid`):
+ * only the plays after those are sent, and the box score only when it changed.
+ */
+export function simcastView(leagueId: string, viewer: { id: string; name: string } | null, have: { sid?: string; after?: number } = {}) {
   const s = sweep(leagueId);
   if (!s) return null;
   const now = Date.now();
@@ -260,6 +268,7 @@ export function simcastView(leagueId: string, viewer: { id: string; name: string
   for (const [id, v] of s.viewers) if (now - v.seen > 20_000 && id !== viewer?.id) s.viewers.delete(id);
   const pos = position(s, now);
   const shown = s.rows.filter((r) => r.t <= pos);
+  const from = have.sid === s.sid ? Math.max(0, Math.min(have.after ?? 0, shown.length)) : 0;
   const cur = shown[shown.length - 1] ?? null;
   const periodEnded = cur?.type === 'period-end' || cur?.type === 'final';
   // The game clock: time since the period started, from the last play shown (or running between plays).
@@ -290,12 +299,16 @@ export function simcastView(leagueId: string, viewer: { id: string; name: string
     awayScore: cur?.awayScore ?? 0,
     homeShots: cur?.homeShots ?? 0,
     awayShots: cur?.awayShots ?? 0,
-    plays: shown,
+    sid: s.sid,
+    /** Plays shown so far in total; `plays` holds only the ones after `from`. */
+    total: shown.length,
+    from,
+    plays: shown.slice(from),
     /** Penalties running now: time left for each player in the box (the first two on each side tick). */
     penalties: penaltyState(s, shown.length, clock, periodEnded),
     /** A team with its goalie pulled for an extra attacker. */
     emptyNet: shown.length && !periodEnded ? (s.raw[shown.length - 1].pulled ?? null) : null,
-    box: s.finishedAt ? finalBox(s) : liveBox(s, shown.length),
+    box: s.finishedAt ? finalBox(s) : from === 0 || shown.length > from ? liveBox(s, shown.length) : null,
     serverNow: now,
   };
 }

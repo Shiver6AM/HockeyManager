@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Button, Card, CollapsibleCard, cx, Empty, ErrorBox, Rating, Spinner, TeamChip } from '../components/ui';
+import { usePollInterval } from '../live';
 import { useTRPC } from '../trpc';
 import { ClassTable, CssRankings, GRADE_TONE } from '../components/ClassTable';
 import { DraftClockBar, DraftLottery, useDraftOverview, useServerNow } from '../components/DraftRoom';
@@ -12,7 +13,9 @@ export function DraftPage() {
   const L = useLeague();
   const trpc = useTRPC();
   const qc = useQueryClient();
-  const board = useQuery({ ...trpc.offseason.draftBoard.queryOptions({ leagueId: L.id }), refetchInterval: 2500 });
+  const board = useQuery({ ...trpc.offseason.draftBoard.queryOptions({ leagueId: L.id }), // (Large: with live updates it's fetched only when the league changes, e.g. on each pick.)
+    refetchInterval: usePollInterval(2500, false),
+  });
   const ov = useDraftOverview(L.id);
   const now = useServerNow(ov.data?.draft.clock?.serverNow, ov.dataUpdatedAt);
   const pick = useMutation(trpc.offseason.makePick.mutationOptions({ onSuccess: () => qc.invalidateQueries() }));

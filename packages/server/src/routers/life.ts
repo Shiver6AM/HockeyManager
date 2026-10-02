@@ -50,6 +50,7 @@ import {
   currentLeg,
   scoutPlanWindow,
   setScoutPlan,
+  withMemo,
 } from '@hockey-gm/sim-core';
 import { z } from 'zod';
 import { mutateLeague } from '../advance';
@@ -340,6 +341,7 @@ export const lifeRouter = router({
   /** This season's draft class, as your scouts see it. */
   draftClass: memberProcedure.query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
+    return withMemo(() => {
     const d = L.draftClass ?? (L.offseason?.draft ? { season: L.offseason.draft.season, ids: L.offseason.draft.classIds } : null);
     if (!d) return null;
     const my = ctx.membership.teamId;
@@ -365,6 +367,7 @@ export const lifeRouter = router({
         .map((p) => ({ ...classView(L, my, p, d.season), followable: followable && isDraftClass(L, p) }))
         .sort((a, b) => b.scoutValue - a.scoutValue),
     };
+    });
   }),
 
   hireScout: memberProcedure.input(z.object({ scoutId: z.string() })).mutation(async ({ ctx, input }) => {

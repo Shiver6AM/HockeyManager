@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cx } from './ui';
+import { usePollInterval } from '../live';
 import { useTRPC } from '../trpc';
 
 const ICON: Record<string, string> = {
@@ -23,7 +24,8 @@ export function NotificationBell({ leagueId }: { leagueId: string }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const q = useQuery({ ...trpc.life.notifications.queryOptions({ leagueId }), refetchInterval: 10_000 });
+  // (New notices arrive with league changes, which refresh this through the live connection.)
+  const q = useQuery({ ...trpc.life.notifications.queryOptions({ leagueId }), refetchInterval: usePollInterval(15_000, 120_000) });
   const mark = useMutation(trpc.life.markRead.mutationOptions({ onSuccess: () => qc.invalidateQueries({ queryKey: trpc.life.notifications.queryKey() }) }));
 
   useEffect(() => {

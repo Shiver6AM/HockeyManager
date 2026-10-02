@@ -40,8 +40,8 @@ export const simcastRouter = router({
     });
   }),
 
-  state: memberProcedure.query(({ ctx, input }) => {
-    const v = simcastView(input.leagueId, { id: ctx.user.id, name: ctx.user.displayName });
+  state: memberProcedure.input(z.object({ sid: z.string().optional(), after: z.number().int().min(0).optional() })).query(({ ctx, input }) => {
+    const v = simcastView(input.leagueId, { id: ctx.user.id, name: ctx.user.displayName }, { sid: input.sid, after: input.after });
     if (!v) return null;
     const { hostId, ...rest } = v;
     return { ...rest, canControl: hostId === ctx.user.id || ctx.membership.canAdvance };

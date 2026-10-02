@@ -6,6 +6,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { useLeague } from './pages/LeagueLayout';
+import { useLive } from './live';
 import { useTRPC } from './trpc';
 
 export type Target = { days: number } | { to: 'playoffs' | 'end-of-season' | 'next-season' | 'trade-deadline' | 'free-agency' | 'training-camp' };
@@ -14,9 +15,11 @@ export function useSim() {
   const L = useLeague();
   const trpc = useTRPC();
   const qc = useQueryClient();
+  const live = useLive();
   const status = useQuery({
     ...trpc.sim.status.queryOptions({ leagueId: L.id }),
-    refetchInterval: (q) => (q.state.data?.status === 'running' ? 600 : 4000),
+    // (Progress is pushed while live updates are on; the timer is the fallback.)
+    refetchInterval: (q) => (live ? (q.state.data?.status === 'running' ? 5000 : 30_000) : q.state.data?.status === 'running' ? 600 : 4000),
   });
   const statusKey = trpc.sim.status.queryKey({ leagueId: L.id });
   const start = useMutation(trpc.sim.advance.mutationOptions({ onSuccess: () => qc.invalidateQueries({ queryKey: statusKey }) }));
@@ -30,6 +33,8 @@ export function useSim() {
   useEffect(() => {
     if (running) {
       wasRunning.current = true;
+      // (With live updates, every save during the sim already refreshes the page.)
+      if (live) return;
       const t = setInterval(() => qc.invalidateQueries({ predicate: (q) => JSON.stringify(q.queryKey) !== JSON.stringify(statusKey) }), 3000);
       return () => clearInterval(t);
     }
@@ -38,7 +43,7 @@ export function useSim() {
       void qc.invalidateQueries();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running]);
+  }, [running, live]);
 
   return {
     job,

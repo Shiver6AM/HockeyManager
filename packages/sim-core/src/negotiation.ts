@@ -9,6 +9,7 @@
  * through the same function, and it is deterministic, so every offer is
  * judged the same way no matter who makes it.
  */
+import { memo } from './memo';
 import { askingContract, BASE_CAP, LEAGUE_MIN_SALARY, MAX_SALARY, marketValue } from './contracts';
 import { age, overall } from './ratings';
 import { deriveSeed, Rng } from './rng';
@@ -45,13 +46,17 @@ export function priorities(p: Player): string[] {
 
 /** 0 (worst) … 1 (best): where a team's current top-end talent ranks in the league. */
 export function contenderScore(league: League, teamId: TeamId): number {
-  const strength = (t: Team) => {
-    const ovrs = t.roster.map((id) => league.players[id]).filter(Boolean).map(overall).sort((a, b) => b - a).slice(0, 20);
-    return ovrs.reduce((s, x) => s + x, 0) / Math.max(1, ovrs.length);
-  };
-  const all = Object.values(league.teams).map((t) => [t.id, strength(t)] as const).sort((a, b) => b[1] - a[1]);
-  const rank = all.findIndex(([id]) => id === teamId);
-  return 1 - rank / Math.max(1, all.length - 1);
+  // (Every team's rank, worked out once per page or trade evaluation: see memo.ts.)
+  const ranks = memo('contender-ranks', () => {
+    const strength = (t: Team) => {
+      const ovrs = t.roster.map((id) => league.players[id]).filter(Boolean).map(overall).sort((a, b) => b - a).slice(0, 20);
+      return ovrs.reduce((s, x) => s + x, 0) / Math.max(1, ovrs.length);
+    };
+    const all = Object.values(league.teams).map((t) => [t.id, strength(t)] as const).sort((a, b) => b[1] - a[1]);
+    return { index: new Map(all.map(([id], i) => [id, i])), n: all.length };
+  });
+  const rank = ranks.index.get(teamId) ?? -1;
+  return 1 - rank / Math.max(1, ranks.n - 1);
 }
 
 /** Would he be a top player at his position on that team? Positive = bigger role. */

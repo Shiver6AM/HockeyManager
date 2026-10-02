@@ -237,6 +237,8 @@ describe('multiplayer league flow', () => {
     const before = (await comm.leagues.overview({ leagueId })).day;
     await new Promise((r) => setTimeout(r, 2500));
     await comm.leagues.updateAdvance({ leagueId, advance: { mode: 'commissioner' } });
+    // A tick that started just before the switch is allowed to finish.
+    for (let i = 0; i < 200 && (await comm.sim.status({ leagueId }))?.status === 'running'; i++) await new Promise((r) => setTimeout(r, 50));
     const after = await comm.leagues.overview({ leagueId });
     expect(after.day).toBeGreaterThan(before);
     expect(after.nextAdvanceAt).toBeNull();

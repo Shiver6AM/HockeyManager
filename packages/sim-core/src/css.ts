@@ -11,6 +11,7 @@
  * overrated for a while). It sees every league but isn't perfect, and like
  * everyone it misses most of what a sleeper can become.
  */
+import { memo } from './memo';
 import { apparentPotential } from './draft';
 import { playerRegion } from './scouting';
 import { overall } from './ratings';
@@ -65,6 +66,11 @@ const cache = new WeakMap<League, { key: string; ranks: Map<PlayerId, CssRank> }
 
 /** Central Scouting's current rankings of a draft class (players still draft-eligible). */
 export function centralScouting(league: League, draftSeason: number): Map<PlayerId, CssRank> {
+  // (Asked once per prospect when a page lists the class: see memo.ts.)
+  return memo(`css:${draftSeason}`, () => centralScoutingNow(league, draftSeason));
+}
+
+function centralScoutingNow(league: League, draftSeason: number): Map<PlayerId, CssRank> {
   const u = cssUpdate(league);
   const cls = Object.values(league.players).filter((p) => p.draftClass === draftSeason && !p.teamId && !p.prospectOf);
   const pub = league.css?.season === draftSeason && league.css.index === u.index ? league.css : null;

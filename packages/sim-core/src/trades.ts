@@ -26,6 +26,7 @@ import { healthyRoster, teamLines } from './roster';
 import type { League, NeedTag, Player, PlayerId, Team, TeamId, TradeAsset, TradeProposal } from './types';
 import { assetFits, BLOCK_DISCOUNT, NEED_BONUS, tradeBlock } from './block';
 import { slider } from './sliders';
+import { memo, withMemo } from './memo';
 
 export const TRADE = {
   /** AI wants to come out ahead by this much (ratio of value received to value given). */
@@ -104,20 +105,34 @@ export function pickLabel(key: string, league?: League): string {
 
 /** Where a team's pick is likely to land (1 = first overall), from its current points %. */
 function projectedSlot(league: League, teamId: TeamId): number {
-  const rows = Object.keys(league.teams).map((id) => {
-    let w = 0, gp = 0, otl = 0;
+  // One pass over the schedule for every team's record (and once per page or trade evaluation: see memo.ts).
+  const slots = memo('projected-slots', () => {
+    const rec = new Map(Object.keys(league.teams).map((id) => [id, { w: 0, gp: 0, otl: 0 }]));
     for (const g of league.schedule) {
-      if (!g.result || (g.home !== id && g.away !== id)) continue;
-      gp++;
-      const mine = g.home === id ? g.result.homeScore : g.result.awayScore;
-      const theirs = g.home === id ? g.result.awayScore : g.result.homeScore;
-      if (mine > theirs) w++;
-      else if (g.result.overtime) otl++;
+      if (!g.result) continue;
+      const h = rec.get(g.home);
+      const a = rec.get(g.away);
+      const homeWon = g.result.homeScore > g.result.awayScore;
+      if (h) {
+        h.gp++;
+        if (homeWon) h.w++;
+        else if (g.result.overtime) h.otl++;
+      }
+      if (a) {
+        a.gp++;
+        if (!homeWon) a.w++;
+        else if (g.result.overtime) a.otl++;
+      }
     }
-    return { id, pct: gp ? (2 * w + otl) / (2 * gp) : 0.5 };
+    // (Team order breaks ties, as a stable sort over the teams did before.)
+    const rows = Object.keys(league.teams).map((id) => {
+      const r = rec.get(id)!;
+      return { id, pct: r.gp ? (2 * r.w + r.otl) / (2 * r.gp) : 0.5 };
+    });
+    rows.sort((x, y) => x.pct - y.pct);
+    return new Map(rows.map((r, i) => [r.id, i + 1]));
   });
-  rows.sort((a, b) => a.pct - b.pct);
-  return rows.findIndex((r) => r.id === teamId) + 1;
+  return slots.get(teamId) ?? 0;
 }
 
 export function pickValue(league: League, forTeam: Team, key: string): number {
@@ -407,6 +422,10 @@ export function evaluateForAi(league: League, aiId: TeamId, incoming: TradeAsset
  * valuation, so it asks for the least it would take, not the best thing you own.
  */
 export function aiAsk(league: League, aiId: TeamId, otherId: TeamId, incoming: TradeAsset[], outgoing: TradeAsset[]): TradeAsset[] | null {
+  return withMemo(() => aiAskInner(league, aiId, otherId, incoming, outgoing));
+}
+
+function aiAskInner(league: League, aiId: TeamId, otherId: TeamId, incoming: TradeAsset[], outgoing: TradeAsset[]): TradeAsset[] | null {
   const already = new Set(incoming.map((a) => (a.kind === 'pick' ? a.key : a.id)));
   const other = league.teams[otherId];
   const team = league.teams[aiId];
@@ -418,12 +437,24 @@ export function aiAsk(league: League, aiId: TeamId, otherId: TeamId, incoming: T
       .filter((key) => parsePickKey(key).round <= 3)
       .map((key) => ({ kind: 'pick' as const, key })),
   ].filter((a) => !already.has(a.kind === 'pick' ? a.key : a.id));
+  const ctx = aiContext(league, aiId);
+  // What each asset is worth to the AI inside a package (as evaluateForAi counts it: a bonus if it fills a need).
+  const worth = (a: TradeAsset) => assetValue(league, team, a) * (assetFits(league, a, ctx.needs).length ? NEED_BONUS : 1);
   const scored = candidates
-    .map((a) => ({ a, v: assetValue(league, team, a) }))
+    .map((a) => ({ a, v: assetValue(league, team, a), adj: worth(a) }))
     .filter((x) => x.v > 0)
     .sort((x, y) => x.v - y.v)
     .slice(0, 40);
-  const ctx = aiContext(league, aiId);
+  // The bar the package has to clear, worked out once. Thousands of combinations are
+  // then weeded out with arithmetic; only ones that clear it get the full check
+  // (cap, contract limits, roster holes).
+  const have = incoming.map(worth);
+  const giving = outgoing.reduce((s, a) => s + Math.max(0, assetValue(league, team, a)) * (ctx.onBlock.has(a.kind === 'pick' ? a.key : a.id) ? BLOCK_DISCOUNT : 1), 0);
+  const bar = giving * TRADE.aiMargin + TRADE.aiFlatMargin;
+  const clears = (xs: typeof scored) => packageIn([...have, ...xs.map((x) => x.adj)]) >= bar;
+  // Nothing the other team owns gets there: don't bother searching.
+  const bestThree = [...scored].sort((x, y) => y.adj - x.adj).slice(0, 3);
+  if (!clears(bestThree) && !clears(bestThree.slice(0, 2)) && !clears(bestThree.slice(0, 1))) return null;
   const works = (extra: TradeAsset[]) => {
     const next = [...incoming, ...extra];
     return !validateTrade(league, otherId, aiId, next, outgoing) && evaluateForAi(league, aiId, next, outgoing, ctx).accept;
@@ -432,6 +463,7 @@ export function aiAsk(league: League, aiId: TeamId, otherId: TeamId, incoming: T
   const consider = (xs: typeof scored) => {
     const cost = xs.reduce((s, x) => s + x.v, 0);
     if (best && cost >= best.cost) return;
+    if (!clears(xs)) return;
     if (works(xs.map((x) => x.a))) best = { assets: xs.map((x) => x.a), cost };
   };
   for (let i = 0; i < scored.length; i++) {

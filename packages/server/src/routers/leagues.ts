@@ -1,5 +1,6 @@
 import { cleanSliders, createLeague, FA_DAYS, faDayOf, fantasyOnClock, lotteryShowLength, RESIGN_DAYS, SIM_SLIDERS, slider, tradeDeadline, type AdvanceMode, type League, type SimSlider } from '@hockey-gm/sim-core';
 import { simcastSummary } from '../simcast';
+import { publish } from '../events';
 import { TRPCError } from '@trpc/server';
 import { randomBytes, randomInt } from 'node:crypto';
 import { z } from 'zod';
@@ -98,6 +99,7 @@ export const leaguesRouter = router({
     const rows = await ctx.db.query<{ id: string }>('select id from leagues where invite_code = $1', [input.inviteCode]);
     if (!rows[0]) throw new TRPCError({ code: 'NOT_FOUND', message: 'No league with that invite code' });
     await ctx.db.query('insert into league_members (league_id, user_id) values ($1, $2) on conflict do nothing', [rows[0].id, ctx.user.id]);
+    publish(rows[0].id, { type: 'changed' });
     return { id: rows[0].id };
   }),
 

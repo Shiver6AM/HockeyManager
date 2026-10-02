@@ -10,6 +10,7 @@ import { PlayerFilterBar, usePlayerFilters } from '../components/PlayerFilters';
 import { Badge, Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip } from '../components/ui';
 import { ht, money } from '../format';
 import { useSort } from '../sort';
+import { usePollInterval } from '../live';
 import { useTRPC, type Outputs } from '../trpc';
 import { useLeague } from './LeagueLayout';
 
@@ -26,7 +27,7 @@ export function FantasyDraftPage() {
   const L = useLeague();
   const trpc = useTRPC();
   const qc = useQueryClient();
-  const q = useQuery({ ...trpc.offseason.fantasyBoard.queryOptions({ leagueId: L.id }), refetchInterval: 3000 });
+  const q = useQuery({ ...trpc.offseason.fantasyBoard.queryOptions({ leagueId: L.id }), refetchInterval: usePollInterval(3000, false) });
   const done = { onSuccess: () => qc.invalidateQueries() };
   const pick = useMutation(trpc.offseason.fantasyPick.mutationOptions(done));
   const auto = useMutation(trpc.offseason.setFantasyAuto.mutationOptions(done));
