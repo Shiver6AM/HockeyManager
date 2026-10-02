@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mutateLeague, Scheduler } from '../src/advance';
-import { appRouter } from '../src/app';
+import { gunzipSync } from 'node:zlib';
+import { appRouter, buildApp } from '../src/app';
 import { userFromToken } from '../src/auth';
 import { createDb, type Db } from '../src/db';
+import { packState, readLeague } from '../src/state';
 
 let db: Db;
 let scheduler: Scheduler;
@@ -17,6 +19,7 @@ async function caller(token: string | null = null) {
 describe('phase 26: the league document stays in memory between requests', () => {
   let comm: Awaited<ReturnType<typeof caller>>;
   let leagueId: string;
+  let commToken: string;
 
   beforeAll(async () => {
     db = await createDb('memory://');
@@ -43,6 +46,7 @@ describe('phase 26: the league document stays in memory between requests', () =>
       )) as Db['tx'];
     scheduler = new Scheduler(db);
     const u = await (await caller()).auth.register({ username: 'commish26', password: 'correct-horse', displayName: 'C26' });
+    commToken = u.token;
     comm = await caller(u.token);
     ({ id: leagueId } = await comm.leagues.create({ name: 'Lean League', start: 'season' }));
     await comm.leagues.claimTeam({ leagueId, teamId: 'HAL' });
@@ -89,11 +93,56 @@ describe('phase 26: the league document stays in memory between requests', () =>
   });
 
   it('picks up a version written from elsewhere (and only then fetches)', async () => {
-    await db.query(`update leagues set state = jsonb_set(state, '{day}', '7'), version = version + 1 where id = $1`, [leagueId]);
+    // (Another writer: a copy of the league at day 7, saved the way the server saves it.)
+    const L = structuredClone(await readLeague(db, leagueId));
+    L.day = 7;
+    const { summary, z } = packState(L);
+    await db.query('update leagues set state = $1, state_z = $2, version = version + 1 where id = $3', [summary, z, leagueId]);
     stateFetches = 0;
     expect((await comm.leagues.overview({ leagueId })).day).toBe(7);
     expect(stateFetches).toBe(1);
-    await mutateLeague(db, leagueId, (L) => expect(L.day).toBe(7));
+    await mutateLeague(db, leagueId, (x) => expect(x.day).toBe(7));
     expect(stateFetches).toBe(1);
+  });
+
+  it('stores the league gzipped, with a readable summary left in the state column', async () => {
+    await mutateLeague(db, leagueId, () => undefined);
+    const row = (await db.query<{ state: Record<string, unknown> | string; state_z: Uint8Array }>('select state, state_z from leagues where id = $1', [leagueId]))[0];
+    const summary = typeof row.state === 'string' ? JSON.parse(row.state) : row.state;
+    expect(summary).toMatchObject({ compressed: true, day: 7, phase: 'regular-season', teams: 32 });
+    expect(summary.players).toBeGreaterThan(1000);
+    const json = gunzipSync(Buffer.from(row.state_z)).toString('utf8');
+    expect(JSON.parse(json).teams.HAL.city).toBe('Halifax');
+    // About a fifth of the size (or better).
+    expect(row.state_z.length).toBeLessThan(summary.jsonBytes / 4);
+  });
+
+  it('still reads a league saved before compression (JSON in the state column)', async () => {
+    const json = JSON.stringify({ ...(await readLeague(db, leagueId)), day: 9 });
+    await db.query('update leagues set state = $1, state_z = null, version = version + 1 where id = $2', [json, leagueId]);
+    expect((await comm.leagues.overview({ leagueId })).day).toBe(9);
+    // ...and the next save converts it.
+    await mutateLeague(db, leagueId, (x) => expect(x.day).toBe(9));
+    const row = (await db.query<{ z: boolean }>('select state_z is not null as z from leagues where id = $1', [leagueId]))[0];
+    expect(row.z).toBe(true);
+    expect((await comm.leagues.overview({ leagueId })).day).toBe(9);
+  });
+
+  it('lets the commissioner (and nobody else) download the league as JSON', async () => {
+    const { app } = await buildApp({ db, scheduler });
+    const other = await (await caller()).auth.register({ username: 'visitor26', password: 'correct-horse', displayName: 'V26' });
+    const url = `/api/leagues/${leagueId}/export`;
+    expect((await app.inject({ method: 'GET', url })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${other.token}` } })).statusCode).toBe(403);
+    stateFetches = 0;
+    const res = await app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${commToken}` } });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-disposition']).toMatch(/attachment; filename="lean-league-\d+-day-9\.json"/);
+    expect(res.headers['content-encoding']).toBe('gzip');
+    const L = JSON.parse(gunzipSync(res.rawPayload).toString('utf8'));
+    expect(L.day).toBe(9);
+    expect(Object.keys(L.players).length).toBeGreaterThan(1000);
+    expect(stateFetches).toBe(0); // (served from memory: no database egress)
+    await app.close();
   });
 });

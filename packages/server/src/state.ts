@@ -8,6 +8,7 @@
  * other read or change costs a one-row version check, so browsing and small
  * changes don't pull megabytes out of a hosted database each time.
  */
+import { gunzipSync, gzipSync } from 'node:zlib';
 import type { BoxScore, League, ScheduledGame } from '@hockey-gm/sim-core';
 import type { Queryable } from './db';
 
@@ -40,11 +41,42 @@ export async function leagueMeta(db: Queryable, id: string): Promise<LeagueRow |
   return rows[0] ?? null;
 }
 
-/** The document from the database (as text, parsed here once). */
-async function fetchState(db: Queryable, id: string, lock: boolean): Promise<{ json: string; version: number }> {
-  const rows = await db.query<{ state: string; version: number }>(`select state::text as state, version from leagues where id = $1${lock ? ' for update' : ''}`, [id]);
+/**
+ * How the document is stored: gzipped in `state_z`, with a small readable
+ * summary left in `state` (so the table still says something in a database
+ * browser). Use the commissioner's "Download league data" for the full JSON.
+ */
+export function packState(league: League, json = JSON.stringify(league)): { summary: string; z: Buffer } {
+  const summary = {
+    compressed: true,
+    note: 'The league is stored gzipped in state_z. Download the full JSON from the League page (commissioner).',
+    season: league.season,
+    day: league.day,
+    phase: league.phase,
+    stage: league.offseason?.stage ?? null,
+    teams: Object.keys(league.teams).length,
+    players: Object.keys(league.players).length,
+    jsonBytes: Buffer.byteLength(json),
+  };
+  return { summary: JSON.stringify(summary), z: gzipSync(json) };
+}
+
+/** The document from the database (as text, parsed by the caller once). */
+async function fetchState(db: Queryable, id: string): Promise<{ json: string; version: number }> {
+  // (Leagues saved before compression have no state_z: their JSON is still in `state`.)
+  const rows = await db.query<{ state_z: Uint8Array | null; state: string | null; version: number }>(
+    'select state_z, case when state_z is null then state::text end as state, version from leagues where id = $1',
+    [id],
+  );
   if (!rows[0]) throw new Error('League not found');
-  return { json: rows[0].state, version: rows[0].version };
+  const { state_z, state, version } = rows[0];
+  return { json: state_z ? gunzipSync(Buffer.from(state_z)).toString('utf8') : state!, version };
+}
+
+/** The saved document as JSON text (for the commissioner's download). */
+export async function readLeagueJson(db: Queryable, id: string): Promise<string> {
+  await readLeague(db, id);
+  return cache.get(id)!.json;
 }
 
 /** Read-only view of the league. Callers must not mutate the result. */
@@ -53,7 +85,7 @@ export async function readLeague(db: Queryable, id: string): Promise<League> {
   if (!meta[0]) throw new Error('League not found');
   const hit = cache.get(id);
   if (hit && hit.version === meta[0].version) return hit.league;
-  const { json, version } = await fetchState(db, id, false);
+  const { json, version } = await fetchState(db, id);
   const league = JSON.parse(json) as League;
   remember(id, version, league, json);
   return league;
@@ -66,7 +98,7 @@ export async function loadForUpdate(q: Queryable, id: string): Promise<{ league:
   const hit = cache.get(id);
   if (hit && hit.version === meta[0].version) return { league: JSON.parse(hit.json) as League, version: hit.version };
   // Not in memory (a restart), or out of date: fetch it once and keep it.
-  const { json, version } = await fetchState(q, id, false);
+  const { json, version } = await fetchState(q, id);
   remember(id, version, JSON.parse(json) as League, json);
   return { league: JSON.parse(json) as League, version };
 }
@@ -74,9 +106,10 @@ export async function loadForUpdate(q: Queryable, id: string): Promise<{ league:
 export async function saveLeague(q: Queryable, id: string, league: League, prevVersion: number): Promise<number> {
   const next = prevVersion + 1;
   const json = JSON.stringify(league);
+  const { summary, z } = packState(league, json);
   const res = await q.query<{ version: number }>(
-    'update leagues set state = $1, version = $2, updated_at = now() where id = $3 and version = $4 returning version',
-    [json, next, id, prevVersion],
+    'update leagues set state = $1, state_z = $2, version = $3, updated_at = now() where id = $4 and version = $5 returning version',
+    [summary, z, next, id, prevVersion],
   );
   if (!res[0]) throw new Error('League was modified concurrently; try again');
   remember(id, next, league, json);

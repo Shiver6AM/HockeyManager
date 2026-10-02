@@ -2,11 +2,13 @@ import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import { fastifyTRPCPlugin, type FastifyTRPCPluginOptions } from '@trpc/server/adapters/fastify';
 import Fastify from 'fastify';
 import { Scheduler } from './advance';
 import { userFromToken } from './auth';
 import type { Db } from './db';
+import { leagueMeta, readLeague, readLeagueJson } from './state';
 import { authRouter } from './routers/auth';
 import { dataRouter } from './routers/data';
 import { leaguesRouter } from './routers/leagues';
@@ -56,6 +58,24 @@ export async function buildApp(opts: { db: Db; scheduler?: Scheduler; logger?: b
     } satisfies FastifyTRPCPluginOptions<AppRouter>['trpcOptions'],
   });
   app.get('/health', async () => ({ ok: true, db: opts.db.kind }));
+  // Commissioner: download the whole league as a JSON file (it's stored compressed, so this is the way to look inside).
+  app.get<{ Params: { id: string } }>('/api/leagues/:id/export', async (req, reply) => {
+    const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, '');
+    const user = await userFromToken(opts.db, bearer || req.cookies[SESSION_COOKIE] || undefined);
+    if (!user) return reply.code(401).send({ error: 'Sign in first' });
+    const meta = await leagueMeta(opts.db, req.params.id);
+    if (!meta) return reply.code(404).send({ error: 'No such league' });
+    if (meta.commissioner_id !== user.id) return reply.code(403).send({ error: 'Only the commissioner can download the league data' });
+    const json = await readLeagueJson(opts.db, meta.id);
+    const L = await readLeague(opts.db, meta.id);
+    const file = `${meta.name.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'league'}-${L.season}-day-${L.day}.json`;
+    return reply
+      .header('Content-Type', 'application/json; charset=utf-8')
+      .header('Content-Encoding', 'gzip')
+      .header('Content-Disposition', `attachment; filename="${file}"`)
+      .header('Cache-Control', 'no-store')
+      .send(gzipSync(json));
+  });
   if (opts.webDist && existsSync(join(opts.webDist, 'index.html'))) {
     // Production: one service serves both the API and the built web app.
     await app.register(fastifyStatic, { root: opts.webDist, wildcard: false });

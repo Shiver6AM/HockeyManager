@@ -8,6 +8,6 @@ export default defineConfig({
     port: 5173,
     // Allow sharing the dev server through a tunnel (localtunnel, Tailscale, ngrok…).
     allowedHosts: true,
-    proxy: { '/trpc': 'http://localhost:3001' },
+    proxy: { '/trpc': 'http://localhost:3001', '/api': 'http://localhost:3001' },
   },
 });
