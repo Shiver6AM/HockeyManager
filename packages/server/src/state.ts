@@ -8,7 +8,8 @@
  * other read or change costs a one-row version check, so browsing and small
  * changes don't pull megabytes out of a hosted database each time.
  */
-import { gunzipSync, gzipSync } from 'node:zlib';
+import { promisify } from 'node:util';
+import { gunzipSync, gzip, gzipSync } from 'node:zlib';
 import type { BoxScore, League, ScheduledGame } from '@hockey-gm/sim-core';
 import type { Queryable } from './db';
 
@@ -18,7 +19,14 @@ interface CacheEntry {
   league: League;
   /** The document exactly as saved: changes start from a fresh parse of this, never from the shared object. */
   json: string;
+  /**
+   * The version before this one, kept until this one is known to be committed.
+   * A read that lands while the save's transaction is still open (or after it
+   * rolled back) is answered from here instead of downloading the document.
+   */
+  prev?: { version: number; json: string; league?: League };
 }
+const gzipAsync = promisify(gzip);
 const cache = new Map<string, CacheEntry>();
 const CACHE_MAX = 20;
 
@@ -46,8 +54,8 @@ export async function leagueMeta(db: Queryable, id: string): Promise<LeagueRow |
  * summary left in `state` (so the table still says something in a database
  * browser). Use the commissioner's "Download league data" for the full JSON.
  */
-export function packState(league: League, json = JSON.stringify(league)): { summary: string; z: Buffer } {
-  const summary = {
+function summaryOf(league: League, json: string): string {
+  return JSON.stringify({
     compressed: true,
     note: 'The league is stored gzipped in state_z. Download the full JSON from the League page (commissioner).',
     season: league.season,
@@ -57,8 +65,11 @@ export function packState(league: League, json = JSON.stringify(league)): { summ
     teams: Object.keys(league.teams).length,
     players: Object.keys(league.players).length,
     jsonBytes: Buffer.byteLength(json),
-  };
-  return { summary: JSON.stringify(summary), z: gzipSync(json) };
+  });
+}
+
+export function packState(league: League, json = JSON.stringify(league)): { summary: string; z: Buffer } {
+  return { summary: summaryOf(league, json), z: gzipSync(json) };
 }
 
 /** The document from the database (as text, parsed by the caller once). */
@@ -84,7 +95,12 @@ export async function readLeague(db: Queryable, id: string): Promise<League> {
   const meta = await db.query<{ version: number }>('select version from leagues where id = $1', [id]);
   if (!meta[0]) throw new Error('League not found');
   const hit = cache.get(id);
-  if (hit && hit.version === meta[0].version) return hit.league;
+  if (hit && hit.version === meta[0].version) {
+    delete hit.prev; // (that save is committed)
+    return hit.league;
+  }
+  // A save in flight (its transaction hasn't committed yet): the version before it is the one to show.
+  if (hit?.prev && hit.prev.version === meta[0].version) return (hit.prev.league ??= JSON.parse(hit.prev.json) as League);
   const { json, version } = await fetchState(db, id);
   const league = JSON.parse(json) as League;
   remember(id, version, league, json);
@@ -97,6 +113,12 @@ export async function loadForUpdate(q: Queryable, id: string): Promise<{ league:
   if (!meta[0]) throw new Error('League not found');
   const hit = cache.get(id);
   if (hit && hit.version === meta[0].version) return { league: JSON.parse(hit.json) as League, version: hit.version };
+  if (hit?.prev && hit.prev.version === meta[0].version) {
+    // The last save was rolled back: the version before it is still the current one.
+    const { json, version } = hit.prev;
+    cache.set(id, { version, league: hit.prev.league ?? (JSON.parse(json) as League), json });
+    return { league: JSON.parse(json) as League, version };
+  }
   // Not in memory (a restart), or out of date: fetch it once and keep it.
   const { json, version } = await fetchState(q, id);
   remember(id, version, JSON.parse(json) as League, json);
@@ -106,10 +128,11 @@ export async function loadForUpdate(q: Queryable, id: string): Promise<{ league:
 export async function saveLeague(q: Queryable, id: string, league: League, prevVersion: number): Promise<number> {
   const next = prevVersion + 1;
   const json = JSON.stringify(league);
-  const { summary, z } = packState(league, json);
+  // (Compressed off the main thread, so a save doesn't hold up other requests.)
+  const z = await gzipAsync(json);
   const res = await q.query<{ version: number }>(
     'update leagues set state = $1, state_z = $2, version = $3, updated_at = now() where id = $4 and version = $5 returning version',
-    [summary, z, next, id, prevVersion],
+    [summaryOf(league, json), z, next, id, prevVersion],
   );
   if (!res[0]) throw new Error('League was modified concurrently; try again');
   remember(id, next, league, json);
@@ -117,8 +140,10 @@ export async function saveLeague(q: Queryable, id: string, league: League, prevV
 }
 
 function remember(id: string, version: number, league: League, json: string) {
+  const old = cache.get(id);
+  const prev = old && old.version === version - 1 ? { version: old.version, json: old.json } : undefined;
   cache.delete(id);
-  cache.set(id, { version, league, json });
+  cache.set(id, { version, league, json, prev });
   while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!);
 }
 

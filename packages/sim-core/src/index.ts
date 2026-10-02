@@ -36,3 +36,4 @@ export * from './sliders';
 export * from './traits';
 export * from './waivers';
 export * from './positions';
+export * from './memo';

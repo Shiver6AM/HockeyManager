@@ -1,3 +1,4 @@
+import { useLeagueEvents, useLive } from '../live';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useRef } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -28,7 +29,9 @@ export function LeagueLayout() {
   const { leagueId = '' } = useParams();
   const trpc = useTRPC();
   const qc = useQueryClient();
-  const ov = useQuery({ ...trpc.leagues.overview.queryOptions({ leagueId }), refetchInterval: 4_000 });
+  const isLive = useLive();
+  // (With live updates on, the timer is only a safety net.)
+  const ov = useQuery({ ...trpc.leagues.overview.queryOptions({ leagueId }), refetchInterval: isLive ? 30_000 : 4_000 });
   // Whenever the league changes (someone sims, trades, signs…), refresh every view on
   // screen: nobody should have to reload the page to see a co-commissioner's sim.
   const seen = useRef<number | null>(null);
@@ -42,6 +45,22 @@ export function LeagueLayout() {
     seen.current = v;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ov.data?.version, leagueId]);
+  // Pushed from the server: the league changed (refresh the overview; a new version
+  // refreshes everything else, above), or a sim made progress.
+  const refreshSoon = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useLeagueEvents(leagueId, (e) => {
+    if (e.type === 'sim') {
+      qc.setQueryData(trpc.sim.status.queryKey({ leagueId }), e.job as never);
+      return;
+    }
+    // ('hello' on every (re)connect: catch up on anything missed.)
+    if (refreshSoon.current) return;
+    refreshSoon.current = setTimeout(() => {
+      refreshSoon.current = null;
+      void qc.invalidateQueries({ queryKey: overviewKey });
+      if (e.type === 'hello') void qc.invalidateQueries({ queryKey: trpc.sim.status.queryKey({ leagueId }) });
+    }, 120);
+  });
   if (ov.isLoading) return <Spinner />;
   if (ov.error) return <div className="p-6"><ErrorBox error={ov.error} /></div>;
   const L = ov.data!;

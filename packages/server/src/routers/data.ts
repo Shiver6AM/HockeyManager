@@ -46,6 +46,7 @@ import {
   standings,
   type League,
   type Lines,
+  type Player,
   type ScheduledGame,
   unitChemistry,
   age,
@@ -75,6 +76,7 @@ import {
   minorLeagueOf,
   leagueRegion,
   REGION_LABEL,
+  withMemo,
 } from '@hockey-gm/sim-core';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
@@ -280,9 +282,17 @@ export function validateLines(L: League, teamId: string, lines: Lines): string |
   const onTeam = new Set(team.roster);
   const skaters = [...lines.forwards.flat(), ...lines.defense.flat()];
   const dressed = [...skaters, ...lines.goalies];
+  const grp = (p: Player) => (p.pos === 'G' ? 'G' : p.pos === 'D' ? 'D' : 'F');
+  const inLineup = new Set(dressed);
   for (const id of dressed) {
     if (!onTeam.has(id)) return `${playerName(L, id)} is not on your roster`;
-    if (L.players[id].injury) return `${playerName(L, id)} is injured`;
+    const p = L.players[id];
+    if (p.injury) {
+      // An injured player may hold a spot only when nobody healthy is left to take it
+      // (a call-up replaces him on game day).
+      const sub = nhlRoster(L, team).find((x) => !x.injury && !x.onWaivers && !inLineup.has(x.id) && grp(x) === grp(p));
+      if (sub) return `${playerName(L, id)} is injured (${sub.firstName} ${sub.lastName} is healthy and not in the lineup)`;
+    }
   }
   for (const id of skaters) if (L.players[id].pos === 'G') return `${playerName(L, id)} is a goalie and can't play as a skater`;
   for (const id of lines.goalies) if (L.players[id].pos !== 'G') return `${playerName(L, id)} is not a goalie`;
@@ -432,6 +442,8 @@ export const dataRouter = router({
 
   team: memberProcedure.input(z.object({ teamId: z.string(), statsSeason: z.union([z.number().int(), z.literal('all')]).optional() })).query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
+    // (Read-only from here: team rankings and the like are worked out once for the whole page.)
+    return withMemo(() => {
     const t = L.teams[input.teamId];
     if (!t) throw new TRPCError({ code: 'NOT_FOUND', message: 'No such team' });
     // Stats shown in the roster: this season (default), a past season, or career totals.
@@ -539,6 +551,7 @@ export const dataRouter = router({
       recent: games.filter((g) => g.result).slice(-5).map((g) => gameView(L, g)),
       upcoming: games.filter((g) => !g.result).slice(0, 5).map((g) => gameView(L, g)),
     };
+    });
   }),
 
   /**
@@ -548,6 +561,8 @@ export const dataRouter = router({
    */
   contracts: memberProcedure.input(z.object({ teamId: z.string() })).query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
+    // (Read-only from here: team rankings and the like are worked out once for the whole page.)
+    return withMemo(() => {
     const t = L.teams[input.teamId];
     if (!t) throw new TRPCError({ code: 'NOT_FOUND', message: 'No such team' });
     const isMine = ctx.membership.teamId === t.id;
@@ -626,10 +641,13 @@ export const dataRouter = router({
       };
     });
     return { team: teamInfo(t), isMine, seasons, players, cap, offers, contractMax: CONTRACT_MAX, affiliate: affiliateLabel(L, t) };
+    });
   }),
 
   player: memberProcedure.input(z.object({ playerId: z.string() })).query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
+    // (Read-only from here: team rankings and the like are worked out once for the whole page.)
+    return withMemo(() => {
     const p = L.players[input.playerId];
     const retired = L.retired?.[input.playerId];
     if (!p && !retired) throw new TRPCError({ code: 'NOT_FOUND', message: 'No such player' });
@@ -675,6 +693,7 @@ export const dataRouter = router({
       myOffer: p && ctx.membership.teamId ? (openOffers(L, ctx.membership.teamId).find((o) => o.playerId === p.id) ?? null) : null,
       myAnswer: p && ctx.membership.teamId && !p.extension ? latestAnswer(L, ctx.membership.teamId, p.id) : null,
     };
+    });
   }),
 
   /** Suggested lines for the caller's team (the same logic the AI uses). */

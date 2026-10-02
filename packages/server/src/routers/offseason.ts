@@ -88,6 +88,7 @@ import {
   autoLines,
   teamLines,
   healthyRoster,
+  withMemo,
 } from '@hockey-gm/sim-core';
 import { z } from 'zod';
 import { mutateLeague, noteDraftClock } from '../advance';
@@ -351,6 +352,7 @@ export const offseasonRouter = router({
 
   draftBoard: memberProcedure.query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
+    return withMemo(() => {
     const d = L.offseason?.draft;
     if (!d) return null;
     noteDraftClock(ctx.db, input.leagueId, L);
@@ -373,6 +375,7 @@ export const offseasonRouter = router({
       myList: list.filter((id) => !taken.has(id) && L.players[id]),
       myTeamId: my,
     };
+    });
   }),
 
   /** Commissioner: draw the lottery, simmed (result at once) or live (revealed pick by pick for everyone). */
@@ -473,6 +476,8 @@ export const offseasonRouter = router({
 
   expiring: memberProcedure.query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
+    // (Read-only from here: team rankings and the like are worked out once for the whole page.)
+    return withMemo(() => {
     const my = ctx.membership.teamId;
     const os = L.offseason;
     if (!os || !my) return null;
@@ -535,6 +540,7 @@ export const offseasonRouter = router({
         })
         .sort((a, b) => b.overall - a.overall),
     };
+    });
   }),
 
   setResign: memberProcedure.input(z.object({ playerId: z.string(), resign: z.boolean() })).mutation(async ({ ctx, input }) => {
@@ -622,6 +628,8 @@ export const offseasonRouter = router({
 
   freeAgents: memberProcedure.query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
+    // (Read-only from here: team rankings and the like are worked out once for the whole page.)
+    return withMemo(() => {
     const my = ctx.membership.teamId;
     const team = my ? L.teams[my] : null;
     const os = L.offseason;
@@ -705,6 +713,7 @@ export const offseasonRouter = router({
         .sort((a, b) => b.overall - a.overall)
         .slice(0, 400),
     };
+    });
   }),
 
   placeBid: memberProcedure
@@ -759,6 +768,8 @@ export const offseasonRouter = router({
   /** Restricted free agents: your open cases (offer sheets, arbitration) and other teams' sheet-eligible RFAs. */
   rfa: memberProcedure.query(async ({ ctx, input }) => {
     const L = await readLeague(ctx.db, input.leagueId);
+    // (Read-only from here: team rankings and the like are worked out once for the whole page.)
+    return withMemo(() => {
     const my = ctx.membership.teamId;
     const os = L.offseason;
     if (!os?.rfa) return null;
@@ -805,6 +816,7 @@ export const offseasonRouter = router({
         })
         .sort((a, b) => b.overall - a.overall),
     };
+    });
   }),
 
   tenderOfferSheet: memberProcedure

@@ -8,6 +8,7 @@ import Fastify from 'fastify';
 import { Scheduler } from './advance';
 import { userFromToken } from './auth';
 import type { Db } from './db';
+import { subscribe } from './events';
 import { leagueMeta, readLeague, readLeagueJson } from './state';
 import { authRouter } from './routers/auth';
 import { dataRouter } from './routers/data';
@@ -58,6 +59,32 @@ export async function buildApp(opts: { db: Db; scheduler?: Scheduler; logger?: b
     } satisfies FastifyTRPCPluginOptions<AppRouter>['trpcOptions'],
   });
   app.get('/health', async () => ({ ok: true, db: opts.db.kind }));
+  // Live updates: one open connection per browser tab, told when the league changes (see events.ts).
+  app.get<{ Params: { id: string } }>('/api/leagues/:id/events', async (req, reply) => {
+    const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, '');
+    const user = await userFromToken(opts.db, bearer || req.cookies[SESSION_COOKIE] || undefined);
+    if (!user) return reply.code(401).send({ error: 'Sign in first' });
+    const member = await opts.db.query('select 1 from league_members where league_id = $1 and user_id = $2', [req.params.id, user.id]);
+    if (!member[0]) return reply.code(403).send({ error: 'You are not in this league' });
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no', // (proxies: don't hold messages back)
+    });
+    res.write('retry: 3000\n\n');
+    const send = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+    send({ type: 'hello' });
+    const unsubscribe = subscribe(req.params.id, send);
+    // A comment line now and then keeps idle connections from being closed along the way.
+    const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
+    req.raw.on('close', () => {
+      clearInterval(ping);
+      unsubscribe();
+    });
+  });
   // Commissioner: download the whole league as a JSON file (it's stored compressed, so this is the way to look inside).
   app.get<{ Params: { id: string } }>('/api/leagues/:id/export', async (req, reply) => {
     const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, '');

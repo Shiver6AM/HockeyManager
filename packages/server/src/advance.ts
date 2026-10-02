@@ -35,6 +35,7 @@ import type { Db, Queryable } from './db';
 import { deliver, deliverAll, humanTeams, type Notice } from './notify';
 import { extractBoxScores, loadForUpdate, saveLeague } from './state';
 import { simcastBlocking } from './simcast';
+import { publish } from './events';
 
 export type AdvanceTarget = { days: number } | { to: 'playoffs' | 'end-of-season' | 'next-season' | 'trade-deadline' | 'free-agency' | 'training-camp' };
 
@@ -103,6 +104,28 @@ export function simJob(leagueId: string): SimJob | null {
 export function isSimming(leagueId: string): boolean {
   return jobs.get(leagueId)?.status === 'running';
 }
+/** A sim job as every member sees it (progress bar, who started it). */
+export function jobView(j: SimJob) {
+  return {
+    id: j.id,
+    status: j.status,
+    label: j.label,
+    startedBy: j.startedBy ?? (j.triggeredBy === 'schedule' ? 'the schedule' : j.triggeredBy === 'all-ready' ? 'everyone being ready' : null),
+    startedAt: j.startedAt,
+    finishedAt: j.finishedAt,
+    season: j.season,
+    day: j.day,
+    phase: j.phase,
+    stage: j.stage,
+    done: j.done,
+    total: j.total,
+    progress: j.status === 'running' ? Math.min(0.99, j.done / Math.max(1, j.total)) : 1,
+    games: j.games,
+    cancelling: j.cancel && j.status === 'running',
+    error: j.error,
+  };
+}
+
 export function cancelSim(leagueId: string): boolean {
   const j = jobs.get(leagueId);
   if (!j || j.status !== 'running') return false;
@@ -217,15 +240,21 @@ export async function startAdvance(
     phaseChanges: [],
   };
   jobs.set(leagueId, job);
-  const finished = runJob(db, job, L, first.version, triggeredBy).then(
-    () => job,
-    (e) => {
-      job.status = 'failed';
-      job.error = (e as Error).message;
-      job.finishedAt = Date.now();
-      return job;
-    },
-  );
+  const finished = runJob(db, job, L, first.version, triggeredBy)
+    .then(
+      () => job,
+      (e) => {
+        job.status = 'failed';
+        job.error = (e as Error).message;
+        job.finishedAt = Date.now();
+        return job;
+      },
+    )
+    .then((j) => {
+      publish(leagueId, { type: 'sim', job: jobView(j) });
+      publish(leagueId, { type: 'changed' });
+      return j;
+    });
   void finished.then((j) => opts.onDone?.(j));
   return { job, finished };
 }
@@ -259,7 +288,15 @@ async function runJob(db: Db, job: SimJob, L: League, version: number, triggered
       }),
     );
     lastSave = Date.now();
+    publish(job.leagueId, { type: 'changed' });
   };
+  let lastPush = 0;
+  const push = (force = false) => {
+    if (!force && Date.now() - lastPush < 400) return;
+    lastPush = Date.now();
+    publish(job.leagueId, { type: 'sim', job: jobView(job) });
+  };
+  push(true);
   try {
     while (!reached(L, job.target, job, triggeredBy, startPhase) && !job.cancel) {
       const seasonBefore = L.season;
@@ -283,6 +320,7 @@ async function runJob(db: Db, job: SimJob, L: League, version: number, triggered
       if (job.done >= job.total) job.total = job.done + 1;
       // Save at phase changes (box scores are filed under the season they were played in) and every few seconds.
       if (L.phase !== phaseBefore || L.season !== seasonBefore || Date.now() - lastSave > SAVE_EVERY_MS) await persist(false);
+      push();
       await yieldToServer();
     }
     newsFromTransactions(L);
@@ -443,8 +481,8 @@ export function advanceNotices(L: League, before: Before, res: AdvanceResult): {
 
 export function mutateLeague<T>(db: Db, leagueId: string, fn: (league: League, q: Queryable) => Promise<T> | T): Promise<T> {
   if (isSimming(leagueId)) return Promise.reject(new SimBusyError());
-  return withLeagueLock(leagueId, () =>
-    db.tx(async (q) => {
+  return withLeagueLock(leagueId, async () => {
+    const out = await db.tx(async (q) => {
       const { league, version } = await loadForUpdate(q, leagueId);
       const out = await fn(league, q);
       newsFromTransactions(league); // trades, signings and releases made between advances
@@ -453,8 +491,10 @@ export function mutateLeague<T>(db: Db, leagueId: string, fn: (league: League, q
       await saveLeague(q, leagueId, league, version);
       noteDraftClock(db, leagueId, league);
       return out;
-    }),
-  );
+    });
+    publish(leagueId, { type: 'changed' }); // (after the commit: open browsers refresh)
+    return out;
+  });
 }
 
 /*
@@ -579,7 +619,8 @@ export class Scheduler {
       } catch (e) {
         this.log(`[schedule] ${leagueId}: ${(e as Error).message}`);
       } finally {
-        await this.recordNext(leagueId);
+        // (The server may be shutting down by the time a slow tick ends.)
+        await this.recordNext(leagueId).catch(() => {});
       }
     });
     this.jobs.set(leagueId, job);

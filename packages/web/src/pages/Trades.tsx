@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { EMPTY_FILTERS, matchesFilters, PlayerFilterBar, SortTh, useSort, type Filters } from '../components/PlayerFilters';
 import { Badge, Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip, TeamLink } from '../components/ui';
 import { money, posLabel } from '../format';
+import { usePollInterval } from '../live';
 import { useTRPC, type Outputs } from '../trpc';
 import { dayLabel } from '../format';
 import { useLeague } from './LeagueLayout';
@@ -140,7 +141,7 @@ export function TradesPage() {
   const partners = useQuery(trpc.trades.partners.queryOptions({ leagueId: L.id }));
   const mine = useQuery({ ...trpc.trades.assets.queryOptions({ leagueId: L.id, teamId: L.myTeamId ?? '', fitsFor: partner || undefined }), enabled: !!L.myTeamId });
   const theirs = useQuery({ ...trpc.trades.assets.queryOptions({ leagueId: L.id, teamId: partner, fitsFor: L.myTeamId ?? undefined }), enabled: !!partner });
-  const list = useQuery({ ...trpc.trades.list.queryOptions({ leagueId: L.id }), refetchInterval: 6000 });
+  const list = useQuery({ ...trpc.trades.list.queryOptions({ leagueId: L.id }), refetchInterval: usePollInterval(6000) });
   useEffect(() => pruneTo(mine.data, setGive), [mine.data]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => pruneTo(theirs.data, setGet), [theirs.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const dealInput = useDebounced({ leagueId: L.id, partner, give, get });

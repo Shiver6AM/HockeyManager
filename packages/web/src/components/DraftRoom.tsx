@@ -4,6 +4,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import { usePollInterval } from '../live';
 import { useTRPC } from '../trpc';
 import { Badge, Button, Card, CollapsibleCard, cx, ErrorBox, TeamChip } from './ui';
 import type { Outputs } from '../trpc';
@@ -36,7 +37,7 @@ function revealAt(slot: number, n: number) {
 
 export function useDraftOverview(leagueId: string) {
   const trpc = useTRPC();
-  return useQuery({ ...trpc.offseason.overview.queryOptions({ leagueId }), refetchInterval: 2000 });
+  return useQuery({ ...trpc.offseason.overview.queryOptions({ leagueId }), refetchInterval: usePollInterval(2000, 20_000) });
 }
 
 export function DraftLottery({ leagueId, draft, canAdvance, now }: { leagueId: string; draft: DraftInfo; canAdvance: boolean; now: number }) {

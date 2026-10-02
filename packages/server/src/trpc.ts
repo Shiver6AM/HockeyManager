@@ -1,5 +1,6 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import { z } from 'zod';
+import { publish } from './events';
 import type { Scheduler } from './advance';
 import type { User } from './auth';
 import type { Db } from './db';
@@ -33,7 +34,7 @@ export interface Membership {
 }
 
 /** Any procedure taking `leagueId` requires the caller to be a member. */
-export const memberProcedure = authedProcedure.input(z.object({ leagueId: z.string() })).use(async ({ ctx, input, next }) => {
+export const memberProcedure = authedProcedure.input(z.object({ leagueId: z.string() })).use(async ({ ctx, input, next, type }) => {
   const rows = await ctx.db.query<{ team_id: string | null; ready: boolean; commissioner_id: string; co_commissioner: boolean }>(
     `select m.team_id, m.ready, l.commissioner_id, m.co_commissioner from league_members m join leagues l on l.id = m.league_id
      where m.league_id = $1 and m.user_id = $2`,
@@ -48,7 +49,10 @@ export const memberProcedure = authedProcedure.input(z.object({ leagueId: z.stri
     isCoCommissioner: !!rows[0].co_commissioner,
     canAdvance: rows[0].commissioner_id === ctx.user.id || !!rows[0].co_commissioner,
   };
-  return next({ ctx: { ...ctx, membership } });
+  const res = await next({ ctx: { ...ctx, membership } });
+  // Anything a member changes is news for everyone with the league open.
+  if (type === 'mutation' && res.ok) publish(input.leagueId, { type: 'changed' });
+  return res;
 });
 
 export const commissionerProcedure = memberProcedure.use(({ ctx, next }) => {
