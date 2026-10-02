@@ -114,4 +114,13 @@ alter table _migrations enable row level security;
 alter table league_members add column co_commissioner boolean not null default false;
 `,
   ],
+  [
+    // The league document, gzipped (about a fifth of the size of the JSON). Once a
+    // league is saved this way, \`state\` holds only a small summary. Rows written
+    // before this (state_z null) are still read from \`state\`.
+    '005_compressed_state',
+    `
+alter table leagues add column state_z bytea;
+`,
+  ],
 ];

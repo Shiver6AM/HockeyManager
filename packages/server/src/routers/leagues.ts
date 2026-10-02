@@ -5,7 +5,7 @@ import { randomBytes, randomInt } from 'node:crypto';
 import { z } from 'zod';
 import { describeCron, mutateLeague } from '../advance';
 import { newId } from '../auth';
-import { leagueMeta, readLeague } from '../state';
+import { leagueMeta, packState, readLeague } from '../state';
 import { deliver } from '../notify';
 import { authedProcedure, badRequest, commissionerProcedure, memberProcedure, router } from '../trpc';
 import { teamInfo, teamRating } from '../views';
@@ -83,9 +83,10 @@ export const leaguesRouter = router({
       const league = createLeague({ seed, name: input.name, advance, start: input.start, fantasy: input.fantasy });
       league.id = id;
       await ctx.db.tx(async (q) => {
+        const { summary, z } = packState(league);
         await q.query(
-          'insert into leagues (id, name, commissioner_id, invite_code, seed, advance, state) values ($1, $2, $3, $4, $5, $6, $7)',
-          [id, input.name, ctx.user.id, inviteCode(), seed, JSON.stringify(advance), JSON.stringify(league)],
+          'insert into leagues (id, name, commissioner_id, invite_code, seed, advance, state, state_z) values ($1, $2, $3, $4, $5, $6, $7, $8)',
+          [id, input.name, ctx.user.id, inviteCode(), seed, JSON.stringify(advance), summary, z],
         );
         await q.query('insert into league_members (league_id, user_id) values ($1, $2)', [id, ctx.user.id]);
       });

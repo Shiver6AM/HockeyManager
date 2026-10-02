@@ -34,6 +34,25 @@ export function LeagueSettings() {
         <Members />
         <AdvanceLog />
         <History />
+        {L.isCommissioner && (
+          <Card title="League data">
+            <p className="text-sm text-ice-300">
+              Download the whole league as a JSON file: every player, stat, contract, trade and past season. (The league is stored compressed in the
+              database, so this is the way to look inside it or keep a backup.)
+            </p>
+            <p className="mt-2 text-xs text-warn">
+              The file includes what the game hides from managers: true potentials and every team's scouting. If you also manage a team, opening it
+              is a peek behind the curtain.
+            </p>
+            <a
+              href={`/api/leagues/${L.id}/export`}
+              download
+              className="mt-3 inline-flex items-center gap-2 rounded-lg bg-rink-800 px-3 py-1.5 text-sm font-semibold text-ice-100 ring-1 ring-rink-600 transition hover:bg-rink-700"
+            >
+              ⬇ Download league data
+            </a>
+          </Card>
+        )}
       </div>
     </div>
   );
