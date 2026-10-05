@@ -186,6 +186,18 @@ export function TradesPage() {
       setParams({ with: teamId });
     }
   };
+  // "Counter": load an offer into the builder, from my side of the table.
+  const strip = (a: Trade['give'][number]): Asset => (a.kind === 'pick' ? { kind: 'pick', key: a.key } : { kind: 'player', id: a.id, ...(a.retain ? { retain: a.retain } : {}) });
+  const counter = (t: Trade) => {
+    const deal = { give: t.get.map(strip), get: t.give.map(strip) };
+    if (t.fromTeam === partner) {
+      setGive(deal.give);
+      setGet(deal.get);
+    } else saveDeal(L.id, t.fromTeam, deal);
+    setParams({ with: t.fromTeam });
+    setTimeout(() => document.getElementById('trade-builder')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  };
+  const answered = respond.data;
   const last = propose.data;
   const v = evalQ.data;
   const types = [...new Set([...mine.data.players, ...mine.data.prospects, ...(theirs.data?.players ?? []), ...(theirs.data?.prospects ?? [])].map((p) => p.archetype))].sort();
@@ -220,17 +232,31 @@ export function TradesPage() {
           incoming={list.data?.incoming ?? []}
           outgoing={list.data?.outgoing ?? []}
           approval={list.data?.awaitingApproval ?? []}
+          busy={respond.isPending}
+          onCounter={counter}
           onRespond={(tradeId, accept) => respond.mutate({ leagueId: L.id, tradeId, accept })}
           onWithdraw={(tradeId) => withdraw.mutate({ leagueId: L.id, tradeId })}
           onReview={(tradeId, approve) => review.mutate({ leagueId: L.id, tradeId, approve })}
         />
         <ErrorBox error={respond.error ?? withdraw.error ?? review.error} />
+        {answered && !respond.isPending && answered.status !== 'rejected' && (
+          <p
+            className={cx('rounded-lg border px-3 py-2 text-sm', answered.status === 'completed' ? 'border-win/40 bg-win/10 text-win' : 'border-warn/40 bg-warn/10 text-warn')}
+            role="status"
+          >
+            {answered.status === 'completed'
+              ? `Trade made with ${answered.from.city}.`
+              : answered.status === 'awaiting-approval'
+                ? 'Accepted. The trade now waits for the commissioner’s approval.'
+                : (answered.note ?? 'That offer is no longer available.')}
+          </p>
+        )}
 
         {tab === 'block' ? (
           <BlockTab mine={mine.data} onTradeFor={tradeFor} />
         ) : (
           <>
-            <label className="block text-sm text-ice-300">
+            <label id="trade-builder" className="block scroll-mt-32 text-sm text-ice-300">
               Trade with{' '}
               <span className="inline-block w-80 max-w-full align-middle">
               <select className="slot" value={partner} onChange={(e) => setParams(e.target.value ? { with: e.target.value } : {})}>
@@ -964,14 +990,31 @@ function TradeLine({ t }: { t: Trade }) {
   );
 }
 
+function AssetLines({ assets }: { assets: Trade['give'] }) {
+  if (!assets.length) return <p className="text-ice-500">Nothing</p>;
+  return (
+    <ul className="mt-0.5 space-y-0.5">
+      {assets.map((a) => (
+        <li key={a.kind === 'pick' ? a.key : a.id} className="text-ice-100">
+          {a.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function TradeLists({
   incoming,
   outgoing,
   approval,
+  busy,
+  onCounter,
   onRespond,
   onWithdraw,
   onReview,
 }: {
+  busy: boolean;
+  onCounter: (t: Trade) => void;
   incoming: Trade[];
   outgoing: Trade[];
   approval: Trade[];
@@ -986,14 +1029,37 @@ function TradeLists({
         <Card title={`Offers for you (${incoming.length})`}>
           <ul className="space-y-3">
             {incoming.map((t) => (
-              <li key={t.id} className="rounded-lg border border-blueline/40 bg-blueline/5 p-3">
-                <TradeLine t={t} />
-                <div className="mt-2 flex gap-2">
-                  <Button className="px-2 py-0.5 text-xs" onClick={() => onRespond(t.id, true)}>
+              <li key={t.id} className="rounded-lg border border-warn/50 bg-warn/5 p-3">
+                <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+                  <TeamChip team={t.from} size="sm" />
+                  <span className="font-semibold text-white">
+                    {t.from.city} {t.from.name}
+                  </span>
+                  {t.fromAi && <Badge tone="neutral">Their GM called</Badge>}
+                  {t.daysLeft !== null && (
+                    <Badge tone={t.daysLeft <= 2 ? 'bad' : 'warn'}>{t.daysLeft === 1 ? 'Expires when the next day is played' : `Stands for ${t.daysLeft} more days`}</Badge>
+                  )}
+                </div>
+                {t.pitch && <p className="mb-2 text-sm text-ice-200 italic">“{t.pitch}”</p>}
+                <div className="grid gap-2 text-sm sm:grid-cols-2">
+                  <div className="rounded bg-rink-900 p-2">
+                    <p className="text-[11px] font-semibold tracking-wider text-win uppercase">You get</p>
+                    <AssetLines assets={t.give} />
+                  </div>
+                  <div className="rounded bg-rink-900 p-2">
+                    <p className="text-[11px] font-semibold tracking-wider text-red-300 uppercase">You give</p>
+                    <AssetLines assets={t.get} />
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button className="px-3 py-1 text-xs" disabled={busy} onClick={() => onRespond(t.id, true)}>
                     Accept
                   </Button>
-                  <Button variant="ghost" className="px-2 py-0.5 text-xs" onClick={() => onRespond(t.id, false)}>
+                  <Button variant="ghost" className="px-3 py-1 text-xs" disabled={busy} onClick={() => onRespond(t.id, false)}>
                     Decline
+                  </Button>
+                  <Button variant="ghost" className="px-3 py-1 text-xs" onClick={() => onCounter(t)} title="Open this deal in the trade builder to see the values and change it">
+                    Look closer / counter
                   </Button>
                 </div>
               </li>

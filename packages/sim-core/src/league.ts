@@ -18,6 +18,7 @@ import { bookGame, initFinances, ownerReviews } from './finances';
 import { addNews, gameNews, newsFromTransactions } from './news';
 import { initStaff, refillStaffPool, trainerInjuryMultiplier } from './staff';
 import { aiTradeDay, invalidateStale, tradeDeadline } from './trades';
+import { aiOfferDay } from './offers';
 import type {
   GameSummary,
   GoalieSeasonStats,
@@ -257,6 +258,7 @@ function simDayInner(league: League): ScheduledGame[] {
     if (league.day === deadline) addNews(league, 'trade', 'It’s trade deadline day: deals must be done before the next game day.');
     else if (league.day === deadline - 7) addNews(league, 'trade', 'One week to the trade deadline. Contenders are shopping.');
     else if (league.day === deadline + 1) addNews(league, 'trade', 'The trade deadline has passed. Rosters are set for the stretch run.');
+    aiOfferDay(league); // AI teams call managers (and offers that ran out of time are withdrawn)
     if (league.day > lastDay(league)) startPlayoffs(league);
     else if (league.trades?.length) invalidateStale(league);
     publishCss(league); // Central Scouting's list every two weeks, and the final one at season's end

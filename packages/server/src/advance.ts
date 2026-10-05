@@ -13,6 +13,9 @@
  */
 import {
   advanceDays,
+  describeAsset,
+  offerDaysLeft,
+  type TradeProposal,
   ensureLeagueLife,
   newsFromTransactions,
   draftClockDue,
@@ -135,7 +138,7 @@ export function cancelSim(leagueId: string): boolean {
 
 function targetLabel(t: AdvanceTarget, offseason: boolean): string {
   if ('days' in t) return offseason ? (t.days === 1 ? 'next step' : `${t.days} steps`) : t.days === 1 ? '1 day' : `${t.days} days`;
-  return { playoffs: 'the playoffs', 'end-of-season': 'the end of the season', 'next-season': 'next season', 'trade-deadline': 'the trade deadline', 'free-agency': 'free agency', 'training-camp': 'the end of free agency' }[t.to];
+  return { playoffs: 'the end of the regular season', 'end-of-season': 'the end of the playoffs', 'next-season': 'next season', 'trade-deadline': 'the trade deadline', 'free-agency': 'free agency', 'training-camp': 'the end of free agency' }[t.to];
 }
 
 function estimateTotal(L: League, t: AdvanceTarget, triggeredBy: string): number {
@@ -364,6 +367,23 @@ interface Before {
   pendingSheets: Set<string>;
   /** Answer count per player, to spot new answers to offers. */
   answers: Record<string, string>;
+  /** Trade proposals that existed, and the AI offers still open among them. */
+  trades: number;
+  openOffers: string[];
+}
+
+const openAiOffers = (L: League) => (L.trades ?? []).filter((t) => t.ai && t.status === 'pending' && L.teams[t.toTeam]?.controller.kind === 'human');
+
+/** "Boston made you a trade offer: …" for the manager it was made to. */
+export function offerNotice(L: League, t: TradeProposal): Notice {
+  const list = (xs: TradeProposal['give']) => xs.map((a) => describeAsset(L, a)).join(', ');
+  const left = offerDaysLeft(L, t);
+  return {
+    teamId: t.toTeam,
+    kind: 'trade',
+    text: `${L.teams[t.fromTeam].city} made you a trade offer: ${list(t.give)} for ${list(t.get)}.${left ? ` It stands for ${left === 1 ? 'today only' : `${left} days`}.` : ''}`,
+    link: '/trades',
+  };
 }
 
 function snapshotForNotices(L: League): Before {
@@ -374,7 +394,7 @@ function snapshotForNotices(L: League): Before {
   }
   const pendingSheets = new Set(Object.entries(L.offseason?.rfa ?? {}).filter(([, c]) => c.status === 'unsigned' && c.sheet).map(([id]) => id));
   const answers = Object.fromEntries(Object.entries(L.offseason?.responses ?? {}).map(([id, r]) => [id, `${r.day}:${r.result}`]));
-  return { clock: pick ? `${pick.overall}:${pick.teamId}` : null, faLog: L.offseason?.faLog?.length ?? 0, faHoldouts: L.offseason?.faHoldoutLog?.length ?? 0, stage: L.offseason?.stage ?? null, bids, tx: L.transactions.length, pendingSheets, answers };
+  return { clock: pick ? `${pick.overall}:${pick.teamId}` : null, faLog: L.offseason?.faLog?.length ?? 0, faHoldouts: L.offseason?.faHoldoutLog?.length ?? 0, stage: L.offseason?.stage ?? null, bids, tx: L.transactions.length, pendingSheets, answers, trades: L.trades?.length ?? 0, openOffers: openAiOffers(L).map((t) => t.id) };
 }
 
 const STAGE_TEXT: Record<string, string> = {
@@ -457,6 +477,7 @@ export function advanceNotices(L: League, before: Before, res: AdvanceResult): {
       });
     }
   }
+  const wire: League['transactions'] = [];
   for (const t of L.transactions.slice(Math.min(before.tx, L.transactions.length))) {
     const c = L.offseason?.rfa?.[t.playerId];
     if (t.type === 'offer-sheet' && c) {
@@ -470,12 +491,33 @@ export function advanceNotices(L: League, before: Before, res: AdvanceResult): {
       if (from && isHuman(from.id)) team.push({ teamId: from.id, kind: 'offseason', text: `${name(t.playerId)} was claimed off waivers by ${L.teams[t.teamId].city}.`, link: '/waivers' });
     }
     if (t.note.includes('(cleared waivers)') && isHuman(t.teamId)) team.push({ teamId: t.teamId, kind: 'offseason', text: `${name(t.playerId)} cleared waivers and reports to the farm team.`, link: `/player/${t.playerId}` });
-    if (t.type === 'waivers') {
-      for (const x of Object.values(L.teams)) {
-        if (x.id !== t.teamId && isHuman(x.id)) team.push({ teamId: x.id, kind: 'offseason', text: `${t.note} by ${L.teams[t.teamId].city}. Claims close when the next day is played.`, link: '/waivers' });
-      }
+    if (t.type === 'waivers') wire.push(t);
+  }
+  // New names on the waiver wire: one line per manager, however many there are
+  // (cut-down day puts dozens there, and they'd bury everything else).
+  for (const x of Object.values(L.teams)) {
+    if (!isHuman(x.id)) continue;
+    const others = wire.filter((t) => t.teamId !== x.id);
+    if (others.length === 1) team.push({ teamId: x.id, kind: 'offseason', text: `${others[0].note} by ${L.teams[others[0].teamId].city}. Claims close when the next day is played.`, link: '/waivers' });
+    else if (others.length > 1) {
+      const names = others.slice(0, 3).map((t) => name(t.playerId));
+      team.push({
+        teamId: x.id,
+        kind: 'offseason',
+        text: `${others.length} players were placed on waivers (${names.join(', ')}${others.length > 3 ? ` and ${others.length - 3} more` : ''}). Claims close when the next day is played.`,
+        link: '/waivers',
+      });
     }
   }
+  // AI teams calling: offers made since (last, so they sit on top of the list),
+  // and offers that were open and are off the table.
+  for (const id of before.openOffers) {
+    const t = L.trades?.find((x) => x.id === id);
+    if (t && (t.status === 'withdrawn' || t.status === 'invalid')) {
+      team.push({ teamId: t.toTeam, kind: 'trade', text: `${L.teams[t.fromTeam].city}'s trade offer is off the table. ${t.status === 'invalid' ? 'It can no longer be made.' : (t.note ?? '')}`.trim(), link: '/trades' });
+    }
+  }
+  for (const t of (L.trades ?? []).slice(before.trades)) if (t.ai && t.status === 'pending' && L.teams[t.toTeam]?.controller.kind === 'human') team.push(offerNotice(L, t));
   return { team, all };
 }
 

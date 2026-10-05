@@ -53,6 +53,7 @@ import { offseasonStaff } from './staff';
 import { buildSchedule } from './schedule';
 import type { CareerLine, ContractOffer, FaHoldout, FaResult, League, OffseasonStage, Player, PlayerId, StandingsRow, Team, TeamId } from './types';
 import { slider } from './sliders';
+import { aiOfferDay } from './offers';
 
 export const OFFSEASON_STAGES: OffseasonStage[] = ['draft', 're-sign', 'free-agency', 'training-camp'];
 export const STAGE_LABELS: Record<OffseasonStage, string> = {
@@ -264,6 +265,7 @@ export interface StepResult {
  */
 export function offseasonStep(league: League, opts: { force: boolean; now?: number }): StepResult {
   const r = offseasonStepInner(league, opts);
+  aiOfferDay(league); // AI teams call managers through the re-signing week and free agency
   newsFromTransactions(league);
   return r;
 }

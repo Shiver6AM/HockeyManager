@@ -104,7 +104,7 @@ export function pickLabel(key: string, league?: League): string {
 }
 
 /** Where a team's pick is likely to land (1 = first overall), from its current points %. */
-function projectedSlot(league: League, teamId: TeamId): number {
+export function projectedSlot(league: League, teamId: TeamId): number {
   // One pass over the schedule for every team's record (and once per page or trade evaluation: see memo.ts).
   const slots = memo('projected-slots', () => {
     const rec = new Map(Object.keys(league.teams).map((id) => [id, { w: 0, gp: 0, otl: 0 }]));
@@ -217,7 +217,7 @@ export function retainedCount(league: League, team: Team): number {
 }
 
 /** Value of a package received, with diminishing returns for quantity. */
-function packageIn(values: number[]): number {
+export function packageIn(values: number[]): number {
   const sorted = [...values].sort((a, b) => b - a);
   return sorted.reduce((s, v, i) => s + (v > 0 ? v * (TRADE.consolidation[i] ?? 0.15) : v), 0);
 }
@@ -421,11 +421,19 @@ export function evaluateForAi(league: League, aiId: TeamId, incoming: TradeAsset
  * gets the AI to yes, or null if nothing does. "Cheapest" is by the AI's own
  * valuation, so it asks for the least it would take, not the best thing you own.
  */
-export function aiAsk(league: League, aiId: TeamId, otherId: TeamId, incoming: TradeAsset[], outgoing: TradeAsset[]): TradeAsset[] | null {
-  return withMemo(() => aiAskInner(league, aiId, otherId, incoming, outgoing));
+export function aiAsk(
+  league: League,
+  aiId: TeamId,
+  otherId: TeamId,
+  incoming: TradeAsset[],
+  outgoing: TradeAsset[],
+  /** Limit what it may ask for (default: anything the other team owns). */
+  allow?: (a: TradeAsset) => boolean,
+): TradeAsset[] | null {
+  return withMemo(() => aiAskInner(league, aiId, otherId, incoming, outgoing, allow));
 }
 
-function aiAskInner(league: League, aiId: TeamId, otherId: TeamId, incoming: TradeAsset[], outgoing: TradeAsset[]): TradeAsset[] | null {
+function aiAskInner(league: League, aiId: TeamId, otherId: TeamId, incoming: TradeAsset[], outgoing: TradeAsset[], allow?: (a: TradeAsset) => boolean): TradeAsset[] | null {
   const already = new Set(incoming.map((a) => (a.kind === 'pick' ? a.key : a.id)));
   const other = league.teams[otherId];
   const team = league.teams[aiId];
@@ -436,7 +444,7 @@ function aiAskInner(league: League, aiId: TeamId, otherId: TeamId, incoming: Tra
     ...teamPicks(league, otherId)
       .filter((key) => parsePickKey(key).round <= 3)
       .map((key) => ({ kind: 'pick' as const, key })),
-  ].filter((a) => !already.has(a.kind === 'pick' ? a.key : a.id));
+  ].filter((a) => !already.has(a.kind === 'pick' ? a.key : a.id) && (!allow || allow(a)));
   const ctx = aiContext(league, aiId);
   // What each asset is worth to the AI inside a package (as evaluateForAi counts it: a bonus if it fills a need).
   const worth = (a: TradeAsset) => assetValue(league, team, a) * (assetFits(league, a, ctx.needs).length ? NEED_BONUS : 1);
@@ -542,8 +550,21 @@ export function respondToTrade(league: League, tradeId: string, teamId: TeamId, 
     t.status = 'rejected';
     return t;
   }
+  // An AI team's own offer: it has to still want the deal (an injury or a slump since can change that).
+  if (t.ai && league.teams[t.fromTeam].controller.kind === 'ai' && !aiStillWants(league, t)) {
+    t.status = 'withdrawn';
+    t.note = `${league.teams[t.fromTeam].city} backed out: the deal no longer works for them.`;
+    return t;
+  }
   finalizeAccepted(league, t);
   return t;
+}
+
+/** Would the AI team that made this offer still take it? (A little slack: it doesn't back out over a rounding error.) */
+export function aiStillWants(league: League, t: TradeProposal): boolean {
+  if (validateTrade(league, t.fromTeam, t.toTeam, t.give, t.get)) return true; // (not its call: the trade is void anyway)
+  const v = evaluateForAi(league, t.fromTeam, t.get, t.give);
+  return v.accept || (v.ratio >= 1 && !v.reason.startsWith("We'd be short"));
 }
 
 export function withdrawTrade(league: League, tradeId: string, teamId: TeamId) {

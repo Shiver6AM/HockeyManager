@@ -1,4 +1,4 @@
-import { cleanSliders, createLeague, FA_DAYS, faDayOf, fantasyOnClock, lotteryShowLength, RESIGN_DAYS, SIM_SLIDERS, slider, tradeDeadline, type AdvanceMode, type League, type SimSlider } from '@hockey-gm/sim-core';
+import { cleanSliders, createLeague, describeAsset, offerDaysLeft, FA_DAYS, faDayOf, fantasyOnClock, lotteryShowLength, RESIGN_DAYS, SIM_SLIDERS, slider, tradeDeadline, type AdvanceMode, type League, type SimSlider } from '@hockey-gm/sim-core';
 import { simcastSummary } from '../simcast';
 import { publish } from '../events';
 import { TRPCError } from '@trpc/server';
@@ -155,6 +155,17 @@ export const leaguesRouter = router({
       /** Trade deadline (regular season): the day, and days left (0 = deadline day). */
       tradeDeadlineDay: L.phase === 'regular-season' ? tradeDeadline(L) : null,
       daysToDeadline: L.phase === 'regular-season' ? tradeDeadline(L) - L.day : null,
+      /** Trade offers waiting on my answer (shown on every page so none is missed). */
+      tradeOffers: (L.trades ?? [])
+        .filter((t) => t.status === 'pending' && !!ctx.membership.teamId && t.toTeam === ctx.membership.teamId)
+        .map((t) => ({
+          id: t.id,
+          from: teamInfo(L.teams[t.fromTeam]),
+          fromAi: !!t.ai,
+          youGet: t.give.map((a) => describeAsset(L, a)),
+          youGive: t.get.map((a) => describeAsset(L, a)),
+          daysLeft: offerDaysLeft(L, t),
+        })),
       champion: L.playoffs?.champion ? teamInfo(L.teams[L.playoffs.champion]) : null,
       advance: meta.advance,
       nextAdvanceAt: meta.next_advance_at,
