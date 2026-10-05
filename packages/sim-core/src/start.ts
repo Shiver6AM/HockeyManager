@@ -27,6 +27,7 @@ import { initFarm } from './farmInit';
 import { generateLeague, type GenerateOptions } from './generate';
 import { ensureLeagueLife, standings } from './league';
 import { autoLines } from './lines';
+import { memo, withMemo } from './memo';
 import { finishDraft } from './offseason';
 import { prospectGameDay } from './prospects';
 import { age, overall } from './ratings';
@@ -181,25 +182,70 @@ function counts(L: League, team: Team) {
   return c;
 }
 
-/** Why this team can't take this player now (roster shape or cap), or null if it can. */
-export function fantasyPickProblem(L: League, teamId: TeamId, p: Player): string | null {
+const PLURAL = { F: 'forwards', D: 'defensemen', G: 'goalies' } as const;
+
+/**
+ * What's left in the pool at each position, and what every team still needs
+ * there to dress a lineup. (The pool is exactly as big as the draft, so every
+ * player in it ends up on a team: a goalie taken as a spare is a goalie some
+ * other team never gets.)
+ */
+function fantasySupply(L: League) {
+  const f = L.fantasy!;
+  return memo(`fantasy-supply:${f.current}`, () => {
+    const left = { F: 0, D: 0, G: 0 };
+    for (const p of fantasyAvailable(L)) left[grp(p)]++;
+    const short: Record<TeamId, { F: number; D: number; G: number }> = {};
+    const total = { F: 0, D: 0, G: 0 };
+    const picksLeft: Record<TeamId, number> = {};
+    for (const x of f.picks.slice(f.current)) picksLeft[x.teamId] = (picksLeft[x.teamId] ?? 0) + 1;
+    for (const t of Object.values(L.teams)) {
+      const c = counts(L, t);
+      short[t.id] = { F: Math.max(0, NEED.F - c.F), D: Math.max(0, NEED.D - c.D), G: Math.max(0, NEED.G - c.G) };
+      for (const k of ['F', 'D', 'G'] as const) total[k] += short[t.id][k];
+    }
+    return { left, short, total, picksLeft };
+  });
+}
+
+/** The rules as written: roster shape, leaving enough for everyone else, and the cap. */
+function strictProblem(L: League, teamId: TeamId, p: Player): string | null {
   const f = L.fantasy!;
   const team = L.teams[teamId];
-  if (!p.inFantasyPool) return 'He has already been drafted';
   const c = counts(L, team);
   const g = grp(p);
   const max = team.controller.kind === 'ai' || f.auto[teamId] ? AI_MAX : MAX;
-  if (c[g] >= max[g]) return `You already have ${max[g]} ${g === 'G' ? 'goalies' : g === 'D' ? 'defensemen' : 'forwards'}`;
-  const left = f.picks.slice(f.current).filter((x) => x.teamId === teamId).length - 1; // after this pick
+  if (c[g] >= max[g]) return `You already have ${max[g]} ${PLURAL[g]}`;
+  const supply = fantasySupply(L);
+  // A spare while other teams are still short there, and there aren't enough left for them.
+  if (c[g] >= NEED[g] && supply.left[g] - 1 < supply.total[g] - supply.short[teamId][g]) {
+    return `The ${PLURAL[g]} left are needed by teams that don't have ${NEED[g]} yet`;
+  }
+  const left = (supply.picksLeft[teamId] ?? 0) - 1; // after this pick
   c[g]++;
-  const missing = (['F', 'D', 'G'] as const).reduce((s, k) => s + Math.max(0, NEED[k] - c[k]), 0);
+  // (He only has to save picks for positions the pool can still fill.)
+  const stillThere = { ...supply.left, [g]: supply.left[g] - 1 };
+  const shortOf = (k: 'F' | 'D' | 'G') => Math.min(Math.max(0, NEED[k] - c[k]), stillThere[k]);
+  const missing = shortOf('F') + shortOf('D') + shortOf('G');
   if (missing > left) {
-    const short = (['G', 'D', 'F'] as const).filter((k) => c[k] < NEED[k]).map((k) => (k === 'G' ? 'goalies' : k === 'D' ? 'defensemen' : 'forwards'));
+    const short = (['G', 'D', 'F'] as const).filter((k) => shortOf(k) > 0).map((k) => PLURAL[k]);
     return `You need to fill your lineup first (still short of ${short.join(' and ')})`;
   }
   const salary = p.contract?.salary ?? LEAGUE_MIN_SALARY;
   if (capRoom(L, team) - salary < left * LEAGUE_MIN_SALARY) return 'He would leave you without cap room to fill the rest of your roster';
   return null;
+}
+
+/** Why this team can't take this player now (roster shape or cap), or null if it can. */
+export function fantasyPickProblem(L: League, teamId: TeamId, p: Player): string | null {
+  if (!p.inFantasyPool) return 'He has already been drafted';
+  const problem = strictProblem(L, teamId, p);
+  if (!problem) return null;
+  // If the rules leave him nobody at all (everyone left is too expensive, say), they give way:
+  // a manager on the clock can always make a pick.
+  const f = L.fantasy!;
+  const someone = memo(`fantasy-open:${teamId}:${f.current}`, () => fantasyAvailable(L).some((x) => !strictProblem(L, teamId, x)));
+  return someone ? problem : null;
 }
 
 /** How much a team wants a player in the fantasy draft. */
@@ -237,19 +283,21 @@ function take(L: League, pick: FantasyDraft['picks'][number], p: Player) {
 
 function autoFantasyPick(L: League) {
   const pick = fantasyOnClock(L)!;
-  const pool = fantasyAvailable(L);
-  const ranked = pool.map((p) => ({ p, v: fantasyValue(L, pick.teamId, p) })).sort((a, b) => b.v - a.v);
-  const list = L.fantasy!.lists?.[pick.teamId] ?? [];
-  const fromList = list.map((id) => L.players[id]).find((p) => p && p.inFantasyPool && !fantasyPickProblem(L, pick.teamId, p));
-  const best = fromList ?? ranked.find(({ p }) => !fantasyPickProblem(L, pick.teamId, p))?.p;
-  // Nothing fits under the cap: take the cheapest player at a position still needed.
-  const fallback = () => {
+  // (Choosing reads the league only: the pool is counted once per pick.)
+  const choice = withMemo(() => {
+    const pool = fantasyAvailable(L);
+    const ranked = pool.map((p) => ({ p, v: fantasyValue(L, pick.teamId, p) })).sort((a, b) => b.v - a.v);
+    const list = L.fantasy!.lists?.[pick.teamId] ?? [];
+    const fromList = list.map((id) => L.players[id]).find((p) => p && p.inFantasyPool && !strictProblem(L, pick.teamId, p));
+    const best = fromList ?? ranked.find(({ p }) => !strictProblem(L, pick.teamId, p))?.p;
+    if (best) return best;
+    // Nothing fits under the cap: take the cheapest player at a position still needed.
     const c = counts(L, L.teams[pick.teamId]);
-    const need = (['G', 'D', 'F'] as const).find((k) => c[k] < NEED[k]);
+    const need = (['G', 'D', 'F'] as const).find((k) => c[k] < NEED[k] && pool.some((p) => grp(p) === k));
     const cands = pool.filter((p) => (need ? grp(p) === need : c[grp(p)] < MAX[grp(p)]));
     return cands.sort((a, b) => (a.contract?.salary ?? 0) - (b.contract?.salary ?? 0))[0] ?? pool[0];
-  };
-  take(L, pick, best ?? fallback());
+  });
+  take(L, pick, choice);
 }
 
 /** Make picks until a manager is on the clock (or all of them, when forced). Returns picks made. */

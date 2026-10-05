@@ -270,6 +270,8 @@ export const offseasonRouter = router({
     const L = await readLeague(ctx.db, input.leagueId);
     const f = L.fantasy;
     if (!f) return null;
+    // (Read-only from here: what's left in the pool is counted once for the whole board.)
+    return withMemo(() => {
     const my = ctx.membership.teamId;
     const team = my ? L.teams[my] : null;
     const clock = fantasyOnClock(L);
@@ -310,6 +312,7 @@ export const offseasonRouter = router({
         }))
         .sort((a, b) => b.value - a.value),
     };
+    });
   }),
 
   fantasyPick: memberProcedure.input(z.object({ playerId: z.string() })).mutation(async ({ ctx, input }) => {
