@@ -171,11 +171,11 @@ function AdvancePanel() {
             )}
             {L.phase === 'regular-season' && (
               <Button variant="secondary" onClick={() => sim.start({ to: 'playoffs' })} disabled={sim.running || sim.starting}>
-                Sim to playoffs
+                Sim to end of regular season
               </Button>
             )}
             <Button variant="ghost" onClick={() => sim.start({ to: 'end-of-season' })} disabled={sim.running || sim.starting}>
-              Sim to end of season
+              {L.phase === 'regular-season' ? 'Sim through the playoffs' : 'Sim to end of playoffs'}
             </Button>
           </div>
           {sim.running && <p className="mt-2 text-sm text-ice-400">Simming… follow along in the top bar, or cancel there.</p>}

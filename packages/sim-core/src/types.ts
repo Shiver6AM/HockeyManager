@@ -721,6 +721,16 @@ export interface TradeProposal {
   status: 'pending' | 'awaiting-approval' | 'completed' | 'rejected' | 'withdrawn' | 'vetoed' | 'invalid';
   note?: string;
   resolvedDay?: number;
+  /** Set on an offer an AI front office made to a manager. */
+  ai?: {
+    /** The offer clock (see offerClock) when it was made, and the last day it stands. */
+    clock: number;
+    expires: number;
+    /** The player the call was about. */
+    headline: PlayerId;
+    /** What their GM said. */
+    pitch: string;
+  };
 }
 
 export type StaffRole = 'coach' | 'scout' | 'trainer';

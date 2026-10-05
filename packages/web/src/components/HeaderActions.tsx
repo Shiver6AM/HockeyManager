@@ -99,8 +99,8 @@ export function HeaderActions() {
     : [
         { label: 'Sim 1 week', target: { days: 7 } },
         ...(deadlineAhead ? [{ label: `Sim to trade deadline (${L.daysToDeadline}d)`, target: { to: 'trade-deadline' } as Target }] : []),
-        ...(L.phase === 'regular-season' ? [{ label: 'Sim to playoffs', target: { to: 'playoffs' } as Target }] : []),
-        { label: 'Sim to end of season', target: { to: 'end-of-season' } },
+        ...(L.phase === 'regular-season' ? [{ label: 'Sim to end of regular season', target: { to: 'playoffs' } as Target }] : []),
+        { label: L.phase === 'regular-season' ? 'Sim through the playoffs' : 'Sim to end of playoffs', target: { to: 'end-of-season' } },
       ];
   const err = (sim.startError ?? ready.error)?.message;
 

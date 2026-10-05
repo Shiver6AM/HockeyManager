@@ -116,6 +116,7 @@ export function LeagueLayout() {
             {tabs.map(([to, label]) => (
               <NavLink
                 key={to}
+                title={to === 'trades' && L.tradeOffers.length ? `${L.tradeOffers.length} trade offer${L.tradeOffers.length > 1 ? 's' : ''} waiting for your answer` : undefined}
                 to={to ? `/league/${leagueId}/${to}` : `/league/${leagueId}`}
                 end={to === ''}
                 className={({ isActive }) =>
@@ -126,9 +127,13 @@ export function LeagueLayout() {
                 }
               >
                 {label}
+                {to === 'trades' && L.tradeOffers.length > 0 && (
+                  <span className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-full bg-warn px-1.5 text-[11px] leading-5 font-bold text-rink-950">{L.tradeOffers.length}</span>
+                )}
               </NavLink>
             ))}
           </nav>
+          <TradeOfferBar L={L} />
         </header>
         <main className="mx-auto w-full max-w-[2560px] min-w-0 px-4 py-6 lg:px-6">
           <BackButton leagueId={leagueId} />
@@ -136,6 +141,52 @@ export function LeagueLayout() {
         </main>
       </div>
     </LeagueCtx.Provider>
+  );
+}
+
+/**
+ * A strip under the navigation on every page while a trade offer is waiting
+ * for your answer, so an offer can't go by unnoticed.
+ */
+function TradeOfferBar({ L }: { L: Overview }) {
+  const { pathname } = useLocation();
+  const offers = L.tradeOffers;
+  if (!offers.length) return null;
+  const onTrades = pathname.replace(/\/$/, '').endsWith('/trades');
+  const first = offers[0];
+  const soonest = offers.map((o) => o.daysLeft).filter((d): d is number => d !== null).sort((a, b) => a - b)[0];
+  return (
+    <div className="border-t border-warn/40 bg-warn/15" role="status">
+      <div className="mx-auto flex w-full max-w-[2560px] flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-sm lg:px-6">
+        <span className="rounded bg-warn px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-rink-950 uppercase">
+          {offers.length === 1 ? 'Trade offer' : `${offers.length} trade offers`}
+        </span>
+        {offers.length === 1 ? (
+          <span className="flex min-w-0 items-center gap-2 text-ice-100">
+            <TeamChip team={first.from} size="sm" />
+            <span>
+              <span className="font-semibold text-white">{first.from.city}</span> {first.fromAi ? 'called' : 'sent an offer'}: you get{' '}
+              <span className="font-semibold text-white">{first.youGet.join(', ') || 'nothing'}</span> for <span className="font-semibold text-white">{first.youGive.join(', ') || 'nothing'}</span>.
+            </span>
+          </span>
+        ) : (
+          <span className="min-w-0 text-ice-100">
+            From <span className="font-semibold text-white">{offers.map((o) => o.from.city).join(', ')}</span>.
+          </span>
+        )}
+        {soonest !== undefined && (
+          <span className={cx('whitespace-nowrap', soonest <= 2 ? 'font-semibold text-red-200' : 'text-ice-300')}>
+            {offers.length > 1 ? 'First one expires ' : 'Expires '}
+            {soonest === 1 ? 'when the next day is played' : `in ${soonest} days`}.
+          </span>
+        )}
+        {!onTrades && (
+          <Link to={`/league/${L.id}/trades`} className="ml-auto rounded-md bg-warn px-3 py-1 text-xs font-bold whitespace-nowrap text-rink-950 hover:brightness-110">
+            Review {offers.length === 1 ? 'offer' : 'offers'}
+          </Link>
+        )}
+      </div>
+    </div>
   );
 }
 

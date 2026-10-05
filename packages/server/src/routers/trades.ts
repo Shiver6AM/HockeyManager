@@ -8,6 +8,7 @@ import {
   type NeedTag,
   capRoom,
   describeAsset,
+  offerDaysLeft,
   evaluateForAi,
   playerValue,
   pickValue,
@@ -90,6 +91,10 @@ function assetView(L: League, a: TradeAsset) {
 function tradeView(L: League, t: TradeProposal) {
   return {
     ...t,
+    /** An AI team made this offer: what their GM said, and how long it stands (days; 1 = today only). */
+    fromAi: !!t.ai,
+    pitch: t.ai?.pitch ?? null,
+    daysLeft: offerDaysLeft(L, t),
     from: teamInfo(L.teams[t.fromTeam]),
     to: teamInfo(L.teams[t.toTeam]),
     give: t.give.map((a) => assetView(L, a)),

@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 213 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 225 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -116,7 +116,7 @@ default simulation.
 Pick one of two modes on the **League** tab (commissioner only):
 
 - **Commissioner:** the commissioner presses *Sim 1 day / 1 week / to the trade deadline /
-  to playoffs / to end of season* (in the offseason: *next day / sim to free agency / next
+  to end of regular season / through the playoffs* (in the offseason: *next day / sim to free agency / next
   season*). Good for live sessions together.
 - **Co-commissioners:** the commissioner can let other managers advance the league too
   (*League → Members → Co-commish*). Settings and membership stay commissioner-only.
@@ -512,6 +512,22 @@ anyone who hasn't acted gets sensible defaults.
 - **AI-to-AI trades:** contenders buy veterans and pending UFAs from rebuilding teams
   with prospects and picks, more often near the deadline, and at most two deals per team
   per season so nobody guts a roster.
+- **AI teams call managers:** now and then an AI front office makes a manager an offer.
+  A contender wants one of his veterans, a team saw a name on his trade block, or a
+  seller has a player who would help him (and offers to keep half the salary if he can't
+  fit it). A passive manager hears from someone about four to six times a season; one
+  who uses his trade block or lists needs about twice as often, and calls triple in the
+  week before the deadline. Every offer is one the AI team would accept itself and is
+  within about 10% of even by the values on the trade screen, light or generous. An
+  offer stands for 10 days (4 in the re-signing week and free agency), never past the
+  deadline; a manager has at most two open, a team doesn't call the same manager twice
+  in 10 days, and a player he said no about isn't raised again that season. The AI team
+  backs out if the deal stops working for it (an injury, a signing).
+- **Offers can't be missed:** while an offer is waiting, a strip under the navigation on
+  every page says who called, what for and when it expires; the Trades tab shows a count;
+  the notification bell gets a line (and another if the offer runs out). The trade center
+  shows the GM's pitch with *Accept / Decline / Look closer* (which loads the deal into
+  the builder with its values). Long sims don't stop for offers.
 
 ## League life
 
