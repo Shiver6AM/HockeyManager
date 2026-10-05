@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 225 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 228 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -99,7 +99,12 @@ season that every team's scouts have watched.
 draft new rosters, 23 rounds, snake order. Players keep their contracts, so the cap
 matters, and every roster must end up able to dress 12 F, 6 D and 2 G. Managers claim
 teams, the commissioner starts the draft, AI teams pick automatically, and managers pick
-when they're on the clock (or let the AI pick for them, wish list first). Afterwards farm
+when they're on the clock (or let the AI pick for them, wish list first). The pool is
+exactly as big as the draft (736 players: 64 goalies, 224 defensemen), so a spare at one
+position is a player another team never gets: a team that already has its 2 goalies (or
+6 defensemen, or 12 forwards) can't take another while the ones left are all needed by
+teams that are still short. A manager on the clock can always pick someone; if the rules
+would leave him nobody, they give way. Afterwards farm
 teams are stocked, leftovers become free agents, and the league moves on to the chosen
 start point.
 
