@@ -123,16 +123,13 @@ Pick one of two modes on the **League** tab (commissioner only):
 - **Commissioner:** the commissioner presses *Sim 1 day / 1 week / to the trade deadline /
   to end of regular season / through the playoffs* (in the offseason: *next day / sim to free agency / next
   season*). Good for live sessions together.
-- **Deleting a league:** the commissioner (not co-commissioners) can delete the league
-  from the League page by typing its name. It goes for every member, with its box scores,
-  advance log and notifications, and can't be undone; download the league data first for
-  a copy. It is refused while the league is simming. Anyone with the league open is sent
-  back to their list of leagues.
 - **Co-commissioners:** the commissioner can let other managers advance the league too
   (*League → Members → Co-commish*). Settings and membership stay commissioner-only.
 - **On a schedule:** a cron schedule in the league's time zone (presets include
   "every night at 11 PM"), a number of days per tick, and optionally **advance early
   when every manager is ready**. The commissioner can still force an advance at any time.
+
+**Deleting a league:** the commissioner (not co-commissioners) can delete the league from the League page by typing its name. It goes for every member, with its box scores, advance log and notifications, and can't be undone; download the league data first for a copy. It is refused while the league is simming. Anyone with the league open is sent back to their list of leagues.
 
 Your **Ready** toggle (with the count of ready managers) and, if you can advance, the
 **Sim 1 day ▾** button sit in the top bar on every screen. The home page shows today's
