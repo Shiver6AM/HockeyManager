@@ -48,7 +48,16 @@ export function LeagueLayout() {
   // Pushed from the server: the league changed (refresh the overview; a new version
   // refreshes everything else, above), or a sim made progress.
   const refreshSoon = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigate = useNavigate();
   useLeagueEvents(leagueId, (e) => {
+    if (e.type === 'deleted') {
+      // The commissioner deleted the league while it was open here.
+      const name = ov.data?.name;
+      qc.removeQueries({ predicate: (q) => JSON.stringify(q.queryKey).includes(leagueId) });
+      void qc.invalidateQueries({ queryKey: trpc.leagues.mine.queryKey() });
+      navigate('/', { replace: true, state: { notice: `${name ? `“${name}”` : 'That league'} was deleted${ov.data?.isCommissioner ? '' : ' by its commissioner'}.` } });
+      return;
+    }
     if (e.type === 'sim') {
       qc.setQueryData(trpc.sim.status.queryKey({ leagueId }), e.job as never);
       return;
@@ -62,7 +71,18 @@ export function LeagueLayout() {
     }, 120);
   });
   if (ov.isLoading) return <Spinner />;
-  if (ov.error) return <div className="p-6"><ErrorBox error={ov.error} /></div>;
+  if (ov.error)
+    return (
+      <div className="space-y-3 p-6">
+        <ErrorBox error={ov.error} />
+        <p className="text-sm text-ice-300">
+          This league may have been deleted, or you're not a member of it.{' '}
+          <Link to="/" className="font-semibold text-blue-300 hover:underline">
+            Back to your leagues
+          </Link>
+        </p>
+      </div>
+    );
   const L = ov.data!;
   const myTeam = L.members.find((m) => m.teamId === L.myTeamId)?.team;
 

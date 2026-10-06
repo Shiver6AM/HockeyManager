@@ -77,13 +77,25 @@ export async function buildApp(opts: { db: Db; scheduler?: Scheduler; logger?: b
     res.write('retry: 3000\n\n');
     const send = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
     send({ type: 'hello' });
-    const unsubscribe = subscribe(req.params.id, send);
-    // A comment line now and then keeps idle connections from being closed along the way.
-    const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
-    req.raw.on('close', () => {
+    let open = true;
+    const close = () => {
+      if (!open) return;
+      open = false;
       clearInterval(ping);
       unsubscribe();
+    };
+    const unsubscribe = subscribe(req.params.id, (e) => {
+      if (!open) return;
+      send(e);
+      if (e.type === 'deleted') {
+        // Nothing more will ever be said about this league: stop listening, then hang up.
+        close();
+        res.end();
+      }
     });
+    // A comment line now and then keeps idle connections from being closed along the way.
+    const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
+    req.raw.on('close', close);
   });
   // Commissioner: download the whole league as a JSON file (it's stored compressed, so this is the way to look inside).
   app.get<{ Params: { id: string } }>('/api/leagues/:id/export', async (req, reply) => {

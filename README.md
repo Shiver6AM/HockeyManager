@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 228 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 231 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -123,6 +123,11 @@ Pick one of two modes on the **League** tab (commissioner only):
 - **Commissioner:** the commissioner presses *Sim 1 day / 1 week / to the trade deadline /
   to end of regular season / through the playoffs* (in the offseason: *next day / sim to free agency / next
   season*). Good for live sessions together.
+- **Deleting a league:** the commissioner (not co-commissioners) can delete the league
+  from the League page by typing its name. It goes for every member, with its box scores,
+  advance log and notifications, and can't be undone; download the league data first for
+  a copy. It is refused while the league is simming. Anyone with the league open is sent
+  back to their list of leagues.
 - **Co-commissioners:** the commissioner can let other managers advance the league too
   (*League → Members → Co-commish*). Settings and membership stay commissioner-only.
 - **On a schedule:** a cron schedule in the league's time zone (presets include

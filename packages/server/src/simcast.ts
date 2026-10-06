@@ -109,6 +109,11 @@ function sweep(leagueId: string) {
   return s;
 }
 
+/** Drop a league's simcast (the league was deleted). */
+export function endSimcast(leagueId: string) {
+  sessions.delete(leagueId);
+}
+
 /** A simcast still in progress blocks the league's sim. */
 export function simcastBlocking(leagueId: string): boolean {
   const s = sweep(leagueId);

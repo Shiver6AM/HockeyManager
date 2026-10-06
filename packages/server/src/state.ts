@@ -147,6 +147,11 @@ function remember(id: string, version: number, league: League, json: string) {
   while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!);
 }
 
+/** Drop a league from memory (it was deleted). */
+export function forgetLeague(id: string) {
+  cache.delete(id);
+}
+
 /**
  * Move box scores out of the league document into their own rows.
  * The simulation only needs final scores after a game is played.

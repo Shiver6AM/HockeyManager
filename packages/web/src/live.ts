@@ -6,7 +6,7 @@
  */
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
-export type LeagueEvent = { type: 'hello' } | { type: 'changed' } | { type: 'sim'; job: unknown };
+export type LeagueEvent = { type: 'hello' } | { type: 'changed' } | { type: 'sim'; job: unknown } | { type: 'deleted' };
 
 let live = false;
 const watchers = new Set<() => void>();
