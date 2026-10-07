@@ -426,8 +426,8 @@ function SimSliders() {
   return (
     <Card title="Simulation sliders (advanced)" action={changed ? <span className="text-xs text-warn">{changed} changed from default</span> : undefined}>
       <p className="-mt-1 mb-3 text-xs text-ice-400">
-        Multipliers on key parts of the simulation. 1.0× is the default, tuned to play like the NHL. Changes apply from the next day simmed (development,
-        decline and retirements each summer).{!edit && ' Only the commissioner can change these.'}
+        Multipliers on key parts of the simulation. 1.0× is the default, tuned to play like the NHL. Changes apply from the next day simmed (retirements
+        each summer).{!edit && ' Only the commissioner can change these.'}
       </p>
       <div className="space-y-4">
         {groups.map((g) => (

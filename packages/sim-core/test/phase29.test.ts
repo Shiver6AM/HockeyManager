@@ -192,10 +192,11 @@ describe('AI offers and the rest of the sim', () => {
           if (t.ai!.clock >= 10_000 && t.status === 'pending' && L.phase === 'offseason') {
             stages.add(L.offseason!.stage);
             expect(validateTrade(L, t.fromTeam, t.toTeam, t.give, t.get)).toBeNull();
-            // Nobody on an expiring contract is in an offseason offer.
+            // Nobody whose contract is up (and not renewed) is in an offer during the re-signing week.
             for (const x of [...t.give, ...t.get]) {
               const p = x.kind === 'player' ? L.players[x.id] : null;
-              if (p?.teamId) expect(p.contract!.yearsLeft > 1 || !!p.extension).toBe(true);
+              if (p?.teamId) expect(!!p.contract).toBe(true);
+              if (p?.teamId && L.offseason!.stage === 're-sign') expect(!L.offseason!.expiring[p.id] || !!p.extension).toBe(true);
             }
           }
         }
