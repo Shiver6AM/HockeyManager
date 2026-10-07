@@ -13,7 +13,6 @@
  */
 import {
   advanceDays,
-  describeAsset,
   offerDaysLeft,
   type TradeProposal,
   ensureLeagueLife,
@@ -35,7 +34,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { Cron } from 'croner';
 import type { Db, Queryable } from './db';
-import { deliver, deliverAll, humanTeams, type Notice } from './notify';
+import { assetList, deliver, deliverAll, humanTeams, tradePlayers, type Notice } from './notify';
 import { extractBoxScores, forgetLeague, loadForUpdate, saveLeague } from './state';
 import { endSimcast } from './simcast';
 import { simcastBlocking } from './simcast';
@@ -377,13 +376,13 @@ const openAiOffers = (L: League) => (L.trades ?? []).filter((t) => t.ai && t.sta
 
 /** "Boston made you a trade offer: …" for the manager it was made to. */
 export function offerNotice(L: League, t: TradeProposal): Notice {
-  const list = (xs: TradeProposal['give']) => xs.map((a) => describeAsset(L, a)).join(', ');
   const left = offerDaysLeft(L, t);
   return {
     teamId: t.toTeam,
     kind: 'trade',
-    text: `${L.teams[t.fromTeam].city} made you a trade offer: ${list(t.give)} for ${list(t.get)}.${left ? ` It stands for ${left === 1 ? 'today only' : `${left} days`}.` : ''}`,
+    text: `${L.teams[t.fromTeam].city} made you a trade offer: ${assetList(L, t.give)} for ${assetList(L, t.get)}.${left ? ` It stands for ${left === 1 ? 'today only' : `${left} days`}.` : ''}`,
     link: '/trades',
+    players: tradePlayers(L, t),
   };
 }
 
@@ -515,7 +514,13 @@ export function advanceNotices(L: League, before: Before, res: AdvanceResult): {
   for (const id of before.openOffers) {
     const t = L.trades?.find((x) => x.id === id);
     if (t && (t.status === 'withdrawn' || t.status === 'invalid')) {
-      team.push({ teamId: t.toTeam, kind: 'trade', text: `${L.teams[t.fromTeam].city}'s trade offer is off the table. ${t.status === 'invalid' ? 'It can no longer be made.' : (t.note ?? '')}`.trim(), link: '/trades' });
+      team.push({
+        teamId: t.toTeam,
+        kind: 'trade',
+        text: `${L.teams[t.fromTeam].city}'s trade offer is off the table (${assetList(L, t.give)} for ${assetList(L, t.get)}). ${t.status === 'invalid' ? 'It can no longer be made.' : (t.note ?? '')}`.trim(),
+        link: '/trades',
+        players: tradePlayers(L, t),
+      });
     }
   }
   for (const t of (L.trades ?? []).slice(before.trades)) if (t.ai && t.status === 'pending' && L.teams[t.toTeam]?.controller.kind === 'human') team.push(offerNotice(L, t));

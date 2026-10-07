@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 236 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 242 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -364,7 +364,7 @@ anyone who hasn't acted gets sensible defaults.
   make different, repeatable errors.
 - **Area scouts and fog of war:** next summer's draft class plays all season in real
   development leagues (WHL, OHL, QMJHL, USHL, NCAA, J20, SHL, Liiga, MHL, KHL, Czech
-  Extraliga, Swiss NL, DEL…), grouped into eight regions. Each team employs up to four
+  Extraliga, Swiss NL, DEL…), grouped into eight regions. Each team employs up to eight
   area scouts with an evaluation skill and a familiarity with each region; assign them
   to regions (or let the head scout decide). Every day in a region builds your
   confidence there, faster for skilled scouts who know the area. On the Scouting page
@@ -568,6 +568,12 @@ anyone who hasn't acted gets sensible defaults.
   trade proposals and replies, commissioner approvals, being on the clock in the draft,
   free-agency wins and losses, and offseason stage changes. They are stored per user,
   so they're waiting when you come back.
+- **Players are links:** every player named in a news story or a notification links to
+  his own page, so a four-player trade has four links. Trade notifications list the deal
+  from your side ("you get … for …").
+- **Injury history:** a player's page lists his injuries, newest first (date, injury,
+  severity, expected time out), with totals. Records start when the league first ran this
+  version; a recent stretch before that is recovered from the transaction log.
 - **History:** champions and MVPs by season, title counts, the **Hall of Fame** (retired
   players are scored on production, awards, titles and peak, with credit for careers that
   began before the league existed) and all-time leaders.

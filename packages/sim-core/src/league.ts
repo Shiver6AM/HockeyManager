@@ -130,6 +130,8 @@ function applyInjuries(league: League, res: GameSummary) {
     const days = Math.max(1, Math.round(inj.days * trainerInjuryMultiplier(league, inj.teamId)));
     inj.days = days;
     p.injury = { type: inj.type, severity: inj.severity, daysLeft: days, sinceDay: league.day };
+    (p.injuryLog ??= []).push({ season: league.season, day: league.day, type: inj.type, severity: inj.severity, days });
+    if (p.injuryLog.length > 60) p.injuryLog.splice(0, p.injuryLog.length - 60);
     league.transactions.push({
       day: league.day, season: league.season, type: 'injury', teamId: inj.teamId, playerId: p.id,
       note: `${p.firstName} ${p.lastName}: ${inj.type} (${inj.severity}, ~${inj.days} days)`,

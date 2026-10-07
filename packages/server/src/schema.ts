@@ -123,4 +123,11 @@ alter table league_members add column co_commissioner boolean not null default f
 alter table leagues add column state_z bytea;
 `,
   ],
+  [
+    // Players named in a notification ([{ id, name }]), so each name can link to his page.
+    '006_notification_players',
+    `
+alter table notifications add column refs jsonb;
+`,
+  ],
 ];

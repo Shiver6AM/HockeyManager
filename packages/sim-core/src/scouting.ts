@@ -2,7 +2,7 @@
  * Amateur scouting and the fog of war over the draft class.
  *
  * Next summer's draft class exists all season, playing in junior, college and
- * European leagues. Each team employs up to four area scouts, each with an
+ * European leagues. Each team employs up to eight area scouts, each with an
  * evaluation skill and a familiarity with every region (a scout from Sweden
  * knows the SHL and J20). Managers send scouts to regions; every day a scout
  * spends in a region builds the team's knowledge of it, faster for skilled
@@ -61,7 +61,7 @@ export interface TeamScouting {
 }
 
 export const SCOUTING = {
-  maxScouts: 4,
+  maxScouts: 8,
   /** Knowledge points for ~63% confidence. A good scout earns ~1.3 a day. */
   K: 110,
   /** Error (rating points) in a projection with no knowledge, and the floor with full knowledge. */

@@ -79,7 +79,7 @@ export function newsFromTransactions(league: League) {
       case 'trade':
         if (!seenTrades.has(t.note)) {
           seenTrades.add(t.note);
-          addNews(league, 'trade', t.note, [t.teamId], t.playerId ? [t.playerId] : []);
+          addNews(league, 'trade', t.note, t.teamIds ?? [t.teamId], t.playerIds ?? (t.playerId ? [t.playerId] : []));
         }
         break;
       case 'signing':

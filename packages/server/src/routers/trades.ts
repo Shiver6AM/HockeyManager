@@ -38,7 +38,7 @@ import {
 import { z } from 'zod';
 import { mutateLeague } from '../advance';
 import type { Queryable } from '../db';
-import { deliver, type Notice } from '../notify';
+import { assetList, deliver, tradePlayers, type Notice } from '../notify';
 import { readLeague } from '../state';
 import { badRequest, commissionerProcedure, memberProcedure, router, type Membership } from '../trpc';
 import { publicPlayer, teamInfo } from '../views';
@@ -50,26 +50,39 @@ const asset = z.union([
 ]);
 const deal = z.object({ partner: z.string(), give: z.array(asset).max(10), get: z.array(asset).max(10) });
 
-/** Tell the people involved what happened to a trade. */
+/** Tell the people involved what happened to a trade (every player in it is named, and links to his page). */
 async function tradeNotices(L: League, q: Queryable, leagueId: string, t: TradeProposal, event: 'proposed' | 'responded' | 'reviewed') {
   const from = L.teams[t.fromTeam];
   const to = L.teams[t.toTeam];
   const notices: Notice[] = [];
   const link = '/trades';
+  const players = tradePlayers(L, t);
+  // The deal as each side sees it.
+  const forFrom = `you get ${assetList(L, t.get)} for ${assetList(L, t.give)}`;
+  const forTo = `you get ${assetList(L, t.give)} for ${assetList(L, t.get)}`;
   if (event === 'proposed' && t.status === 'pending' && to.controller.kind === 'human') {
-    notices.push({ teamId: to.id, kind: 'trade', text: `${from.city} sent you a trade proposal.`, link });
+    notices.push({ teamId: to.id, kind: 'trade', text: `${from.city} sent you a trade proposal: ${forTo}.`, link, players });
   }
   if (event === 'responded' && from.controller.kind === 'human') {
     const verb = t.status === 'completed' ? 'accepted' : t.status === 'awaiting-approval' ? 'accepted (pending commissioner approval)' : t.status === 'invalid' ? 'accepted, but it was no longer valid' : 'declined';
-    notices.push({ teamId: from.id, kind: 'trade', text: `${to.city} ${verb} your trade proposal.`, link });
+    notices.push({ teamId: from.id, kind: 'trade', text: `${to.city} ${verb} your trade proposal: ${forFrom}.`, link, players });
   }
   if (event === 'reviewed') {
     const verb = t.status === 'completed' ? 'approved' : 'vetoed';
-    for (const team of [from, to]) if (team.controller.kind === 'human') notices.push({ teamId: team.id, kind: 'trade', text: `The commissioner ${verb} your trade with ${team === from ? to.city : from.city}.`, link });
+    for (const team of [from, to]) {
+      if (team.controller.kind !== 'human') continue;
+      notices.push({ teamId: team.id, kind: 'trade', text: `The commissioner ${verb} your trade with ${team === from ? to.city : from.city}: ${team === from ? forFrom : forTo}.`, link, players });
+    }
   }
   if (t.status === 'awaiting-approval' && event !== 'reviewed') {
     const rows = await q.query<{ commissioner_id: string }>('select commissioner_id from leagues where id = $1', [leagueId]);
-    notices.push({ userId: rows[0].commissioner_id, kind: 'commissioner', text: `A trade between ${from.city} and ${to.city} needs your approval.`, link });
+    notices.push({
+      userId: rows[0].commissioner_id,
+      kind: 'commissioner',
+      text: `A trade between ${from.city} and ${to.city} needs your approval: ${to.city} get ${assetList(L, t.give)}; ${from.city} get ${assetList(L, t.get)}.`,
+      link,
+      players,
+    });
   }
   await deliver(q, leagueId, notices);
 }

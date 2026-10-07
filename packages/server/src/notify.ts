@@ -3,8 +3,14 @@
  * "your team went 2-1 this week", and so on. Stored per user; the web app
  * polls for the unread count.
  */
-import type { League, TeamId } from '@hockey-gm/sim-core';
+import { describeAsset, type League, type TeamId, type TradeAsset, type TradeProposal } from '@hockey-gm/sim-core';
 import type { Queryable } from './db';
+
+/** A player named in a notice or a story: his name in the text links to his page. */
+export interface PlayerRef {
+  id: string;
+  name: string;
+}
 
 export type NotificationKind = 'trade' | 'draft' | 'advance' | 'offseason' | 'free-agency' | 'commissioner';
 
@@ -14,6 +20,21 @@ export interface Notice {
   kind: NotificationKind;
   text: string;
   link?: string;
+  /** Players named in the text. */
+  players?: PlayerRef[];
+}
+
+export const playerRef = (L: League, id: string): PlayerRef | null => {
+  const p = L.players[id];
+  return p ? { id, name: `${p.firstName} ${p.lastName}` } : null;
+};
+
+/** "A (C, 80), 2027 1st round (HAL)" */
+export const assetList = (L: League, xs: TradeAsset[]) => (xs.length ? xs.map((a) => describeAsset(L, a)).join(', ') : 'nothing');
+
+/** Every player in a trade, for linking. */
+export function tradePlayers(L: League, t: Pick<TradeProposal, 'give' | 'get'>): PlayerRef[] {
+  return [...t.give, ...t.get].flatMap((a) => (a.kind === 'player' ? [playerRef(L, a.id)] : [])).filter((x): x is PlayerRef => !!x);
 }
 
 /** Deliver notices to team managers (by team) or users (by id). */
@@ -24,7 +45,14 @@ export async function deliver(q: Queryable, leagueId: string, notices: Notice[])
   for (const n of notices) {
     const userId = n.userId ?? (n.teamId ? byTeam.get(n.teamId) : undefined);
     if (!userId) continue;
-    await q.query('insert into notifications (user_id, league_id, kind, text, link) values ($1, $2, $3, $4, $5)', [userId, leagueId, n.kind, n.text, n.link ?? null]);
+    await q.query('insert into notifications (user_id, league_id, kind, text, link, refs) values ($1, $2, $3, $4, $5, $6)', [
+      userId,
+      leagueId,
+      n.kind,
+      n.text,
+      n.link ?? null,
+      n.players?.length ? JSON.stringify(n.players) : null,
+    ]);
   }
 }
 
