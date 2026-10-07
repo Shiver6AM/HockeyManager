@@ -6,6 +6,7 @@ import { refreshTraits } from './traits';
 import { altPositions } from './positions';
 import { recordChemistry } from './chemistry';
 import { initSkillsCoaches, trainingDay } from './skills';
+import { developmentDay } from './development';
 import { prospectGameDay } from './prospects';
 import { initFarm } from './farmInit';
 import { simulateGame } from './game';
@@ -249,6 +250,7 @@ function simDayInner(league: League): ScheduledGame[] {
       played.push(g);
     }
     trainingDay(league);
+    developmentDay(league, lastDay(league) + 1); // natural growth and decline, a little every day
     prospectGameDay(league);
     scoutingDay(league);
     if (league.day % 7 === 6) for (const t of Object.values(league.teams)) aiRosterMoves(league, t);

@@ -98,8 +98,12 @@ function movable(league: League, p: Player | undefined): p is Player {
   if (!p) return false;
   if (p.injury && p.injury.daysLeft > 10) return false;
   if (league.phase === 'offseason') {
-    if (p.teamId && (!p.contract || (p.contract.yearsLeft <= 1 && !p.extension))) return false;
-    if (league.offseason?.rfa?.[p.id]) return false;
+    const os = league.offseason;
+    if (p.teamId && !p.contract) return false;
+    // During the re-signing week a contract that is up (and not yet renewed) is about to end.
+    // (Once free agency opens, every contract left on a roster runs through next season at least.)
+    if (os?.stage === 're-sign' && os.expiring[p.id] && !p.extension) return false;
+    if (os?.rfa?.[p.id]) return false;
   }
   return true;
 }

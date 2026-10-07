@@ -343,6 +343,15 @@ anyone who hasn't acted gets sensible defaults.
 - **Development:** young players close part of the gap to their hidden potential each
   year, faster with real NHL ice time. Veterans decline from about 30, speed first
   and hockey sense last, and goalies peak later. Breakouts and busts happen.
+- **During the season, not only in the summer:** half of a year's expected growth (and
+  of a veteran's decline) arrives through the regular season, one rating point at a time,
+  for everyone still playing: NHL rosters, farm teams, prospects and free agents. A
+  20-year-old well short of his potential gains about two overall points between opening
+  night and the last game. The summer delivers the rest, along with what depends on how
+  the season went: the ice-time bonus or penalty, the random swing, breakouts and busts.
+  A year adds up to what it did when it all happened in the summer
+  (`DEV_TUNING.inSeasonShare`). This is separate from skills coaching, which still trains
+  one chosen skill.
 - **Playing styles set ceilings:** grinders and enforcers fill out the bottom of rosters
   and top out as good role players (capped potential); they are never top-5 talents in a
   draft class and rarely first-rounders. Snipers, playmakers and offensive defensemen are
