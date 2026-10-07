@@ -364,7 +364,8 @@ export function executeTrade(league: League, fromId: TeamId, toId: TeamId, give:
   const note = `${from.city} trade ${list(give)} to ${to.city} for ${list(get)}`;
   const first = give.find((a) => a.kind === 'player') ?? get.find((a) => a.kind === 'player');
   const playerId = first && first.kind === 'player' ? first.id : '';
-  for (const t of [fromId, toId]) league.transactions.push({ day: league.day, season: league.season, type: 'trade', teamId: t, playerId, note });
+  const playerIds = [...give, ...get].filter((a) => a.kind === 'player').map((a) => (a as { id: string }).id);
+  for (const t of [fromId, toId]) league.transactions.push({ day: league.day, season: league.season, type: 'trade', teamId: t, playerId, note, playerIds, teamIds: [fromId, toId] });
   void capSeason;
 }
 

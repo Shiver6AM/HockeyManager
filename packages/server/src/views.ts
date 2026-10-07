@@ -64,6 +64,56 @@ export function teamRating(league: League, t: Team): number {
   return Math.round((sum / ids.length) * 10) / 10;
 }
 
+/**
+ * The players a news story names, in the order they appear, so each name can
+ * link to his page. Stories record their players; older trade stories recorded
+ * only the first, so the rest are found by name ("Name (POS, OVR)") in the text.
+ */
+export function storyPlayers(league: League, n: { kind: string; headline: string; playerIds: string[] }): Array<{ id: string; name: string }> {
+  const found = new Map<string, { id: string; name: string; at: number }>();
+  const add = (id: string) => {
+    const p = league.players[id];
+    const r = league.retired?.[id];
+    const name = p ? `${p.firstName} ${p.lastName}` : r?.name;
+    if (!name || found.has(id)) return;
+    const at = n.headline.indexOf(name);
+    if (at >= 0) found.set(id, { id, name, at });
+  };
+  for (const id of n.playerIds) add(id);
+  if (n.kind === 'trade' && n.playerIds.length <= 1) {
+    for (const p of Object.values(league.players)) {
+      if (!found.has(p.id) && n.headline.includes(`${p.firstName} ${p.lastName} (${p.pos},`)) add(p.id);
+    }
+  }
+  // (Two players with the same name: the first one recorded keeps it.)
+  const byName = new Set<string>();
+  return [...found.values()]
+    .sort((a, b) => a.at - b.at)
+    .filter((x) => (byName.has(x.name) ? false : (byName.add(x.name), true)))
+    .map(({ id, name }) => ({ id, name }));
+}
+
+/**
+ * A player's injuries, newest first: what's on his own record, plus any still
+ * in the league's transaction log from before records were kept on the player.
+ */
+export function injuryHistory(league: League, p: Player) {
+  const out = new Map<string, { season: number; day: number; type: string; severity: string; days: number }>();
+  for (const t of league.transactions) {
+    if (t.type !== 'injury' || t.playerId !== p.id) continue;
+    // "First Last: Type (severity, ~N days)"
+    const m = /: (.+) \(([a-z-]+), ~(\d+) days?\)$/.exec(t.note);
+    if (m) out.set(`${t.season}:${t.day}`, { season: t.season, day: t.day, type: m[1], severity: m[2], days: Number(m[3]) });
+  }
+  for (const x of p.injuryLog ?? []) out.set(`${x.season}:${x.day}`, { ...x });
+  const list = [...out.values()].sort((a, b) => b.season - a.season || b.day - a.day);
+  return list.map((x) => ({
+    ...x,
+    /** Still out with this one. */
+    current: !!p.injury && x.season === league.season && p.injury.sinceDay === x.day && p.injury.type === x.type,
+  }));
+}
+
 export function playerName(league: League, id: string) {
   const p = league.players[id];
   return p ? `${p.firstName} ${p.lastName}` : id;

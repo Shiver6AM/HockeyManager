@@ -56,7 +56,7 @@ import { z } from 'zod';
 import { mutateLeague } from '../advance';
 import { readLeague } from '../state';
 import { authedProcedure, badRequest, memberProcedure, router } from '../trpc';
-import { teamInfo } from '../views';
+import { storyPlayers, teamInfo } from '../views';
 import { classView } from './offseason';
 
 function financeView(f: TeamFinances) {
@@ -87,14 +87,24 @@ export const lifeRouter = router({
       params.push(input.leagueId);
       where += ' and league_id = $2';
     }
-    const rows = await ctx.db.query<{ id: string; league_id: string; kind: string; text: string; link: string | null; created_at: Date; read_at: Date | null }>(
-      `select id, league_id, kind, text, link, created_at, read_at from notifications where ${where} order by id desc limit 40`,
+    const rows = await ctx.db.query<{ id: string; league_id: string; kind: string; text: string; link: string | null; created_at: Date; read_at: Date | null; refs: Array<{ id: string; name: string }> | string | null }>(
+      `select id, league_id, kind, text, link, created_at, read_at, refs from notifications where ${where} order by id desc limit 40`,
       params,
     );
     const unread = await ctx.db.query<{ n: string }>(`select count(*) as n from notifications where ${where} and read_at is null`, params);
     return {
       unread: Number(unread[0].n),
-      items: rows.map((r) => ({ id: Number(r.id), leagueId: r.league_id, kind: r.kind, text: r.text, link: r.link, at: r.created_at, read: !!r.read_at })),
+      items: rows.map((r) => ({
+        id: Number(r.id),
+        leagueId: r.league_id,
+        kind: r.kind,
+        text: r.text,
+        link: r.link,
+        at: r.created_at,
+        read: !!r.read_at,
+        /** Players named in the text (each name links to his page). */
+        players: (typeof r.refs === 'string' ? (JSON.parse(r.refs) as Array<{ id: string; name: string }>) : r.refs) ?? [],
+      })),
     };
   }),
 
@@ -112,7 +122,12 @@ export const lifeRouter = router({
       .filter((n) => !input.teamId || n.teamIds.includes(input.teamId))
       .slice(-input.limit)
       .reverse()
-      .map((n) => ({ ...n, teams: n.teamIds.filter((id) => L.teams[id]).map((id) => teamInfo(L.teams[id])) }));
+      .map((n) => ({
+        ...n,
+        teams: n.teamIds.filter((id) => L.teams[id]).map((id) => teamInfo(L.teams[id])),
+        /** Players named in the headline, in order (each name links to his page). */
+        players: storyPlayers(L, n),
+      }));
   }),
 
   // ---- Front office: staff, finances, owner ----

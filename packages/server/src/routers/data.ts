@@ -84,7 +84,7 @@ import { dealTerms } from '../deal';
 import { mutateLeague } from '../advance';
 import { readBoxScore, readLeague } from '../state';
 import { badRequest, memberProcedure, router } from '../trpc';
-import { playerName, publicPlayer, teamInfo } from '../views';
+import { injuryHistory, playerName, publicPlayer, teamInfo } from '../views';
 import { grade } from './offseason';
 import { franchiseRecords, franchiseTopScorers, minorLeaders } from '../records';
 import { latestAnswer, offeredBySeason, openOffers } from '../offers';
@@ -645,6 +645,16 @@ export const dataRouter = router({
   }),
 
   player: memberProcedure.input(z.object({ playerId: z.string() })).query(async ({ ctx, input }) => {
+    // (The earliest injury on record anywhere in the league: before that, nothing was kept.)
+    const injuryRecordStart = (L: League): { season: number; day: number } | null => {
+      let first: { season: number; day: number } | null = null;
+      const see = (season: number, day: number) => {
+        if (!first || season < first.season || (season === first.season && day < first.day)) first = { season, day };
+      };
+      for (const t of L.transactions) if (t.type === 'injury') see(t.season, t.day);
+      for (const x of Object.values(L.players)) if (x.injuryLog?.length) see(x.injuryLog[0].season, x.injuryLog[0].day);
+      return first;
+    };
     const L = await readLeague(ctx.db, input.leagueId);
     // (Read-only from here: team rankings and the like are worked out once for the whole page.)
     return withMemo(() => {
@@ -688,6 +698,9 @@ export const dataRouter = router({
       career: career.map((c) => ({ ...c, team: teamOf(c.teamId), org: teamOf(c.orgId ?? null) })),
       /** Skills coaching: points gained this season by skill, and who's working with him now. */
       training: p ? trainingView(L, p) : null,
+      /** Injuries on record, newest first (and how far back the record goes). */
+      injuries: p ? injuryHistory(L, p) : [],
+      injuriesSince: p ? injuryRecordStart(L) : null,
       awards,
       /** Your open offer to him (re-signing, free agent or offer sheet), and his latest answer to a re-signing offer. */
       myOffer: p && ctx.membership.teamId ? (openOffers(L, ctx.membership.teamId).find((o) => o.playerId === p.id) ?? null) : null,

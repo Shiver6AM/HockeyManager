@@ -113,6 +113,8 @@ export interface Player {
    * the fraction of a rating point still owed.
    */
   devSeason?: { season: number; start: number; applied: number; carry: number };
+  /** Every injury he has had in a game since this was first recorded, oldest first. */
+  injuryLog?: Array<{ season: number; day: number; type: string; severity: InjurySeverity; days: number }>;
   /** Signed but assigned to the team's AHL affiliate (farm team). */
   farm?: boolean;
   /** On waivers (off the active roster until he's claimed or clears). */
@@ -214,7 +216,7 @@ export interface Team {
   affiliate?: { city: string; name: string };
   /** The farm team has been stocked with its first players. */
   farmStocked?: boolean;
-  /** Area scouts (up to four). */
+  /** Area scouts (up to eight). */
   scouts?: Scout[];
   /** Skills coaches (up to three). */
   skillsCoaches?: SkillsCoach[];
@@ -433,6 +435,9 @@ export interface Transaction {
   teamId: TeamId;
   playerId: PlayerId;
   note: string;
+  /** A trade: every player in it, and both teams. */
+  playerIds?: PlayerId[];
+  teamIds?: TeamId[];
 }
 
 /** One play in a game's play-by-play (recorded only when a game is simcast). */

@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Badge, Card, Empty, ErrorBox, Rating, Spinner, TeamChip, TeamLink } from '../components/ui';
-import { gaa, ht, money, signed, svPct, toi } from '../format';
+import { dayLabel, gaa, ht, money, signed, svPct, toi } from '../format';
 import { useSort } from '../sort';
 import { useTRPC, type Outputs } from '../trpc';
 import { useLeague } from './LeagueLayout';
@@ -256,6 +256,7 @@ export function PlayerPage() {
               )}
             </Card>
           )}
+          {p && <InjuryHistory injuries={d.injuries} since={d.injuriesSince} />}
           <CareerCharts career={d.career} isG={isG} />
           <Card title={`Career · ${totals.gp} GP${isG ? ` · ${totals.w} W · ${totals.so} SO` : ` · ${totals.g} G · ${totals.a} A · ${totals.g + totals.a} P`}`}>
             {d.career.length === 0 ? <Empty>No games yet.</Empty> : <CareerTables career={d.career} isG={isG} />}
@@ -522,5 +523,66 @@ function CareerCharts({ career, isG }: { career: Outputs['data']['player']['care
         <LineChart x={seasons.map(label)} series={[{ name: 'Overall', values: seasons.map((y) => overallOf(y) || null) }]} fmt={(v) => String(Math.round(v))} endLabels={false} />
       </Card>
     </div>
+  );
+}
+
+const SEVERITY: Record<string, { label: string; tone: 'neutral' | 'warn' | 'bad' }> = {
+  'day-to-day': { label: 'Day to day', tone: 'neutral' },
+  'short-term': { label: 'Short term', tone: 'neutral' },
+  'medium-term': { label: 'Medium term', tone: 'warn' },
+  'long-term': { label: 'Long term', tone: 'bad' },
+  'season-ending': { label: 'Season ending', tone: 'bad' },
+};
+
+/** Every injury on his record, newest first. */
+function InjuryHistory({ injuries, since }: { injuries: Outputs['data']['player']['injuries']; since: Outputs['data']['player']['injuriesSince'] }) {
+  const days = injuries.reduce((s, x) => s + x.days, 0);
+  const seasons = new Set(injuries.map((x) => x.season)).size;
+  const from = since ? dayLabel(since.season, since.day, { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+  return (
+    <Card
+      title="Injury history"
+      action={
+        injuries.length > 0 ? (
+          <span className="text-xs text-ice-400">
+            {injuries.length} {injuries.length === 1 ? 'injury' : 'injuries'} · about {days} days out · {seasons} {seasons === 1 ? 'season' : 'seasons'}
+          </span>
+        ) : undefined
+      }
+    >
+      {injuries.length === 0 ? (
+        <p className="text-sm text-ice-400">No injuries on record{from ? ` since ${from}` : ''}.</p>
+      ) : (
+        <>
+          <table className="table text-sm">
+            <thead>
+              <tr>
+                <th className="text-left">Date</th>
+                <th className="text-left">Injury</th>
+                <th className="text-left">Severity</th>
+                <th className="text-right">Time out</th>
+              </tr>
+            </thead>
+            <tbody>
+              {injuries.map((x) => (
+                <tr key={`${x.season}:${x.day}`}>
+                  <td className="whitespace-nowrap text-ice-300">{dayLabel(x.season, x.day, { month: 'short', day: 'numeric', year: 'numeric' })}</td>
+                  <td>
+                    {x.type} {x.current && <Badge tone="bad">Out now</Badge>}
+                  </td>
+                  <td>
+                    <Badge tone={SEVERITY[x.severity]?.tone ?? 'neutral'}>{SEVERITY[x.severity]?.label ?? x.severity}</Badge>
+                  </td>
+                  <td className="tabular text-right whitespace-nowrap">
+                    about {x.days} {x.days === 1 ? 'day' : 'days'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {from && <p className="mt-2 text-[11px] text-ice-500">Injuries are on record from {from}. Time out is the estimate when he was hurt.</p>}
+        </>
+      )}
+    </Card>
   );
 }

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { LinkedText } from './LinkedText';
 import { cx } from './ui';
 import { usePollInterval } from '../live';
 import { useTRPC } from '../trpc';
@@ -65,22 +66,34 @@ export function NotificationBell({ leagueId }: { leagueId: string }) {
           <ul className="max-h-96 overflow-y-auto">
             {q.data?.items.length ? (
               q.data.items.map((n) => (
-                <li key={n.id}>
+                <li key={n.id} className={cx('relative flex gap-2 px-3 py-2 text-sm hover:bg-rink-800', !n.read && 'bg-blueline/10')}>
+                  {/* The whole row opens the notice; the player names inside it sit above this and open the player. */}
                   <button
-                    className={cx('flex w-full gap-2 px-3 py-2 text-left text-sm hover:bg-rink-800', !n.read && 'bg-blueline/10')}
+                    className="absolute inset-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blueline"
+                    aria-label={`Open: ${n.text}`}
                     onClick={() => {
                       if (!n.read) mark.mutate({ id: n.id });
                       setOpen(false);
                       if (n.link) navigate(`/league/${leagueId}${n.link}`);
                     }}
-                  >
-                    <span aria-hidden>{ICON[n.kind] ?? '•'}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className={cx('block', n.read ? 'text-ice-400' : 'text-ice-50')}>{n.text}</span>
-                      <span className="text-[11px] text-ice-500">{ago(n.at)}</span>
+                  />
+                  <span aria-hidden>{ICON[n.kind] ?? '•'}</span>
+                  <span className="pointer-events-none min-w-0 flex-1">
+                    <span className={cx('block', n.read ? 'text-ice-400' : 'text-ice-50')}>
+                      <LinkedText
+                        text={n.text}
+                        players={n.players}
+                        leagueId={leagueId}
+                        className="pointer-events-auto relative font-semibold text-blue-300 hover:text-white hover:underline"
+                        onNavigate={() => {
+                          if (!n.read) mark.mutate({ id: n.id });
+                          setOpen(false);
+                        }}
+                      />
                     </span>
-                    {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blueline" />}
-                  </button>
+                    <span className="text-[11px] text-ice-500">{ago(n.at)}</span>
+                  </span>
+                  {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blueline" />}
                 </li>
               ))
             ) : (

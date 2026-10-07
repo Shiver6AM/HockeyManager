@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { LinkedText } from '../components/LinkedText';
 import { Card, cx, Empty, Spinner, TeamChip } from '../components/ui';
 import { dayLabel } from '../format';
 import { useTRPC, type Outputs } from '../trpc';
@@ -22,19 +23,13 @@ const FILTERS: Array<[string, string, string[] | null]> = [
 type Item = Outputs['life']['news'][number];
 
 export function NewsItemRow({ n, leagueId, compact }: { n: Item; leagueId: string; compact?: boolean }) {
-  const player = n.playerIds[0];
   return (
     <li className="flex gap-2.5">
       <span aria-hidden className="mt-0.5">{NEWS_ICON[n.kind] ?? '•'}</span>
       <div className="min-w-0 flex-1">
         <p className={cx('text-ice-100', compact ? 'text-sm' : '')}>
-          {player ? (
-            <Link to={`/league/${leagueId}/player/${player}`} className="hover:text-white hover:underline">
-              {n.headline}
-            </Link>
-          ) : (
-            n.headline
-          )}
+          {/* Each player named in the story links to his own page. */}
+          <LinkedText text={n.headline} players={n.players} leagueId={leagueId} />
         </p>
         <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-ice-500">
           {n.teams.slice(0, 2).map((t) => (

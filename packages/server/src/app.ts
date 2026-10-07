@@ -35,7 +35,15 @@ export type AppRouter = typeof appRouter;
 export const SESSION_COOKIE = 'hgm_session';
 
 export async function buildApp(opts: { db: Db; scheduler?: Scheduler; logger?: boolean; webDist?: string }) {
-  const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 5 * 1024 * 1024, trustProxy: true });
+  const app = Fastify({
+    logger: opts.logger ?? false,
+    bodyLimit: 5 * 1024 * 1024,
+    trustProxy: true,
+    // The browser batches a page's queries into one request whose path lists them all
+    // ("/trpc/sim.status,life.notifications,trades.assets,…"). The default limit of 100
+    // characters turned busy pages' first request away (414), to be retried piecemeal.
+    routerOptions: { maxParamLength: 5000 },
+  });
   const scheduler = opts.scheduler ?? new Scheduler(opts.db, (m) => app.log.info(m));
   await app.register(cookie);
   await app.register(fastifyTRPCPlugin, {
