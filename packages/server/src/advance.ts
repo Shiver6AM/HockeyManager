@@ -36,7 +36,8 @@ import { TRPCError } from '@trpc/server';
 import { Cron } from 'croner';
 import type { Db, Queryable } from './db';
 import { deliver, deliverAll, humanTeams, type Notice } from './notify';
-import { extractBoxScores, loadForUpdate, saveLeague } from './state';
+import { extractBoxScores, forgetLeague, loadForUpdate, saveLeague } from './state';
+import { endSimcast } from './simcast';
 import { simcastBlocking } from './simcast';
 import { publish } from './events';
 
@@ -545,6 +546,25 @@ export function mutateLeague<T>(db: Db, leagueId: string, fn: (league: League, q
  * auto-picks for managers who run out of time. (After a restart, a league is
  * picked up again the next time anyone looks at it.)
  */
+/**
+ * Delete a league for good: the league itself and everything stored under it
+ * (members, box scores, the advance log, notifications all go with the row),
+ * plus what the server holds for it in memory. Refused while it is simming.
+ */
+export async function deleteLeague(db: Db, scheduler: Scheduler, leagueId: string): Promise<void> {
+  if (isSimming(leagueId)) throw new SimBusyError();
+  await withLeagueLock(leagueId, async () => {
+    if (isSimming(leagueId)) throw new SimBusyError();
+    scheduler.forget(leagueId); // (no tick may start while the row is going)
+    await db.query('delete from leagues where id = $1', [leagueId]);
+    jobs.delete(leagueId);
+    draftDue.delete(leagueId);
+    endSimcast(leagueId);
+    forgetLeague(leagueId);
+  });
+  publish(leagueId, { type: 'deleted' });
+}
+
 const draftDue = new Map<string, { at: number; db: Db }>();
 let draftTimer: ReturnType<typeof setInterval> | null = null;
 const DRAFT_TICK_MS = 1000;
@@ -643,6 +663,12 @@ export class Scheduler {
   stop() {
     for (const j of this.jobs.values()) j.stop();
     this.jobs.clear();
+  }
+
+  /** Stop a league's schedule without touching the database (the league is being deleted). */
+  forget(leagueId: string) {
+    this.jobs.get(leagueId)?.stop();
+    this.jobs.delete(leagueId);
   }
 
   async sync(leagueId: string) {

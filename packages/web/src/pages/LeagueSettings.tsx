@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Badge, Button, Card, cx, Empty, ErrorBox, TeamChip } from '../components/ui';
 import { dayLabel, timeUntil } from '../format';
 import { useTRPC, type Outputs } from '../trpc';
@@ -53,8 +53,84 @@ export function LeagueSettings() {
             </a>
           </Card>
         )}
+        {L.isCommissioner && <DeleteLeague />}
       </div>
     </div>
+  );
+}
+
+/** Commissioner: delete the league for everyone. The name has to be typed back first. */
+function DeleteLeague() {
+  const L = useLeague();
+  const trpc = useTRPC();
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState('');
+  const del = useMutation(
+    trpc.leagues.delete.mutationOptions({
+      onSuccess: (r) => {
+        qc.removeQueries({ predicate: (q) => JSON.stringify(q.queryKey).includes(L.id) });
+        void qc.invalidateQueries({ queryKey: trpc.leagues.mine.queryKey() });
+        navigate('/', { replace: true, state: { notice: `“${r.name}” was deleted.` } });
+      },
+    }),
+  );
+  const same = (a: string) => a.trim().replace(/\s+/g, ' ').toLowerCase();
+  const matches = same(typed) === same(L.name);
+  const others = L.members.filter((m) => m.userId !== L.commissionerId).length;
+  return (
+    <Card title="Delete league">
+      <p className="text-sm text-ice-300">
+        Deletes <span className="font-semibold text-white">{L.name}</span> for everyone: every team, player, stat, trade and past season, and the league
+        disappears for {others === 0 ? 'you' : `you and the ${others} other manager${others === 1 ? '' : 's'}`}. This can't be undone.
+      </p>
+      {!open ? (
+        <Button variant="danger" className="mt-3" onClick={() => setOpen(true)}>
+          Delete this league…
+        </Button>
+      ) : (
+        <form
+          className="mt-3 space-y-3 rounded-lg border border-goal/40 bg-goal/5 p-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (matches && !del.isPending) del.mutate({ leagueId: L.id, confirmName: typed });
+          }}
+        >
+          <p className="text-sm text-ice-200">
+            Want a copy first? Use <span className="font-semibold">Download league data</span> above: a deleted league can't be brought back from inside
+            the game.
+          </p>
+          <label className="block text-sm text-ice-200">
+            Type the league's name to confirm: <span className="font-semibold text-white">{L.name}</span>
+            <input
+              className="mt-1 block w-full rounded-md border border-rink-600 bg-rink-900 px-3 py-1.5 text-sm text-white focus:border-goal focus:outline-none"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              autoComplete="off"
+              autoFocus
+              aria-label="League name, to confirm deleting it"
+            />
+          </label>
+          <ErrorBox error={del.error} />
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" variant="danger" disabled={!matches || del.isPending}>
+              {del.isPending ? 'Deleting…' : 'Delete the league for everyone'}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setOpen(false);
+                setTyped('');
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+    </Card>
   );
 }
 

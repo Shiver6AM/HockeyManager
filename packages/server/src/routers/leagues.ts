@@ -4,7 +4,7 @@ import { publish } from '../events';
 import { TRPCError } from '@trpc/server';
 import { randomBytes, randomInt } from 'node:crypto';
 import { z } from 'zod';
-import { describeCron, mutateLeague } from '../advance';
+import { deleteLeague, describeCron, mutateLeague } from '../advance';
 import { newId } from '../auth';
 import { leagueMeta, packState, readLeague } from '../state';
 import { deliver } from '../notify';
@@ -186,6 +186,18 @@ export const leaguesRouter = router({
       })),
       lastAdvance: last[0] ?? null,
     };
+  }),
+
+  /**
+   * Commissioner only (not co-commissioners): delete the league for everyone,
+   * for good. The league's name has to be typed back as confirmation.
+   */
+  delete: commissionerProcedure.input(z.object({ confirmName: z.string() })).mutation(async ({ ctx, input }) => {
+    const meta = (await leagueMeta(ctx.db, input.leagueId))!;
+    const same = (a: string) => a.trim().replace(/\s+/g, ' ').toLowerCase();
+    if (same(input.confirmName) !== same(meta.name)) throw badRequest(`Type the league's name (${meta.name}) to confirm`);
+    await deleteLeague(ctx.db, ctx.scheduler, input.leagueId);
+    return { ok: true, name: meta.name };
   }),
 
   teams: memberProcedure.query(async ({ ctx, input }) => {

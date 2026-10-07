@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 228 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 236 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -128,6 +128,8 @@ Pick one of two modes on the **League** tab (commissioner only):
 - **On a schedule:** a cron schedule in the league's time zone (presets include
   "every night at 11 PM"), a number of days per tick, and optionally **advance early
   when every manager is ready**. The commissioner can still force an advance at any time.
+
+**Deleting a league:** the commissioner (not co-commissioners) can delete the league from the League page by typing its name. It goes for every member, with its box scores, advance log and notifications, and can't be undone; download the league data first for a copy. It is refused while the league is simming. Anyone with the league open is sent back to their list of leagues.
 
 Your **Ready** toggle (with the count of ready managers) and, if you can advance, the
 **Sim 1 day ▾** button sit in the top bar on every screen. The home page shows today's

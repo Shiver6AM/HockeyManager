@@ -7,8 +7,9 @@
  *  - `changed`: the league was saved (a sim step, a trade, a pick, a signing),
  *    or its members changed (someone joined, claimed a team, readied up).
  *  - `sim`: progress of the sim in flight (what `sim.status` returns).
+ *  - `deleted`: the commissioner deleted the league (the last message its listeners get).
  */
-export type LeagueEvent = { type: 'changed' } | { type: 'sim'; job: unknown };
+export type LeagueEvent = { type: 'changed' } | { type: 'sim'; job: unknown } | { type: 'deleted' };
 
 type Listener = (e: LeagueEvent) => void;
 const listeners = new Map<string, Set<Listener>>();

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Badge, Button, Card, Empty, ErrorBox, Spinner, TeamChip } from '../components/ui';
 import { dayLabel, PHASE_LABEL } from '../format';
 import { useTRPC } from '../trpc';
@@ -19,6 +19,9 @@ export function LeaguesPage() {
   const create = useMutation(trpc.leagues.create.mutationOptions({ onSuccess: (r) => nav(`/league/${r.id}/teams`) }));
   const join = useMutation(trpc.leagues.join.mutationOptions({ onSuccess: (r) => nav(`/league/${r.id}/teams`) }));
   const logout = useMutation(trpc.auth.logout.mutationOptions({ onSuccess: () => qc.clear() }));
+  // Arriving from a league that was just deleted.
+  const notice = (useLocation().state as { notice?: string } | null)?.notice;
+  const [noticeShown, setNoticeShown] = useState(true);
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8">
@@ -31,6 +34,15 @@ export function LeaguesPage() {
           Log out
         </Button>
       </header>
+
+      {notice && noticeShown && (
+        <div className="mb-6 flex items-start justify-between gap-3 rounded-lg border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-ice-100" role="status">
+          <span>{notice}</span>
+          <button className="text-ice-400 hover:text-white" onClick={() => setNoticeShown(false)} aria-label="Dismiss">
+            ✕
+          </button>
+        </div>
+      )}
 
       {leagues.isLoading ? (
         <Spinner />
