@@ -107,6 +107,12 @@ export interface Player {
   draftClass?: number;
   /** Where he plays outside the NHL this season (junior, college, Europe, AHL). */
   minorTeam?: { season: number; league: string; team: string };
+  /**
+   * Natural development during the current regular season (see development.ts):
+   * his overall when it began, how many overall points have arrived since, and
+   * the fraction of a rating point still owed.
+   */
+  devSeason?: { season: number; start: number; applied: number; carry: number };
   /** Signed but assigned to the team's AHL affiliate (farm team). */
   farm?: boolean;
   /** On waivers (off the active roster until he's claimed or clears). */

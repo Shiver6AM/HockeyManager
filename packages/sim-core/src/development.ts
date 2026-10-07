@@ -1,8 +1,14 @@
 /**
- * Player development over the summer: young players grow toward their
- * hidden potential (faster with real ice time), veterans decline (speed
- * first, hockey sense last), and some players surprise in either direction.
- * Also decides who retires.
+ * Player development: young players grow toward their hidden potential (faster
+ * with real ice time), veterans decline (speed first, hockey sense last), and
+ * some players surprise in either direction. Also decides who retires.
+ *
+ * A year's development arrives in two parts. Through the regular season a
+ * share of it trickles in day by day, one rating point at a time
+ * (`developmentDay`). The summer delivers the rest, along with everything that
+ * depends on how the season went: the ice-time bonus or penalty, the random
+ * swing, breakouts and busts (`developPlayer`). The two add up to what a
+ * summer alone used to give.
  */
 import { clamp, deriveSeed, Rng } from './rng';
 import { age, ARCHETYPE_CEILING, goalieQuality, overall, skaterOverall } from './ratings';
@@ -20,6 +26,8 @@ export const DEV_TUNING = {
   noise: 1.4,
   breakoutChance: 0.04,
   bustChance: 0.04,
+  /** Share of a year's expected growth and decline that arrives during the regular season. */
+  inSeasonShare: 0.5,
   /** Goalies develop and decline later. */
   goalieAgeShift: 2,
 };
@@ -52,19 +60,87 @@ function usageFactor(p: Player, u: Usage): number {
   return 0.85;
 }
 
-/** Change a player's ratings for one summer. Returns [overall before, after]. */
+/**
+ * What a year should bring a player whose overall was `start` when it began:
+ * growth toward his potential (before the ice-time factor) and decline with age,
+ * in overall points.
+ */
+function yearPlan(league: League, p: Player, start: number): { growth: number; decline: number; newAge: number; effAge: number } {
+  const T = DEV_TUNING;
+  const newAge = age(p, league.season) + 1;
+  const effAge = newAge - (p.pos === 'G' ? T.goalieAgeShift : 0);
+  const rate = effAge <= 18 ? T.growth[18] : (T.growth[effAge] ?? 0);
+  let growth = Math.max(0, p.hidden.potential - start) * rate * coachDevMultiplier(league, p.teamId ?? p.prospectOf) * slider(league, 'development');
+  // Late bloomers (sleepers) grow fast once they get going.
+  if (p.hidden.sleeper && newAge <= 23) growth *= 1.8;
+  const decline = effAge >= T.declineStart ? (T.declineBase + (effAge - T.declineStart) * T.declinePerYear) * slider(league, 'aging') : 0;
+  return { growth, decline, newAge, effAge };
+}
+
+const r4 = (x: number) => Math.round(x * 10_000) / 10_000;
+
+/**
+ * One regular-season day of natural development for everyone still playing:
+ * NHL rosters, farm teams, prospects and free agents alike. Each player is owed
+ * a share of his year's growth (or decline) spread evenly over the season; when
+ * a whole rating point has built up, one of his ratings moves by one.
+ */
+export function developmentDay(league: League, seasonDays: number) {
+  const T = DEV_TUNING;
+  if (seasonDays <= 0 || T.inSeasonShare <= 0) return;
+  for (const p of Object.values(league.players)) {
+    if (league.retired?.[p.id] || p.draftClass !== undefined) continue;
+    let ds = p.devSeason?.season === league.season ? p.devSeason : null;
+    const plan = yearPlan(league, p, ds ? ds.start : overallFloat(p));
+    const perDay = ((plan.growth - plan.decline) * T.inSeasonShare) / seasonDays;
+    if (!ds) {
+      if (perDay === 0) continue; // (mid-career: nothing to track)
+      ds = p.devSeason = { season: league.season, start: r4(overallFloat(p)), applied: 0, carry: 0 };
+    }
+    if (perDay === 0) continue;
+    const growing = perDay > 0;
+    const ratings = (p.skater ?? p.goalie) as unknown as Record<string, number>;
+    const weights = (p.skater ? (growing ? SKATER_GROWTH : SKATER_DECLINE) : growing ? GOALIE_GROWTH : GOALIE_DECLINE) as Record<string, number>;
+    // The summer moves every rating by about the same amount; here that amount arrives one rating at a time.
+    let sumW = 0;
+    for (const k in weights) sumW += weights[k];
+    let carry = ds.carry + perDay * sumW;
+    if (Math.abs(carry) >= 1) {
+      const rng = new Rng(deriveSeed(league.seed, `dev-day:${league.season}:${league.day}:${p.id}`));
+      while (Math.abs(carry) >= 1) {
+        const up = carry > 0;
+        const keys = Object.keys(weights).filter((k) => weights[k] > 0 && (up ? ratings[k] < 99 : ratings[k] > 20));
+        if (!keys.length) {
+          carry = 0;
+          break;
+        }
+        const k = keys[rng.weighted(keys.map((x) => weights[x]))];
+        const was = overallFloat(p);
+        ratings[k] += up ? 1 : -1;
+        ds.applied = r4(ds.applied + overallFloat(p) - was);
+        carry -= up ? 1 : -1;
+      }
+    }
+    ds.carry = r4(carry);
+  }
+}
+
+/**
+ * Change a player's ratings for one summer: the rest of the year's development
+ * after what arrived during the season. Returns [overall when the season began, after].
+ */
 export function developPlayer(league: League, p: Player, u: Usage): [number, number] {
   const rng = new Rng(deriveSeed(league.seed, `dev:${league.season}:${p.id}`));
   const T = DEV_TUNING;
   const before = overall(p);
-  const newAge = age(p, league.season) + 1;
-  const effAge = newAge - (p.pos === 'G' ? T.goalieAgeShift : 0);
+  // What already arrived during the season (nothing, for a league or a player that didn't play one).
+  const applied = p.devSeason?.season === league.season ? p.devSeason.applied : 0;
+  const yearStart = p.devSeason?.season === league.season ? Math.round(p.devSeason.start) : before;
+  delete p.devSeason;
+  const { growth, decline, newAge, effAge } = yearPlan(league, p, before - applied);
 
-  const rate = effAge <= 18 ? T.growth[18] : (T.growth[effAge] ?? 0);
-  let delta = Math.max(0, p.hidden.potential - before) * rate * usageFactor(p, u) * coachDevMultiplier(league, p.teamId ?? p.prospectOf) * slider(league, 'development');
-  // Late bloomers (sleepers) grow fast once they get going.
-  if (p.hidden.sleeper && newAge <= 23) delta *= 1.8;
-  if (effAge >= T.declineStart) delta -= (T.declineBase + (effAge - T.declineStart) * T.declinePerYear) * slider(league, 'aging');
+  // The whole year's development, with the ice-time factor now that the season is known, less what he already has.
+  let delta = growth * usageFactor(p, u) - decline - applied;
   delta += rng.normal(0, T.noise);
   if (effAge <= 24 && rng.chance(T.breakoutChance)) {
     delta += rng.int(3, 6);
@@ -99,7 +175,7 @@ export function developPlayer(league: League, p: Player, u: Usage): [number, num
   if (effAge >= 27) p.hidden.potential = Math.max(after, Math.min(p.hidden.potential, after + 1));
   else p.hidden.potential = Math.round(Math.max(after, p.hidden.potential + rng.normal(0, 1.2)));
   p.hidden.potential = Math.min(99, p.hidden.potential);
-  return [before, after];
+  return [yearStart, after];
 }
 
 function overallFloat(p: Player): number {

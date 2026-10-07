@@ -199,7 +199,7 @@ export function SummerNews() {
   );
   return (
     <div className="grid gap-5 md:grid-cols-2">
-      <Card title="Summer development">
+      <Card title="Development this year">
         <p className="mb-2 text-xs font-semibold tracking-wider text-win uppercase">Biggest jumps</p>
         <ul className="space-y-1">{o.risers.map(row)}</ul>
         <p className="mt-4 mb-2 text-xs font-semibold tracking-wider text-red-300 uppercase">Biggest drops</p>
