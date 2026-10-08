@@ -43,6 +43,7 @@ import { readLeague } from '../state';
 import { badRequest, commissionerProcedure, memberProcedure, router, type Membership } from '../trpc';
 import { publicPlayer, teamInfo } from '../views';
 import { potentialView } from './data';
+import { searchCatalog, searchInput, searchPlayers } from '../tradesearch';
 
 const asset = z.union([
   z.object({ kind: z.literal('player'), id: z.string(), retain: z.number().min(0).max(0.5).optional() }),
@@ -164,6 +165,18 @@ export const tradesRouter = router({
       }),
     };
     });
+  }),
+
+  /** Search every other team's players for a trade target (filters and sorting run here; at most `limit` rows come back). */
+  search: memberProcedure.input(searchInput).query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    return withMemo(() => searchPlayers(L, ctx.membership.teamId, input));
+  }),
+
+  /** What the trade search form offers: player types, traits, grades, ratings, teams. */
+  searchCatalog: memberProcedure.query(async ({ ctx, input }) => {
+    const L = await readLeague(ctx.db, input.leagueId);
+    return searchCatalog(L);
   }),
 
   /** Set your trade block: who and what you're shopping, and what you want back. */

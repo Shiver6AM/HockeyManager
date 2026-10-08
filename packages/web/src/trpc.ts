@@ -2,11 +2,12 @@ import type { AppRouter } from '@hockey-gm/server';
 import { QueryClient } from '@tanstack/react-query';
 import { createTRPCClient, httpBatchLink } from '@trpc/client';
 import { createTRPCContext } from '@trpc/tanstack-react-query';
-import type { inferRouterOutputs } from '@trpc/server';
+import type { inferRouterInputs, inferRouterOutputs } from '@trpc/server';
 
 export const { TRPCProvider, useTRPC } = createTRPCContext<AppRouter>();
 
 export type Outputs = inferRouterOutputs<AppRouter>;
+export type Inputs = inferRouterInputs<AppRouter>;
 
 export const queryClient = new QueryClient({
   defaultOptions: {

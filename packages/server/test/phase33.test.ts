@@ -75,7 +75,8 @@ describe('phase 33: linked players in trades, injury history, eight scouts', () 
 
   it('the trade story in the news links all four players and both teams', async () => {
     const news = await ann.life.news({ leagueId, limit: 50 });
-    const story = news.find((n) => n.kind === 'trade')!;
+    // (AI teams may have traded since: find ours.)
+    const story = news.find((n) => n.kind === 'trade' && n.teams.some((t) => t.id === 'HAL') && n.teams.some((t) => t.id === 'QUE'))!;
     expect(story).toBeTruthy();
     expect(story.playerIds).toHaveLength(4);
     expect(story.players).toHaveLength(4);

@@ -28,10 +28,14 @@ describe('phase 34: season performance on the player page and in the summer repo
 
   it('shows how a regular is doing once he has played enough, and nothing before', async () => {
     const L0 = await readLeague(db, leagueId);
-    const id = L0.teams.HAL.lines.forwards[0][1];
+    const early = L0.teams.HAL.lines.forwards[0][1];
     await c.sim.advance({ leagueId, target: { days: 10 } });
-    expect((await c.data.player({ leagueId, playerId: id })).performance).toBeNull();
+    expect((await c.data.player({ leagueId, playerId: early })).performance).toBeNull();
     await c.sim.advance({ leagueId, target: { days: 60 } });
+    // (The skater who has played the most: a regular can get hurt, and this one surely played enough.)
+    const L1 = await readLeague(db, leagueId);
+    const id = L1.teams.HAL.roster.filter((x) => L1.skaterStats[x]).sort((a, b) => L1.skaterStats[b].gp - L1.skaterStats[a].gp)[0];
+    expect(L1.skaterStats[id].gp).toBeGreaterThanOrEqual(25);
     const d = await c.data.player({ leagueId, playerId: id });
     expect(d.performance).toBeTruthy();
     expect(d.performance!.final).toBe(false);
