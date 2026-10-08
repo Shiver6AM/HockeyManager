@@ -121,6 +121,8 @@ describe('scouting and the draft class', () => {
   it('fog of war: projections for unscouted prospects are much noisier', () => {
     const cls = L.draftClass!.ids.map((id) => L.players[id]);
     const hal = L.teams.HAL;
+    // (Two more months on the road in that region: one scout's read builds slowly.)
+    advanceDays(L, 60);
     const scouted = new Set(REGIONS.map((r) => r.id).filter((r) => regionConfidence(L, 'HAL', r) > 0.1));
     const err = (ps: typeof cls) => Math.sqrt(ps.reduce((s, p) => s + (scoutedPotential(L, 'HAL', p) - p.hidden.potential) ** 2, 0) / ps.length);
     const known = cls.filter((p) => scouted.has(playerRegion(L, p)));
