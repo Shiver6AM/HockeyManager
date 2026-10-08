@@ -29,6 +29,8 @@ import {
   qualifyingOffer,
   autoLines,
   teamLines,
+  coachLines,
+  playsPos,
   tradeDeadline,
   FORWARD_USAGE,
   DEFENSE_USAGE,
@@ -538,7 +540,7 @@ export const dataRouter = router({
       },
       autoLines: t.controller.kind === 'human' ? !!t.autoLines : true,
       /** Where the manager wants players used when the assistant coach sets the lines. */
-      linePins: ctx.membership.teamId === t.id ? (t.linePins ?? {}) : {},
+      linePins: ctx.membership.teamId === t.id ? Object.fromEntries(Object.entries(t.linePins ?? {}).filter(([id]) => L.players[id]?.teamId === t.id)) : {},
       tactics: t.tactics ?? DEFAULT_TACTICS,
       systemFits: systemFits(healthyRoster(L, t).filter((p) => p.pos !== 'G'), t.tactics ?? DEFAULT_TACTICS),
       recommendedTactics: suggestTactics(healthyRoster(L, t).filter((p) => p.pos !== 'G')),
@@ -732,7 +734,11 @@ export const dataRouter = router({
     if (!ctx.membership.teamId) throw badRequest('You do not manage a team');
     const L = await readLeague(ctx.db, input.leagueId);
     const team = L.teams[ctx.membership.teamId];
-    return teamLines(L, team);
+    try {
+      return teamLines(L, team);
+    } catch (e) {
+      throw badRequest(`${(e as Error).message}. Call someone up from the farm, or let the assistant coach run the lines (he calls players up himself).`);
+    }
   }),
 
   setLines: memberProcedure.input(z.object({ lines: linesSchema })).mutation(async ({ ctx, input }) => {
@@ -748,7 +754,7 @@ export const dataRouter = router({
     return { ok: true };
   }),
 
-  /** Tell the assistant coach where to play people (a line, a group of lines, a position, or scratch). */
+  /** Tell the assistant coach where to play people (a line, a group of lines, a position, or scratch). An empty map clears them all. */
   setLinePins: memberProcedure
     .input(
       z.object({
@@ -764,38 +770,55 @@ export const dataRouter = router({
     .mutation(async ({ ctx, input }) => {
       const teamId = ctx.membership.teamId;
       if (!teamId) throw badRequest('You do not manage a team');
-      await mutateLeague(ctx.db, input.leagueId, (L) => {
+      return mutateLeague(ctx.db, input.leagueId, (L) => {
         const team = L.teams[teamId];
         const pins: NonNullable<typeof team.linePins> = {};
         for (const [id, pin] of Object.entries(input.pins)) {
           const p = L.players[id];
           if (!p || p.teamId !== teamId || (!pin.slot && !pin.pos)) continue;
-          const fwd = p.pos !== 'D' && p.pos !== 'G';
-          const ok = !pin.slot || pin.slot === 'scratch' || (p.pos === 'G' ? /^G/.test(pin.slot) : p.pos === 'D' ? /^P|top4/.test(pin.slot) : /^L|top6|top9|bottom6/.test(pin.slot));
+          const plays = (pos: 'F' | 'D') => (pos === 'D' ? playsPos(p, 'D') : (['C', 'LW', 'RW'] as const).some((x) => playsPos(p, x)));
+          const ok =
+            !pin.slot ||
+            pin.slot === 'scratch' ||
+            (p.pos === 'G' ? /^G/.test(pin.slot) : /^P|top4/.test(pin.slot) ? plays('D') : /^G/.test(pin.slot) ? false : plays('F'));
           if (!ok) throw badRequest(`${p.firstName} ${p.lastName} can't be placed there`);
-          pins[id] = { ...(pin.slot ? { slot: pin.slot } : {}), ...(pin.pos && fwd ? { pos: pin.pos } : {}) };
+          pins[id] = { ...(pin.slot ? { slot: pin.slot } : {}), ...(pin.pos && p.pos !== 'G' ? { pos: pin.pos } : {}) };
         }
         team.linePins = pins;
+        // The placements are saved whatever happens; the coach then does the best he can with who's here.
+        let calledUp: string[] = [];
+        let note: string | null = null;
         if (team.autoLines) {
           try {
-            team.lines = teamLines(L, team);
+            const r = coachLines(L, team);
+            team.lines = r.lines;
+            calledUp = r.calledUp;
           } catch (e) {
-            throw badRequest((e as Error).message);
+            note = `Saved. The lines will be rebuilt on game day (${(e as Error).message}).`;
           }
         }
+        return { ok: true, note, calledUp: calledUp.map((id) => `${L.players[id].firstName} ${L.players[id].lastName}`) };
       });
-      return { ok: true };
     }),
 
   setAutoLines: memberProcedure.input(z.object({ enabled: z.boolean() })).mutation(async ({ ctx, input }) => {
     const teamId = ctx.membership.teamId;
     if (!teamId) throw badRequest('You do not manage a team');
-    await mutateLeague(ctx.db, input.leagueId, (L) => {
+    return mutateLeague(ctx.db, input.leagueId, (L) => {
       const team = L.teams[teamId];
       team.autoLines = input.enabled;
-      if (input.enabled) team.lines = teamLines(L, team);
+      let calledUp: string[] = [];
+      if (input.enabled) {
+        try {
+          const r = coachLines(L, team);
+          team.lines = r.lines;
+          calledUp = r.calledUp;
+        } catch {
+          // (Rebuilt on game day.)
+        }
+      }
+      return { ok: true, calledUp: calledUp.map((id) => `${L.players[id].firstName} ${L.players[id].lastName}`) };
     });
-    return { ok: true };
   }),
 
   /** Set your coaching systems. With the assistant coach on, special units are rebuilt to fit. */
@@ -806,7 +829,13 @@ export const dataRouter = router({
       const team = L.teams[teamId];
       const formationChanged = (team.tactics ?? DEFAULT_TACTICS).pp !== input.tactics.pp;
       team.tactics = input.tactics;
-      if (team.autoLines) team.lines = teamLines(L, team);
+      if (team.autoLines) {
+        try {
+          team.lines = coachLines(L, team).lines;
+        } catch {
+          // (Rebuilt on game day.)
+        }
+      }
       // A new formation re-slots the power play; the rest of the manager's lines stay.
       else if (formationChanged) team.lines = completeLines({ ...team.lines, pp: [] }, healthyRoster(L, team), team.tactics);
     });
