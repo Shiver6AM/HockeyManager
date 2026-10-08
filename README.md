@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 252 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 256 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -518,6 +518,18 @@ anyone who hasn't acted gets sensible defaults.
   counts down the last three weeks, the news marks the week before and deadline day, and
   *Sim to trade deadline* stops on deadline day so everyone can make last calls. Trades
   close after it until the season ends and reopen at the draft.
+- **Search players (Trade center):** search every other team's NHL roster, farm and
+  unsigned prospects for a trade target. Filter by position (several at once, optionally
+  anyone who *can* play it), player type, shooting side, name, and ranges for age,
+  overall, scouted potential grade, trade value, AAV, years left and overall change since
+  last season; by contract status (UFA / RFA / ELC / unsigned), health, team, team
+  direction (contending, balanced, rebuilding, managers), traits, on their block, fits
+  your needs and fits your cap space; by individual ratings, height, weight and
+  coachability; and by ranges on regular-season stats (GP, G, A, P, P/GP, G/GP, +/-, PIM,
+  shots, shooting %, PP points, SH goals, GWG, hits, blocks, TOI/GP, faceoff %; goalies GP,
+  starts, wins, SV%, GAA, shutouts) from this season or last. Filtering and sorting run
+  on the server, so the top 100 rows are the best matches league-wide; *Trade for* drops
+  the player into the trade builder. Potential is your own scouts' grade, as everywhere.
 - **Trade block:** every team lists players and picks it's shopping and what it's looking
   for (a position, young players, prospects, picks, proven veterans, cap relief). Managers
   set their own; AI blocks follow strategy and roster (rebuilders shop veterans and want

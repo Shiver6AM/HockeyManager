@@ -149,6 +149,9 @@ describe('phase 28: live updates, lighter simcast, faster pages', () => {
     const fwd = nhl.filter((p) => p.pos !== 'G' && p.pos !== 'D').sort((a, b) => b.overall - a.overall)[0];
     await mutateLeague(db, leagueId, (L) => {
       L.teams.HAL.autoLines = false;
+      // (A known starting point: nobody else hurt, and two goalies up with the big club.)
+      for (const p of nhl) L.players[p.id].injury = null as never;
+      for (const g of nhl.filter((p) => p.pos === 'G').slice(2)) L.players[g.id].farm = true;
       for (const id of [goalie.id, fwd.id]) L.players[id].injury = { type: 'Lower-body', severity: 'short-term', daysLeft: 9 } as never;
     });
     // Only one healthy goalie: the suggestion keeps the injured one in net (a call-up replaces him on game day),

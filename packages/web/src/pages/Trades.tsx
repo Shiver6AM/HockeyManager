@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EMPTY_FILTERS, matchesFilters, PlayerFilterBar, SortTh, useSort, type Filters } from '../components/PlayerFilters';
+import { TradeSearch } from '../components/TradeSearch';
 import { Badge, Button, Card, cx, Empty, ErrorBox, PotentialBadge, Rating, Spinner, TeamChip, TeamLink } from '../components/ui';
 import { money, posLabel } from '../format';
 import { usePollInterval } from '../live';
@@ -96,7 +97,7 @@ export function TradesPage() {
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const partner = params.get('with') ?? '';
-  const tab = params.get('tab') === 'block' ? 'block' : 'build';
+  const tab = params.get('tab') === 'block' ? 'block' : params.get('tab') === 'search' ? 'search' : 'build';
   // Selections are remembered per partner for this browser session, so looking
   // at a player and coming back doesn't lose the deal you're building.
   const [give, setGive] = useState<Asset[]>(() => loadDeal(L.id, partner).give);
@@ -172,7 +173,7 @@ export function TradesPage() {
   if (!L.myTeamId) return <Card><Empty>Claim a team to make trades.</Empty></Card>;
   if (!status.data || !mine.data) return <Spinner />;
 
-  const setTab = (t: 'build' | 'block') => setParams({ ...(partner ? { with: partner } : {}), ...(t === 'block' ? { tab: 'block' } : {}) });
+  const setTab = (t: 'build' | 'block' | 'search') => setParams({ ...(partner ? { with: partner } : {}), ...(t !== 'build' ? { tab: t } : {}) });
   const toggle = (side: 'give' | 'get', a: Asset) => {
     const [xs, set] = side === 'give' ? [give, setGive] : [get, setGet];
     set(xs.some((x) => keyOf(x) === keyOf(a)) ? xs.filter((x) => keyOf(x) !== keyOf(a)) : [...xs, a]);
@@ -218,9 +219,9 @@ export function TradesPage() {
           </p>
         </div>
         <div className="flex gap-1 rounded-lg bg-rink-900 p-1 text-sm">
-          {(['build', 'block'] as const).map((k) => (
+          {(['build', 'search', 'block'] as const).map((k) => (
             <button key={k} onClick={() => setTab(k)} className={cx('rounded-md px-4 py-1.5 font-semibold', tab === k ? 'bg-rink-600 text-white' : 'text-ice-400 hover:text-ice-100')}>
-              {k === 'build' ? 'Build a trade' : 'Trade block'}
+              {k === 'build' ? 'Build a trade' : k === 'search' ? 'Search players' : 'Trade block'}
             </button>
           ))}
         </div>
@@ -252,7 +253,15 @@ export function TradesPage() {
           </p>
         )}
 
-        {tab === 'block' ? (
+        {tab === 'search' ? (
+          <TradeSearch
+            leagueId={L.id}
+            onTradeFor={(teamId, id) => {
+              tradeFor(teamId, { kind: 'player', id });
+              setTimeout(() => document.getElementById('trade-builder')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+            }}
+          />
+        ) : tab === 'block' ? (
           <BlockTab mine={mine.data} onTradeFor={tradeFor} />
         ) : (
           <>
@@ -276,7 +285,11 @@ export function TradesPage() {
             {!partner && (
               <Card>
                 <Empty>
-                  Choose a team to trade with, or browse every team's{' '}
+                  Choose a team to trade with,{' '}
+                  <button className="text-blue-300 hover:underline" onClick={() => setTab('search')}>
+                    search every team's players
+                  </button>
+                  , or browse every team's{' '}
                   <button className="text-blue-300 hover:underline" onClick={() => setTab('block')}>
                     trade block
                   </button>
