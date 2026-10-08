@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { Badge, Button, Card, ErrorBox, Spinner, TeamChip } from '../components/ui';
+import { TeamStatsTable } from '../components/TeamStatsTable';
 import { useTRPC } from '../trpc';
 import { useLeague } from './LeagueLayout';
 
@@ -93,6 +94,7 @@ export function TeamsPage() {
           </Card>
         ))}
       </div>
+      <TeamStatsTable leagueId={L.id} myTeamId={L.myTeamId} />
     </div>
   );
 }

@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 248 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 252 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -625,7 +625,14 @@ Hover (or tap) a trait chip anywhere for a card with its tier, what it does and 
 
 - **Team → Trends:** points pace against the conference's playoff line and the league
   average, 10-game rolling goals for and against, and goal differential game by game,
-  with points, pace, gap to the playoff line and goal differential up top.
+  with points, pace, gap to the playoff line and goal differential up top, plus power-play
+  and penalty-kill percentage (with league rank) and their 10-game rolling form against the
+  league averages.
+- **Teams:** a sortable team stats table for the season — goals for and against per game,
+  PP% and PK% (top and bottom eight coloured), power-play goals/chances and goals
+  allowed/times shorthanded, shots for and against, penalty minutes and faceoff %. Every
+  game keeps its team totals after its box score is archived; older leagues fill them in
+  from the archived box scores the first time the table is opened.
 - **Standings:** every team's goals for vs goals against per game (yours highlighted),
   and points percentage by team.
 - **Player page:** points (or save %) and overall rating by season, once he has two

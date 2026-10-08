@@ -475,6 +475,23 @@ export interface GameSummary {
   overtime: boolean;
   shootout: boolean;
   box: BoxScore;
+  /**
+   * Each side's team totals, kept with the result (the full box score moves to
+   * its own table once the game is saved): for team stats and trends.
+   */
+  teams?: { home: TeamGameTotals; away: TeamGameTotals };
+}
+
+/** One team's totals for one game. */
+export interface TeamGameTotals {
+  /** Shots on goal. */
+  sog: number;
+  /** Power-play goals and power-play opportunities. */
+  ppg: number;
+  ppo: number;
+  pim: number;
+  /** Faceoffs won. */
+  fow: number;
 }
 
 export interface SkaterSeasonStats extends SkaterGameLine {
