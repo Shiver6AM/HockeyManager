@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 242 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 248 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -354,6 +354,20 @@ anyone who hasn't acted gets sensible defaults.
   A year adds up to what it did when it all happened in the summer
   (`DEV_TUNING.inSeasonShare`). This is separate from skills coaching, which still trains
   one chosen skill.
+- **Season performance counts:** each summer, every regular is judged against what
+  players with his ratings usually produce: forwards mostly on scoring rate (points per 60,
+  power-play points counted for less), defensemen evenly on scoring and plus-minus
+  relative to their own team, goalies on save percentage. Scoring is compared with a
+  player's offensive ratings and plus-minus with his two-way ratings, so a playing style
+  isn't mistaken for a good year. One standard deviation above or below expectation is
+  worth about ±0.6 overall in his development, up to ±1.5, scaled down for seasons under
+  60 games (40 for goalies; nobody under 25 games or 15 is judged). A strong season can't
+  push a young player past his potential or make a veteran better than he was by more
+  than half a point; a poor one counts in full. It averages out to zero across the
+  league, at every rating level. The player page shows the verdict as the season goes
+  (*Season: Above / On par / Below*), the summer report tags strong and poor seasons, and
+  the commissioner's *Season performance* slider scales it (0 turns it off). The
+  summer's random swing is a little smaller to make room for it.
 - **Playing styles set ceilings:** grinders and enforcers fill out the bottom of rosters
   and top out as good role players (capped potential); they are never top-5 talents in a
   draft class and rarely first-rounders. Snipers, playmakers and offensive defensemen are

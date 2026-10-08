@@ -12,6 +12,7 @@ export * from './playoffs';
 export * from './awards';
 export * from './contracts';
 export * from './development';
+export * from './performance';
 export * from './draft';
 export * from './offseason';
 export * from './negotiation';

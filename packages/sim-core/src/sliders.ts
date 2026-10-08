@@ -14,6 +14,7 @@ export const SIM_SLIDERS = {
   homeIce: { label: 'Home-ice advantage', group: 'Game play', min: 0, max: 2, step: 0.1, help: 'How much playing at home helps. 0 means none.' },
   randomness: { label: 'Night-to-night randomness', group: 'Game play', min: 0.25, max: 2, step: 0.05, help: 'How much players’ form swings from game to game: higher means more upsets.' },
   development: { label: 'Young player development', group: 'Players', min: 0.5, max: 2, step: 0.05, help: 'How fast young players grow toward their potential, during the season and over the summer.' },
+  performance: { label: 'Season performance', group: 'Players', min: 0, max: 2, step: 0.05, help: 'How much a strong or poor season moves a player’s development that summer. 0 turns it off.' },
   aging: { label: 'Veteran decline', group: 'Players', min: 0.5, max: 2, step: 0.05, help: 'How fast players decline in their 30s.' },
   coaching: { label: 'Skills coaching effect', group: 'Players', min: 0, max: 2, step: 0.1, help: 'How much skills and goalie coaches improve players during the season.' },
   retirement: { label: 'Retirements', group: 'Players', min: 0.5, max: 2, step: 0.05, help: 'How likely veterans are to retire each summer.' },

@@ -1,4 +1,7 @@
 import {
+  performanceLabel,
+  seasonPerformance,
+  slider,
   askingContract,
   isTwoWay,
   minorSalaryOf,
@@ -645,6 +648,15 @@ export const dataRouter = router({
   }),
 
   player: memberProcedure.input(z.object({ playerId: z.string() })).query(async ({ ctx, input }) => {
+    const performanceView = (L: League, id: string) => {
+      if (L.phase === 'offseason') {
+        // The season is over and development has been applied: what it was judged as then.
+        const done = L.offseason?.performance?.[id];
+        return done ? { z: done[0], bonus: done[1], label: performanceLabel(done[0]), final: true, effect: slider(L, 'performance') } : null;
+      }
+      const now = seasonPerformance(L)[id];
+      return now ? { z: now.z, bonus: now.bonus, label: now.label, final: false, effect: slider(L, 'performance') } : null;
+    };
     // (The earliest injury on record anywhere in the league: before that, nothing was kept.)
     const injuryRecordStart = (L: League): { season: number; day: number } | null => {
       let first: { season: number; day: number } | null = null;
@@ -698,6 +710,11 @@ export const dataRouter = router({
       career: career.map((c) => ({ ...c, team: teamOf(c.teamId), org: teamOf(c.orgId ?? null) })),
       /** Skills coaching: points gained this season by skill, and who's working with him now. */
       training: p ? trainingView(L, p) : null,
+      /**
+       * How his season is going (or, in the summer, went) against what his rating predicts, and what
+       * that adds to his development: null until he has played enough to judge.
+       */
+      performance: p ? performanceView(L, p.id) : null,
       /** Injuries on record, newest first (and how far back the record goes). */
       injuries: p ? injuryHistory(L, p) : [],
       injuriesSince: p ? injuryRecordStart(L) : null,

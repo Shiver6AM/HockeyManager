@@ -186,6 +186,14 @@ export function SummerNews() {
       <Link to={`/league/${L.id}/player/${x.id}`} className="flex-1 truncate hover:underline">
         {x.name}
       </Link>
+      {x.season && Math.abs(x.season.bonus) >= 0.4 && (
+        <span
+          className={cx('rounded px-1.5 py-0.5 text-[10px] font-semibold whitespace-nowrap', x.season.bonus > 0 ? 'bg-win/15 text-win' : 'bg-goal/15 text-red-300')}
+          title={`${x.season.label}: ${x.season.bonus > 0 ? '+' : ''}${x.season.bonus.toFixed(1)} overall from how his season went`}
+        >
+          {x.season.bonus > 0 ? 'strong season' : 'poor season'}
+        </span>
+      )}
       <span className="text-xs text-ice-500">
         <TeamTag id={x.teamId} /> · {x.age}
       </span>
