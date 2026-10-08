@@ -23,7 +23,8 @@ export const DEV_TUNING = {
   declineStart: 30,
   declineBase: 0.6,
   declinePerYear: 0.55,
-  noise: 1.4,
+  /** The summer's random swing (sd, overall points). (Was 1.4 before season performance took over part of it.) */
+  noise: 1.25,
   breakoutChance: 0.04,
   bustChance: 0.04,
   /** Share of a year's expected growth and decline that arrives during the regular season. */
@@ -50,6 +51,8 @@ export interface Usage {
   /** Average TOI in minutes (skaters). */
   toi: number;
   onRoster: boolean;
+  /** How his season went against expectations, in overall points (see performance.ts). */
+  performance?: number;
 }
 
 function usageFactor(p: Player, u: Usage): number {
@@ -141,6 +144,16 @@ export function developPlayer(league: League, p: Player, u: Usage): [number, num
 
   // The whole year's development, with the ice-time factor now that the season is known, less what he already has.
   let delta = growth * usageFactor(p, u) - decline - applied;
+  // A strong season adds to it and a poor one takes away: growth for the young, a gentler or steeper slide for veterans.
+  // It bends the path he was on; it doesn't lay a new one. A strong season can't carry a young player past his
+  // potential or make a veteran better than he was (at most half a point either way), so a player who lands in a
+  // good spot year after year doesn't climb without limit.
+  let perf = u.performance ?? 0;
+  if (perf > 0) {
+    const room = effAge >= 28 ? decline : Math.max(0, p.hidden.potential - (before + delta));
+    perf = Math.min(perf, room + 0.5);
+  }
+  delta += perf;
   delta += rng.normal(0, T.noise);
   if (effAge <= 24 && rng.chance(T.breakoutChance)) {
     delta += rng.int(3, 6);

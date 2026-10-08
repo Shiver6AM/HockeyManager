@@ -115,6 +115,7 @@ export function PlayerPage() {
                 <p className="font-display text-3xl text-ice-50">{p.coachability}</p>
                 <p className="text-[11px] text-ice-400">{p.coachabilityLabel}</p>
               </div>
+              {d.performance && d.performance.effect > 0 && <SeasonTile perf={d.performance} />}
               {d.scouting && (
                 <div className="rounded-lg bg-rink-850 px-4 py-2">
                   <p className="text-[11px] font-semibold tracking-wider text-ice-500 uppercase">Scouts</p>
@@ -584,5 +585,29 @@ function InjuryHistory({ injuries, since }: { injuries: Outputs['data']['player'
         </>
       )}
     </Card>
+  );
+}
+
+const SEASON_SHORT: Record<string, { word: string; tone: string }> = {
+  'Far above expectations': { word: 'Far above', tone: 'text-win' },
+  'Above expectations': { word: 'Above', tone: 'text-win' },
+  'As expected': { word: 'On par', tone: 'text-ice-50' },
+  'Below expectations': { word: 'Below', tone: 'text-red-300' },
+  'Far below expectations': { word: 'Far below', tone: 'text-red-300' },
+};
+
+/** How his season is going against what his rating predicts, and what that does to his development. */
+function SeasonTile({ perf }: { perf: NonNullable<Outputs['data']['player']['performance']> }) {
+  const s = SEASON_SHORT[perf.label] ?? { word: perf.label, tone: 'text-ice-50' };
+  const pts = `${perf.bonus > 0 ? '+' : ''}${perf.bonus.toFixed(1)}`;
+  const help = perf.final
+    ? `Last season he produced ${perf.label === 'As expected' ? 'about what' : perf.label.toLowerCase().replace(' expectations', ' what')} a player of his rating usually does. That ${perf.bonus >= 0 ? 'added' : 'took'} ${Math.abs(perf.bonus).toFixed(1)} overall ${perf.bonus >= 0 ? 'to' : 'from'} his development this summer.`
+    : `So far he is producing ${perf.label === 'As expected' ? 'about what' : perf.label.toLowerCase().replace(' expectations', ' what')} a player of his rating usually does (scoring rate and plus-minus against his own team; save percentage for goalies). If the season ended today that would ${perf.bonus >= 0 ? 'add' : 'take'} about ${Math.abs(perf.bonus).toFixed(1)} overall ${perf.bonus >= 0 ? 'to' : 'from'} his development this summer.`;
+  return (
+    <div className="rounded-lg bg-rink-850 px-4 py-2" title={help}>
+      <p className="text-[11px] font-semibold tracking-wider text-ice-500 uppercase">{perf.final ? 'Last season' : 'Season'}</p>
+      <p className={`font-display text-3xl whitespace-nowrap ${s.tone}`}>{s.word}</p>
+      <p className="text-[11px] whitespace-nowrap text-ice-400">vs. his rating · {pts} dev</p>
+    </div>
   );
 }

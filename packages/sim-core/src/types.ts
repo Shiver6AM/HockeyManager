@@ -663,6 +663,8 @@ export interface OffseasonState {
   draftLists?: Record<TeamId, PlayerId[]>;
   /** Rating changes from this summer's development: [before, after]. */
   development: Record<PlayerId, [number, number]>;
+  /** How the season just played went for each qualified player: [standard deviations vs. expectation, overall points it added]. */
+  performance?: Record<PlayerId, [number, number]>;
   /** Qualified RFAs without a deal: offer sheets during free agency, then arbitration. */
   rfa?: Record<PlayerId, RfaCase>;
   /** Offer sheets tendered this bidding round, by offering team. */

@@ -4,6 +4,7 @@
  */
 import {
   age,
+  performanceLabel,
   askingContract,
   capRoom,
   deadCapFor,
@@ -198,6 +199,8 @@ export const offseasonRouter = router({
       .sort((x, y) => y.delta - x.delta);
     const devView = (x: (typeof topDev)[number]) => ({
       ...x,
+      /** How his season went against expectations, and the overall points that added to his development (null if he didn't play enough). */
+      season: os.performance?.[x.id] ? { label: performanceLabel(os.performance[x.id][0]), bonus: os.performance[x.id][1] } : null,
       name: `${L.players[x.id].firstName} ${L.players[x.id].lastName}`,
       teamId: L.players[x.id].teamId ?? L.players[x.id].prospectOf ?? null,
       age: age(L.players[x.id], L.season + 1),
