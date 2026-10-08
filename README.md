@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 256 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 262 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -261,6 +261,19 @@ middle. Advancers can
   you want people: a line (1st to 4th, top pair to 3rd pair), a group (top six, top nine,
   bottom six, top four), a position for a forward (C, LW or RW), a starting goalie, or a
   healthy scratch. He builds the rest around it before every game, injuries included.
+  A player who also plays defense (or forward) can be placed there too. Clear one
+  placement with its ×, or all of them at once; placements on injured or AHL players are
+  listed so they can be cleared as well.
+- **How the assistant coach builds lines:** all 18 skater spots are filled at once, the
+  best fit overall: each spot counts for its share of ice time (from your *Ice time*
+  setting), and each player for his rating there less what playing out of position costs
+  him in a game. So a center who also plays the wing takes a top-line wing spot rather than
+  push a better winger down, nobody clearly better at a spot sits on a lower line, and a
+  forward goes back to defense (or a defenseman up) only when there's no better option.
+  Short of bodies, a defenseman moves up or a forward drops back between games; when you
+  change placements or turn him on with fewer than 18 healthy skaters (or 2 goalies), he
+  calls someone up from the AHL (or signs an emergency body) right away. Placements are
+  always saved, even when the lineup has to wait for game day.
 - **Ice time** (*Systems*): how even-strength minutes are spread: *Standard*, *Ride the
   top line*, *Top six*, *Top nine* or *Roll four lines* for forwards; *Standard*, *Lean on
   the top pair*, *Top four* or *Roll three pairs* for defense. Heavier use puts your best

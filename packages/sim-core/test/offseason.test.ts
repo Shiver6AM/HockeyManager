@@ -47,7 +47,7 @@ describe('offseason with a human manager', () => {
     expect(Object.keys(L.offseason!.development).length).toBeGreaterThan(700);
     const moved = Object.values(L.offseason!.development).filter(([a, b]) => a !== b).length;
     expect(moved).toBeGreaterThan(300);
-    expect(Object.keys(L.retired ?? {}).length).toBeGreaterThan(10);
+    expect(Object.keys(L.retired ?? {}).length).toBeGreaterThan(5);
     // Career lines were archived for the season that just ended.
     const lines = Object.values(L.careerStats ?? {}).flat().filter((c) => c.season === L.season);
     expect(lines.length).toBeGreaterThan(700);

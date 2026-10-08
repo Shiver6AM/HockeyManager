@@ -185,17 +185,34 @@ export function teamLines(league: League, team: Team): Lines {
     // Short of healthy bodies between games (an injured goalie, say; call-ups come on game day):
     // fill only the positions that are short with the injured players there. They're swapped
     // out when the game is played.
-    const grp = (p: Player): 'F' | 'D' | 'G' => (p.pos === 'G' ? 'G' : p.pos === 'D' ? 'D' : 'F');
+    // (Skaters can cover for each other across positions, so only a shortage of skaters or goalies counts.)
+    const grp = (p: Player): 'S' | 'G' => (p.pos === 'G' ? 'G' : 'S');
     const hurt = nhlRoster(league, team)
       .filter((p) => p.injury && !p.onWaivers)
       .sort((a, b) => overall(b) - overall(a));
     const roster = [...healthy];
-    for (const [g, need] of [['F', 12], ['D', 6], ['G', 2]] as const) {
+    for (const [g, need] of [['S', 18], ['G', 2]] as const) {
       let short = need - healthy.filter((p) => grp(p) === g).length;
       for (const p of hurt) if (grp(p) === g && short-- > 0) roster.push(p);
     }
     if (roster.length === healthy.length) throw e;
     return autoLines(roster, team.tactics, pins);
+  }
+}
+
+/**
+ * The assistant coach rebuilds the lines now (the manager changed placements,
+ * systems or turned him on). Short of bodies, he calls players up from the farm
+ * (or signs an emergency body) first, as he would on game day. Returns who came up.
+ */
+export function coachLines(league: League, team: Team): { lines: Lines; calledUp: PlayerId[] } {
+  try {
+    return { lines: teamLines(league, team), calledUp: [] };
+  } catch {
+    const before = new Set(healthyRoster(league, team).map((p) => p.id));
+    ensureBodies(league, team);
+    const calledUp = healthyRoster(league, team).map((p) => p.id).filter((id) => !before.has(id));
+    return { lines: teamLines(league, team), calledUp };
   }
 }
 

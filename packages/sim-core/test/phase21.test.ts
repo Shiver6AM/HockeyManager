@@ -96,6 +96,8 @@ describe('contracts, waivers and injury call-ups', () => {
   it('auto-managed lineups send injury call-ups back down when the regular returns', () => {
     const t = L.teams.HAL;
     t.autoLines = true;
+    // (A known starting point: no other defenseman hurt, so the cover isn't still needed.)
+    for (const p of nhlRoster(L, t)) if (p.pos === 'D') p.injury = null as never;
     const regular = nhlRoster(L, t).filter((p) => p.pos === 'D').sort((a, b) => overall(b) - overall(a))[0];
     const cover = t.roster.map((id) => L.players[id]).filter((p) => p.farm && p.pos === 'D' && overall(p) < overall(regular))[0];
     cover.farm = false;
