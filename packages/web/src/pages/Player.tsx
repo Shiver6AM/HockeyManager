@@ -3,7 +3,7 @@ import { ColumnChart, LineChart } from '../components/Charts';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Badge, Card, Empty, ErrorBox, Rating, Spinner, TeamChip, TeamLink } from '../components/ui';
+import { Badge, Card, cx, Empty, ErrorBox, Modal, Rating, Spinner, TeamChip, TeamLink } from '../components/ui';
 import { dayLabel, gaa, ht, money, signed, svPct, toi } from '../format';
 import { useSort } from '../sort';
 import { useTRPC, type Outputs } from '../trpc';
@@ -115,7 +115,7 @@ export function PlayerPage() {
                 <p className="font-display text-3xl text-ice-50">{p.coachability}</p>
                 <p className="text-[11px] text-ice-400">{p.coachabilityLabel}</p>
               </div>
-              {d.performance && d.performance.effect > 0 && <SeasonTile perf={d.performance} />}
+              {d.performance && d.performance.effect > 0 && <SeasonTile perf={d.performance} pos={p.pos} archetype={p.archetype} />}
               {d.scouting && (
                 <div className="rounded-lg bg-rink-850 px-4 py-2">
                   <p className="text-[11px] font-semibold tracking-wider text-ice-500 uppercase">Scouts</p>
@@ -597,17 +597,84 @@ const SEASON_SHORT: Record<string, { word: string; tone: string }> = {
 };
 
 /** How his season is going against what his rating predicts, and what that does to his development. */
-function SeasonTile({ perf }: { perf: NonNullable<Outputs['data']['player']['performance']> }) {
+function SeasonTile({ perf, pos, archetype }: { perf: NonNullable<Outputs['data']['player']['performance']>; pos: string; archetype: string }) {
+  const [open, setOpen] = useState(false);
   const s = SEASON_SHORT[perf.label] ?? { word: perf.label, tone: 'text-ice-50' };
   const pts = `${perf.bonus > 0 ? '+' : ''}${perf.bonus.toFixed(1)}`;
+  const what = perf.label === 'As expected' ? 'about what' : perf.label.toLowerCase().replace(' expectations', ' what');
   const help = perf.final
-    ? `Last season he produced ${perf.label === 'As expected' ? 'about what' : perf.label.toLowerCase().replace(' expectations', ' what')} a player of his rating usually does. That ${perf.bonus >= 0 ? 'added' : 'took'} ${Math.abs(perf.bonus).toFixed(1)} overall ${perf.bonus >= 0 ? 'to' : 'from'} his development this summer.`
-    : `So far he is producing ${perf.label === 'As expected' ? 'about what' : perf.label.toLowerCase().replace(' expectations', ' what')} a player of his rating usually does (scoring rate and plus-minus against his own team; save percentage for goalies). If the season ended today that would ${perf.bonus >= 0 ? 'add' : 'take'} about ${Math.abs(perf.bonus).toFixed(1)} overall ${perf.bonus >= 0 ? 'to' : 'from'} his development this summer.`;
+    ? `Last season he produced ${what} a player of his rating, position, type and minutes usually does. That ${perf.bonus >= 0 ? 'added' : 'took'} ${Math.abs(perf.bonus).toFixed(1)} overall ${perf.bonus >= 0 ? 'to' : 'from'} his development this summer. Click for the breakdown.`
+    : `So far he is producing ${what} a player of his rating, position, type and minutes usually does. If the season ended today that would ${perf.bonus >= 0 ? 'add' : 'take'} about ${Math.abs(perf.bonus).toFixed(1)} overall ${perf.bonus >= 0 ? 'to' : 'from'} his development this summer. Click for the breakdown.`;
+  const group = pos === 'G' ? 'goalies' : pos === 'D' ? 'defensemen' : pos === 'C' ? 'centers' : 'wingers';
   return (
-    <div className="rounded-lg bg-rink-850 px-4 py-2" title={help}>
-      <p className="text-[11px] font-semibold tracking-wider text-ice-500 uppercase">{perf.final ? 'Last season' : 'Season'}</p>
-      <p className={`font-display text-3xl whitespace-nowrap ${s.tone}`}>{s.word}</p>
-      <p className="text-[11px] whitespace-nowrap text-ice-400">vs. his rating · {pts} dev</p>
-    </div>
+    <>
+      <button className="rounded-lg bg-rink-850 px-4 py-2 hover:bg-rink-800" title={help} onClick={() => setOpen(true)}>
+        <p className="text-[11px] font-semibold tracking-wider text-ice-500 uppercase">{perf.final ? 'Last season' : 'Season'}</p>
+        <p className={`font-display text-3xl whitespace-nowrap ${s.tone}`}>{s.word}</p>
+        <p className="text-[11px] whitespace-nowrap text-ice-400">vs. expectations · {pts} dev</p>
+      </button>
+      {open && (
+        <Modal title={`${perf.final ? 'Last season' : 'This season'}: ${perf.label.toLowerCase()}`} onClose={() => setOpen(false)}>
+          <div className="space-y-3 text-left text-sm text-ice-300">
+            <p>
+              Compared with other {group}
+              {pos !== 'G' && <> of his ratings{perf.toi !== null && <> playing his minutes ({perf.toi.toFixed(1)} a night)</>}</>}, he{' '}
+              {perf.final ? 'produced' : 'is producing'} {what} would be expected
+              {pos !== 'G' && <>, judged the way a <span className="text-white">{archetype}</span> is: each part below counts for its share</>}. Rates are per 60
+              minutes, so a player who plays more isn't credited just for being out there, and top-line minutes (better linemates, power-play time) come with
+              higher expectations.
+            </p>
+            {perf.parts.length > 0 ? (
+              <table className="table text-sm">
+                <thead>
+                  <tr>
+                    <th>Part</th>
+                    <th className="num">Counts for</th>
+                    <th>vs. expected</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...perf.parts]
+                    .sort((a, b) => b.weight - a.weight)
+                    .map((x) => (
+                      <tr key={x.key}>
+                        <td className="whitespace-nowrap text-ice-100">{x.label}</td>
+                        <td className="num">{Math.round(x.weight * 100)}%</td>
+                        <td className="w-1/2">
+                          <PartBar z={x.z} />
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-ice-500">No breakdown was kept for this season.</p>
+            )}
+            <p className="text-xs text-ice-500">
+              Overall: {perf.z > 0 ? '+' : ''}
+              {perf.z.toFixed(2)} standard deviations · {pts} overall to his development{perf.final ? ' this summer' : ' if the season ended today'}. Plus-minus is
+              measured against his own team's, so a good team's record isn't credited to everyone on it.
+            </p>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+/** Standard deviations from expected, as a bar either side of a centre line (±2.5 fills it). */
+function PartBar({ z }: { z: number }) {
+  const w = Math.min(50, (Math.abs(z) / 2.5) * 50);
+  return (
+    <span className="flex items-center gap-2">
+      <span className="relative h-2 flex-1 rounded bg-rink-700">
+        <span className="absolute top-[-2px] left-1/2 h-3 w-px bg-ice-500" />
+        <span className={cx('absolute top-0 h-2 rounded', z >= 0 ? 'bg-win' : 'bg-goal')} style={z >= 0 ? { left: '50%', width: `${w}%` } : { right: '50%', width: `${w}%` }} />
+      </span>
+      <span className={cx('tabular w-10 text-right text-xs', z >= 0.5 ? 'text-win' : z <= -0.5 ? 'text-red-300' : 'text-ice-300')}>
+        {z > 0 ? '+' : ''}
+        {z.toFixed(1)}
+      </span>
+    </span>
   );
 }

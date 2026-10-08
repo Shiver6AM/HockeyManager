@@ -10,10 +10,17 @@
  * development (see development.ts): strong seasons add to growth or soften
  * decline, poor ones do the reverse.
  *
- * Skaters are judged on scoring rate (points per 60 minutes, power-play points
- * counted for less) and on plus-minus per 60 relative to their own team, so a
- * good team's record isn't credited to everyone on it. Forwards lean on
- * scoring, defensemen evenly on both. Goalies are judged on save percentage.
+ * Skaters are compared within their position (centers, wingers, defensemen)
+ * on several parts of the game, each per 60 minutes and each against the
+ * ratings that drive it and the minutes he plays a night (top-line minutes come
+ * with better linemates and power-play time, so more is expected per 60):
+ * scoring (power-play points counted for less), goals, assists, plus-minus
+ * relative to his own team (so a good team's record isn't credited to everyone
+ * on it), hits and blocks, discipline, and faceoffs for centers. How much each
+ * part counts depends on his type: a sniper is judged mostly on scoring goals,
+ * a playmaker on setting them up, a shutdown defenseman on keeping them out, a
+ * grinder or enforcer on two-way and physical play (ROLE_WEIGHTS). Goalies are
+ * judged on save percentage.
  *
  * Because it is measured against the league's own curve, the adjustments
  * average out to zero: this moves players relative to each other and leaves
@@ -36,9 +43,90 @@ export const PERFORMANCE = {
   fullGames: { skater: 60, goalie: 40 },
   /** A power-play point counts this much of an even-strength one. */
   ppWeight: 0.6,
-  /** Scoring's share of a skater's season (the rest is relative plus-minus). */
-  scoringShare: { F: 0.75, D: 0.5 },
+  /** Faceoffs taken for faceoffs to count. */
+  minFaceoffs: 150,
 };
+
+export type PartKey = 'scoring' | 'goals' | 'assists' | 'defense' | 'physical' | 'faceoffs' | 'discipline';
+const PART_KEYS: PartKey[] = ['scoring', 'goals', 'assists', 'defense', 'physical', 'faceoffs', 'discipline'];
+const PART_LABEL: Record<PartKey | 'saves', string> = {
+  scoring: 'Scoring',
+  goals: 'Goal scoring',
+  assists: 'Playmaking',
+  defense: 'Two-way play (+/- vs team)',
+  physical: 'Hits and blocks',
+  faceoffs: 'Faceoffs',
+  discipline: 'Discipline',
+  saves: 'Save %',
+};
+
+export interface PerformancePart {
+  key: PartKey | 'saves';
+  label: string;
+  /** Standard deviations above or below what his ratings and minutes predict. */
+  z: number;
+  /** Its share of his season's verdict. */
+  weight: number;
+}
+
+type Weights = Partial<Record<PartKey, number>>;
+/**
+ * What a season is judged on, by player type: a sniper on scoring goals, a playmaker
+ * on setting them up, a shutdown defenseman mostly on keeping them out, a grinder or
+ * enforcer on two-way play and physical work more than points.
+ */
+export const ROLE_WEIGHTS: Record<string, Weights> = {
+  forward: { scoring: 0.55, goals: 0.1, assists: 0.05, defense: 0.2, physical: 0.05, discipline: 0.05 },
+  Sniper: { scoring: 0.35, goals: 0.3, assists: 0.05, defense: 0.2, physical: 0.05, discipline: 0.05 },
+  Playmaker: { scoring: 0.35, goals: 0.05, assists: 0.3, defense: 0.2, physical: 0.05, discipline: 0.05 },
+  'Power Forward': { scoring: 0.4, goals: 0.1, defense: 0.2, physical: 0.25, discipline: 0.05 },
+  'Two-Way': { scoring: 0.3, goals: 0.05, assists: 0.05, defense: 0.45, physical: 0.1, discipline: 0.05 },
+  Speedster: { scoring: 0.55, goals: 0.1, assists: 0.05, defense: 0.2, physical: 0.05, discipline: 0.05 },
+  Grinder: { scoring: 0.15, defense: 0.4, physical: 0.35, discipline: 0.1 },
+  Enforcer: { scoring: 0.1, defense: 0.3, physical: 0.4, discipline: 0.2 },
+  Generational: { scoring: 0.6, goals: 0.1, assists: 0.1, defense: 0.15, discipline: 0.05 },
+  defense: { scoring: 0.35, assists: 0.05, defense: 0.45, physical: 0.1, discipline: 0.05 },
+  'Offensive D': { scoring: 0.55, goals: 0.05, assists: 0.1, defense: 0.25, discipline: 0.05 },
+  'Shutdown D': { scoring: 0.1, defense: 0.55, physical: 0.3, discipline: 0.05 },
+  'Two-Way D': { scoring: 0.35, assists: 0.05, defense: 0.45, physical: 0.1, discipline: 0.05 },
+};
+/** Centers are judged on faceoffs too (this share, taken evenly from the rest). */
+const CENTER_FACEOFFS = 0.12;
+
+/** A season's parts for keeping with the summer's report: each part's standing (one decimal), in PART_KEYS order. */
+export function packParts(parts: PerformancePart[]): Array<number | null> | undefined {
+  if (parts.some((x) => x.key === 'saves')) return undefined;
+  return PART_KEYS.map((k) => {
+    const x = parts.find((y) => y.key === k);
+    return x ? Math.round(x.z * 10) / 10 : null;
+  });
+}
+
+/** …and back, with his type's weights. */
+export function unpackParts(p: Pick<Player, 'pos' | 'archetype'>, z: number, packed: Array<number | null> | undefined): PerformancePart[] {
+  if (p.pos === 'G') return [{ key: 'saves', label: PART_LABEL.saves, z, weight: 1 }];
+  if (!packed) return [];
+  const w = roleWeights(p);
+  const shown = PART_KEYS.filter((k, i) => w[k] && packed[i] !== null && packed[i] !== undefined);
+  const tot = shown.reduce((a, k) => a + w[k]!, 0);
+  return shown.map((k) => ({ key: k, label: PART_LABEL[k], z: packed[PART_KEYS.indexOf(k)]!, weight: Math.round((w[k]! / tot) * 100) / 100 }));
+}
+
+/** C, W or D. */
+export const posGroup = (p: Pick<Player, 'pos'>) => (p.pos === 'D' ? 'D' : p.pos === 'C' ? 'C' : 'W');
+
+/** The weights his season is judged on: his type's, by position, with faceoffs for centers. */
+export function roleWeights(p: Pick<Player, 'pos' | 'archetype'>): Weights {
+  const base = p.archetype === 'Generational' && p.pos === 'D' ? ROLE_WEIGHTS['Offensive D'] : (ROLE_WEIGHTS[p.archetype] ?? ROLE_WEIGHTS[p.pos === 'D' ? 'defense' : 'forward']);
+  // (A defenseman's weights for a forward type, or the reverse, after a position change.)
+  const fits = (p.pos === 'D') === (p.archetype in { 'Offensive D': 1, 'Shutdown D': 1, 'Two-Way D': 1 }) || p.archetype === 'Generational';
+  const w: Weights = { ...(fits ? base : ROLE_WEIGHTS[p.pos === 'D' ? 'defense' : 'forward']) };
+  if (p.pos === 'C') {
+    for (const k of PART_KEYS) if (w[k]) w[k] = w[k]! * (1 - CENTER_FACEOFFS);
+    w.faceoffs = CENTER_FACEOFFS;
+  }
+  return w;
+}
 
 export type PerformanceLabel = 'Far above expectations' | 'Above expectations' | 'As expected' | 'Below expectations' | 'Far below expectations';
 
@@ -49,6 +137,8 @@ export interface SeasonPerformance {
   bonus: number;
   label: PerformanceLabel;
   gp: number;
+  /** What it was judged on: each part's standing and its share of the verdict. */
+  parts: PerformancePart[];
 }
 
 export function performanceLabel(z: number): PerformanceLabel {
@@ -110,10 +200,10 @@ function compute(league: League): Record<PlayerId, SeasonPerformance> {
   const P = PERFORMANCE;
   const out: Record<PlayerId, SeasonPerformance> = {};
   const scale = P.pointsPerSd * slider(league, 'performance');
-  const put = (p: Player, z: number, gp: number, full: number) => {
+  const put = (p: Player, z: number, gp: number, full: number, parts: PerformancePart[]) => {
     const zr = Math.round(z * 100) / 100;
     const capped = Math.max(-P.cap, Math.min(P.cap, zr));
-    out[p.id] = { z: zr, bonus: Math.round(capped * scale * Math.min(1, gp / full) * 100) / 100, label: performanceLabel(zr), gp };
+    out[p.id] = { z: zr, bonus: Math.round(capped * scale * Math.min(1, gp / full) * 100) / 100, label: performanceLabel(zr), gp, parts };
   };
 
   // ---- Skaters
@@ -129,34 +219,64 @@ function compute(league: League): Record<PlayerId, SeasonPerformance> {
     t.pm += s.pm;
     t.toi += s.toi;
   }
-  for (const g of ['F', 'D'] as const) {
-    const group = skaters.filter((p) => (p.pos === 'D') === (g === 'D'));
+  for (const g of ['C', 'W', 'D'] as const) {
+    const group = skaters.filter((p) => posGroup(p) === g);
     if (group.length < 12) continue;
-    const scoring = group.map((p) => {
-      const s = league.skaterStats[p.id];
-      return ((s.g + s.a - (1 - P.ppWeight) * (s.ppg + s.ppa)) / s.toi) * 3600;
-    });
-    const relPm = group.map((p) => {
-      const s = league.skaterStats[p.id];
-      const t = team[p.teamId!];
-      return (s.pm / s.toi - (t.toi ? t.pm / t.toi : 0)) * 3600;
-    });
-    // Each half is judged against the ratings that drive it, so a sniper isn't credited for scoring like a sniper
-    // or a shutdown defenseman for defending like one: scoring against his offensive ratings (with a curve, since
-    // stars' production runs ahead of a straight line), plus-minus against his two-way ratings.
+    const st = group.map((p) => league.skaterStats[p.id]);
+    const per60 = (f: (s: (typeof st)[number]) => number) => st.map((s) => (f(s) / s.toi) * 3600);
+    // Minutes a night: top-line players get better linemates and power-play time, so they're expected to produce
+    // more per 60 than the same player on the fourth line. Every part is judged with his minutes in the picture.
+    const toi = st.map((s) => s.toi / s.gp / 60);
+    const r = (k: keyof NonNullable<Player['skater']>) => group.map((p) => p.skater![k]);
     const off = group.map((p) => offensiveDrive(p.skater!));
-    const shot = group.map((p) => p.skater!.shooting);
+    const def = group.map((p) => defensiveDrive(p.skater!));
     const support = group.map((p) => (p.skater!.passing + p.skater!.offIQ) / 2);
-    const blend = standardize(off.map((v, i) => (v + shot[i] + support[i]) / 3));
-    const zs = residualZ([off, shot, support, blend.map((v) => v * v)], scoring);
-    const zr = residualZ([group.map((p) => defensiveDrive(p.skater!)), off], relPm);
-    const w = P.scoringShare[g];
+    const blend = standardize(off.map((v, i) => (v + r('shooting')[i] + support[i]) / 3));
+    // Each part is judged against the ratings that drive it, so a sniper isn't credited for scoring like a sniper
+    // or a shutdown defenseman for defending like one (scoring with a curve, since stars' production runs ahead of a straight line).
+    const parts: Record<PartKey, number[]> = {
+      scoring: residualZ([off, r('shooting'), support, blend.map((v) => v * v), toi], per60((s) => s.g + s.a - (1 - P.ppWeight) * (s.ppg + s.ppa))),
+      goals: residualZ([r('shooting'), r('offIQ'), r('handling'), toi], per60((s) => s.g - (1 - P.ppWeight) * s.ppg)),
+      assists: residualZ([r('passing'), r('offIQ'), r('handling'), toi], per60((s) => s.a - (1 - P.ppWeight) * s.ppa)),
+      defense: residualZ(
+        [def, off, toi],
+        group.map((p, i) => {
+          const t = team[p.teamId!];
+          return (st[i].pm / st[i].toi - (t.toi ? t.pm / t.toi : 0)) * 3600;
+        }),
+      ),
+      physical: residualZ([r('checking'), r('defIQ'), toi], per60((s) => s.hits + 1.5 * s.blk)),
+      // (Taking few penalties is the good direction.)
+      discipline: residualZ([r('discipline'), r('checking'), toi], per60((s) => -s.pim)),
+      faceoffs: (() => {
+        const ok = st.map((s) => s.fow + s.fol >= P.minFaceoffs);
+        const idx = st.map((_, i) => i).filter((i) => ok[i]);
+        const z = residualZ([idx.map((i) => group[i].skater!.faceoffs), idx.map((i) => toi[i])], idx.map((i) => st[i].fow / (st[i].fow + st[i].fol)));
+        const out = st.map(() => Number.NaN);
+        idx.forEach((i, k) => (out[i] = z[k]));
+        return out;
+      })(),
+    };
+    const blendZ = group.map((p, i) => {
+      const w = roleWeights(p);
+      let sum = 0;
+      let tot = 0;
+      for (const k of PART_KEYS) {
+        const v = parts[k][i];
+        if (!w[k] || !Number.isFinite(v)) continue;
+        sum += w[k]! * v;
+        tot += w[k]!;
+      }
+      return tot ? sum / tot : 0;
+    });
     // (…and whatever is left that still tracks overall rating is taken out too.)
-    const z = residualZ(
-      [group.map((p) => skaterOverall(p.skater!, p.pos))],
-      group.map((_, i) => w * zs[i] + (1 - w) * zr[i]),
-    );
-    group.forEach((p, i) => put(p, z[i], league.skaterStats[p.id].gp, P.fullGames.skater));
+    const z = residualZ([group.map((p) => skaterOverall(p.skater!, p.pos))], blendZ);
+    group.forEach((p, i) => {
+      const w = roleWeights(p);
+      const shown = PART_KEYS.filter((k) => w[k] && Number.isFinite(parts[k][i]));
+      const tot = shown.reduce((a, k) => a + w[k]!, 0);
+      put(p, z[i], st[i].gp, P.fullGames.skater, shown.map((k) => ({ key: k, label: PART_LABEL[k], z: Math.round(parts[k][i] * 100) / 100, weight: Math.round((w[k]! / tot) * 100) / 100 })));
+    });
   }
 
   // ---- Goalies
@@ -169,7 +289,7 @@ function compute(league: League): Record<PlayerId, SeasonPerformance> {
       [goalies.map((p) => goalieQuality(p.goalie!))],
       goalies.map((p) => 1 - league.goalieStats[p.id].ga / league.goalieStats[p.id].sa),
     );
-    goalies.forEach((p, i) => put(p, z[i], league.goalieStats[p.id].gp, P.fullGames.goalie));
+    goalies.forEach((p, i) => put(p, z[i], league.goalieStats[p.id].gp, P.fullGames.goalie, [{ key: 'saves', label: 'Save %', z: z[i], weight: 1 }]));
   }
   return out;
 }

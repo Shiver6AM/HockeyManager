@@ -38,7 +38,9 @@ describe('season performance feeds development', () => {
     expect(Math.abs(mean(stars))).toBeLessThan(0.15);
     expect(Math.abs(mean(depth))).toBeLessThan(0.1);
     // …and among players of the same rating, the ones who scored more are the ones it rewards.
-    const fwd = sk.filter((id) => L.players[id].pos !== 'D' && overall(L.players[id]) >= 72 && overall(L.players[id]) <= 76);
+    // (Scoring forwards: grinders and two-way forwards are judged more on other things; see phase 38.)
+    const scorers = new Set(['Sniper', 'Playmaker', 'Speedster', 'Power Forward', 'Generational']);
+    const fwd = sk.filter((id) => L.players[id].pos !== 'D' && scorers.has(L.players[id].archetype) && overall(L.players[id]) >= 72 && overall(L.players[id]) <= 76);
     const rate = (id: string) => (L.skaterStats[id].g + L.skaterStats[id].a) / L.skaterStats[id].toi;
     expect(corr(fwd.map(rate), fwd.map((id) => perf[id].z))).toBeGreaterThan(0.6);
     // Labels follow the number.
@@ -76,7 +78,7 @@ describe('season performance feeds development', () => {
     // Everything else about his summer is identical, so the gap in the result is the gap in the bonus (give or take rounding).
     expect(great.change - awful.change).toBeGreaterThanOrEqual(2);
     expect(Math.abs(great.change - awful.change - (great.perf.bonus - awful.perf.bonus))).toBeLessThanOrEqual(1.5);
-    expect(great.recorded).toEqual([great.perf.z, great.perf.bonus]);
+    expect(great.recorded.slice(0, 2)).toEqual([great.perf.z, great.perf.bonus]);
   }, 120_000);
 
   it('counts a shortened season for less, and not at all below the minimum', () => {

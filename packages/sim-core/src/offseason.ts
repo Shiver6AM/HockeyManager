@@ -37,7 +37,7 @@ import {
 import { aiValuation, askFromTeam, offerUtility, respondToOffer, type OfferResult } from './negotiation';
 import { aiWouldQualify, holdArbitration, openCase, openRfaCase, resolveOfferSheets, settlePending, settleRfaCase } from './rfa';
 import { developPlayer, retirementChance } from './development';
-import { seasonPerformance } from './performance';
+import { packParts, seasonPerformance } from './performance';
 import { createDraft, ensureDraftClass, holdLottery, resetDraftClock, runDraft, scoutedPotential, startDraftClock } from './draft';
 import { generatePlayer, talentStats } from './generate';
 import { autoLines } from './lines';
@@ -159,14 +159,17 @@ export function startOffseason(league: League, st: StandingsRow[]) {
   const rostered = new Set(Object.values(league.teams).flatMap((t) => t.roster));
   // How everyone's season went against what his rating predicts (measured before anyone's ratings change).
   const season = seasonPerformance(league);
-  const performance: Record<PlayerId, [number, number]> = {};
+  const performance: NonNullable<NonNullable<League['offseason']>['performance']> = {};
   for (const p of Object.values(league.players)) {
     if (league.retired?.[p.id] || p.draftClass !== undefined) continue;
     const s = league.skaterStats[p.id];
     const g = league.goalieStats[p.id];
     const gp = s?.gp ?? g?.gp ?? 0;
     const perf = season[p.id];
-    if (perf) performance[p.id] = [perf.z, perf.bonus];
+    if (perf) {
+      const parts = packParts(perf.parts);
+      performance[p.id] = parts ? [perf.z, perf.bonus, parts] : [perf.z, perf.bonus];
+    }
     development[p.id] = developPlayer(league, p, { gp, toi: s && s.gp ? s.toi / s.gp / 60 : 0, onRoster: rostered.has(p.id) && !p.farm, performance: perf?.bonus });
   }
 

@@ -42,6 +42,10 @@ describe('phase 34: season performance on the player page and in the summer repo
     expect(d.performance!.effect).toBe(1);
     expect(typeof d.performance!.z).toBe('number');
     expect(d.performance!.label).toMatch(/expect/);
+    // What it was judged on, by his type and position, with his minutes.
+    expect(d.performance!.parts.length).toBeGreaterThanOrEqual(3);
+    expect(d.performance!.parts.reduce((a, x) => a + x.weight, 0)).toBeCloseTo(1, 1);
+    expect(d.performance!.toi).toBeGreaterThan(8);
   }, 240_000);
 
   it('after the season, the summer report says whose season helped or hurt them, and the player page keeps the verdict', async () => {
@@ -55,5 +59,7 @@ describe('phase 34: season performance on the player page and in the summer repo
     expect(judged.season!.label).toMatch(/expect/);
     const d = await c.data.player({ leagueId, playerId: judged.id });
     expect(d.performance).toMatchObject({ final: true, bonus: judged.season!.bonus });
+    // The breakdown is kept for the summer too.
+    if (d.player?.pos !== 'G') expect(d.performance!.parts.length).toBeGreaterThanOrEqual(3);
   }, 300_000);
 });

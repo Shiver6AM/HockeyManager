@@ -1,6 +1,7 @@
 import {
   performanceLabel,
   seasonPerformance,
+  unpackParts,
   slider,
   askingContract,
   isTwoWay,
@@ -655,10 +656,15 @@ export const dataRouter = router({
       if (L.phase === 'offseason') {
         // The season is over and development has been applied: what it was judged as then.
         const done = L.offseason?.performance?.[id];
-        return done ? { z: done[0], bonus: done[1], label: performanceLabel(done[0]), final: true, effect: slider(L, 'performance') } : null;
+        return done
+          ? { z: done[0], bonus: done[1], label: performanceLabel(done[0]), final: true, effect: slider(L, 'performance'), parts: unpackParts(L.players[id], done[0], done[2]), toi: null }
+          : null;
       }
       const now = seasonPerformance(L)[id];
-      return now ? { z: now.z, bonus: now.bonus, label: now.label, final: false, effect: slider(L, 'performance') } : null;
+      const s = L.skaterStats[id];
+      return now
+        ? { z: now.z, bonus: now.bonus, label: now.label, final: false, effect: slider(L, 'performance'), parts: now.parts, toi: s && s.gp ? Math.round((s.toi / s.gp / 60) * 10) / 10 : null }
+        : null;
     };
     // (The earliest injury on record anywhere in the league: before that, nothing was kept.)
     const injuryRecordStart = (L: League): { season: number; day: number } | null => {
