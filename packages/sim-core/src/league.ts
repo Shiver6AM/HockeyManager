@@ -22,6 +22,8 @@ import { aiTradeDay, invalidateStale, tradeDeadline } from './trades';
 import { aiOfferDay } from './offers';
 import type {
   GameSummary,
+  TeamGameLine,
+  TeamGameTotals,
   GoalieSeasonStats,
   League,
   Player,
@@ -139,6 +141,11 @@ function applyInjuries(league: League, res: GameSummary) {
   }
 }
 
+/** The part of a team's box-score line kept with the result. */
+export function teamTotals(t: TeamGameLine): TeamGameTotals {
+  return { sog: t.shots, ppg: t.ppGoals, ppo: t.ppOpps, pim: t.pim, fow: t.fow };
+}
+
 function playGame(league: League, g: ScheduledGame, playoff: boolean, playedYesterday: Set<TeamId>) {
   const home = league.teams[g.home];
   const away = league.teams[g.away];
@@ -154,6 +161,7 @@ function playGame(league: League, g: ScheduledGame, playoff: boolean, playedYest
       awayBackToBack: playedYesterday.has(g.away),
     });
   if (pre) league.presimmed = league.presimmed!.filter((x) => x !== pre);
+  res.teams = { home: teamTotals(res.box.home), away: teamTotals(res.box.away) };
   g.result = res;
   recordChemistry(home);
   recordChemistry(away);

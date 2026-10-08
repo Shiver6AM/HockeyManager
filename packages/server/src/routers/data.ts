@@ -88,6 +88,7 @@ import { mutateLeague } from '../advance';
 import { readBoxScore, readLeague } from '../state';
 import { badRequest, memberProcedure, router } from '../trpc';
 import { injuryHistory, playerName, publicPlayer, teamInfo } from '../views';
+import { ensureTeamTotals, gameTotals, teamSeasonStats } from '../teamstats';
 import { grade } from './offseason';
 import { franchiseRecords, franchiseTopScorers, minorLeaders } from '../records';
 import { latestAnswer, offeredBySeason, openOffers } from '../offers';
@@ -922,21 +923,42 @@ export const dataRouter = router({
    * A team's season game by game: points pace against the league average and
    * the conference's playoff line, and rolling goals for/against.
    */
+  /** Every team's season: record, goals, shots, power play, penalty kill, penalties, faceoffs. */
+  teamStats: memberProcedure.query(async ({ ctx, input }) => {
+    await ensureTeamTotals(ctx.db, input.leagueId);
+    const L = await readLeague(ctx.db, input.leagueId);
+    const stats = teamSeasonStats(L);
+    const played = L.schedule.filter((g) => g.result).length;
+    return {
+      season: L.season,
+      /** The regular season just played (in the summer) or under way. */
+      over: L.phase !== 'regular-season',
+      teams: Object.values(stats).map((x) => ({ ...x, team: teamInfo(L.teams[x.teamId]) })),
+      /** Games with team totals on record, out of the games played. */
+      coverage: { games: L.schedule.filter((g) => g.result && gameTotals(g.result)).length, played },
+    };
+  }),
+
   teamTrends: memberProcedure.input(z.object({ teamId: z.string() })).query(async ({ ctx, input }) => {
+    await ensureTeamTotals(ctx.db, input.leagueId);
     const L = await readLeague(ctx.db, input.leagueId);
     const t = L.teams[input.teamId];
     if (!t) throw new TRPCError({ code: 'NOT_FOUND', message: 'No such team' });
     // Per-team game logs, in order.
-    const logs = new Map<string, Array<{ day: number; opp: string; home: boolean; gf: number; ga: number; pts: number; ot: boolean }>>();
+    type Special = { ppg: number; ppo: number; ppga: number; tsh: number } | null;
+    const logs = new Map<string, Array<{ day: number; opp: string; home: boolean; gf: number; ga: number; pts: number; ot: boolean; special: Special }>>();
     for (const id of Object.keys(L.teams)) logs.set(id, []);
     for (const g of [...L.schedule].filter((x) => x.result).sort((a, b) => a.day - b.day)) {
       const r = g.result!;
       const extra = r.overtime || r.shootout;
+      const tot = gameTotals(r);
       for (const [me, them, gf, ga, home] of [
         [g.home, g.away, r.homeScore, r.awayScore, true],
         [g.away, g.home, r.awayScore, r.homeScore, false],
       ] as const) {
-        logs.get(me)!.push({ day: g.day, opp: L.teams[them].abbr, home, gf, ga, pts: gf > ga ? 2 : extra ? 1 : 0, ot: extra });
+        const [mine, theirs] = tot ? (home ? [tot.home, tot.away] : [tot.away, tot.home]) : [null, null];
+        const special: Special = mine && theirs ? { ppg: mine.ppg, ppo: mine.ppo, ppga: theirs.ppg, tsh: theirs.ppo } : null;
+        logs.get(me)!.push({ day: g.day, opp: L.teams[them].abbr, home, gf, ga, pts: gf > ga ? 2 : extra ? 1 : 0, ot: extra, special });
       }
     }
     const cum = new Map([...logs].map(([id, l]) => [id, l.reduce<number[]>((acc, x) => [...acc, (acc.at(-1) ?? 0) + x.pts], [])]));
@@ -957,12 +979,30 @@ export const dataRouter = router({
       const w = mine.slice(Math.max(0, i - 9), i + 1);
       return Math.round((w.reduce((s, x) => s + x[k], 0) / w.length) * 100) / 100;
     });
+    // Special teams over the last 10 games with totals on record (null until there are some).
+    const rollSpecial = (num: 'ppg' | 'ppga', den: 'ppo' | 'tsh', kill: boolean) =>
+      mine.map((_, i) => {
+        const w = mine.slice(Math.max(0, i - 9), i + 1).filter((x) => x.special);
+        const n = w.reduce((s, x) => s + x.special![num], 0);
+        const d = w.reduce((s, x) => s + x.special![den], 0);
+        if (!d) return null;
+        return Math.round((kill ? 1 - n / d : n / d) * 1000) / 10;
+      });
+    const season = teamSeasonStats(L);
+    const avg = (k: 'ppPct' | 'pkPct') => {
+      const xs = Object.values(season).map((x) => x[k]).filter((v): v is number => v !== null);
+      return xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 1000) / 10 : null;
+    };
     return {
       games: mine.map((g, i) => ({ ...g, n: i + 1, cum: cum.get(t.id)![i] })),
       leagueAvg,
       playoffLine,
       gfRolling: roll('gf'),
       gaRolling: roll('ga'),
+      ppRolling: rollSpecial('ppg', 'ppo', false),
+      pkRolling: rollSpecial('ppga', 'tsh', true),
+      /** The season so far on special teams, with league ranks and the league averages (percent). */
+      special: { ...season[t.id], teams: Object.keys(L.teams).length, leaguePp: avg('ppPct'), leaguePk: avg('pkPct') },
       totalGames: L.schedule.filter((g) => g.home === t.id || g.away === t.id).length,
     };
   }),

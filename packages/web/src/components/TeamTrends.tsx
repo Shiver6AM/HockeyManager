@@ -17,9 +17,10 @@ export function TeamTrends({ leagueId, teamId, abbr }: { leagueId: string; teamI
   const vsLine = li >= 0 ? d.games[li].cum - d.playoffLine[li]! : 0;
   const pace = Math.round((last.cum / last.n) * d.totalGames);
   const diff = d.games.reduce((s, g) => s + g.gf - g.ga, 0);
+  const sp = d.special;
   return (
     <div className="space-y-5">
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
         <Stat label="Points" value={String(last.cum)} note={`after ${last.n} games`} />
         <Stat label="Pace" value={String(pace)} note={`points over ${d.totalGames} games`} />
         <Stat
@@ -29,6 +30,18 @@ export function TeamTrends({ leagueId, teamId, abbr }: { leagueId: string; teamI
           tone={li < 0 ? undefined : vsLine >= 0 ? 'good' : 'bad'}
         />
         <Stat label="Goal differential" value={`${diff >= 0 ? '+' : '−'}${Math.abs(diff)}`} note={`${d.games.reduce((s, g) => s + g.gf, 0)} for, ${d.games.reduce((s, g) => s + g.ga, 0)} against`} tone={diff >= 0 ? 'good' : 'bad'} />
+        <Stat
+          label="Power play"
+          value={sp.ppPct === null ? '—' : `${(sp.ppPct * 100).toFixed(1)}%`}
+          note={sp.ppPct === null ? 'no power plays yet' : `${sp.ppg} goals on ${sp.ppo} chances · ${ordinal(sp.ppRank!)} of ${sp.teams}`}
+          tone={sp.ppRank ? (sp.ppRank <= sp.teams / 2 ? 'good' : 'bad') : undefined}
+        />
+        <Stat
+          label="Penalty kill"
+          value={sp.pkPct === null ? '—' : `${(sp.pkPct * 100).toFixed(1)}%`}
+          note={sp.pkPct === null ? 'not shorthanded yet' : `${sp.ppga} allowed in ${sp.tsh} times shorthanded · ${ordinal(sp.pkRank!)} of ${sp.teams}`}
+          tone={sp.pkRank ? (sp.pkRank <= sp.teams / 2 ? 'good' : 'bad') : undefined}
+        />
       </div>
       <Card title="Points pace">
         <p className="-mt-1 mb-2 text-xs text-ice-400">Points after each game, against the conference's 8th-place team and the league average at the same point.</p>
@@ -57,6 +70,26 @@ export function TeamTrends({ leagueId, teamId, abbr }: { leagueId: string; teamI
             zeroBased
           />
         </Card>
+        <Card title="Special teams (10-game rolling)">
+          <p className="-mt-1 mb-2 text-xs text-ice-400">
+            Power-play and penalty-kill percentage over the last 10 games
+            {sp.leaguePp !== null && sp.leaguePk !== null && ` (league averages: PP ${sp.leaguePp}%, PK ${sp.leaguePk}%)`}.
+          </p>
+          {d.ppRolling.some((v) => v !== null) || d.pkRolling.some((v) => v !== null) ? (
+            <LineChart
+              x={x}
+              xLabel="Game"
+              series={[
+                { name: 'PP%', values: d.ppRolling, color: SERIES[0] },
+                { name: 'PK%', values: d.pkRolling, color: SERIES[1] },
+              ]}
+              fmt={(v) => `${v.toFixed(0)}%`}
+              zeroBased
+            />
+          ) : (
+            <Empty>No power plays on record yet.</Empty>
+          )}
+        </Card>
         <Card title="Goal differential by game">
           <ColumnChart
             data={d.games.map((g) => ({ label: String(g.n), value: g.gf - g.ga, sub: `${g.home ? 'vs' : '@'} ${g.opp} ${g.gf}-${g.ga}${g.ot ? ' (OT/SO)' : ''}` }))}
@@ -81,3 +114,5 @@ function Stat({ label, value, note, tone }: { label: string; value: string; note
     </div>
   );
 }
+
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
