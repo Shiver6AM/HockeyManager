@@ -8,7 +8,10 @@
  * spends in a region builds the team's knowledge of it, faster for skilled
  * scouts who know the area, and a good head scout makes everyone better.
  *
- * Knowledge becomes confidence (0–100%). A prospect in a region you haven't
+ * Knowledge becomes confidence (0–100%). One scout's read of a region tops out
+ * (around 60% for a good one after a season there, more for the best), so high
+ * confidence takes a second scout in the same region: with only so many scouts,
+ * you choose where to know the class well. A prospect in a region you haven't
  * scouted shows no projection at all; as confidence grows, your scouts' read
  * on his ceiling converges on the truth. Every team's errors are its own, and
  * AI teams draft on what their scouts saw too.
@@ -54,16 +57,30 @@ export interface ScoutPlan {
 
 export interface TeamScouting {
   season: number;
-  /** Scouting days (weighted by quality) spent in each region this season. */
+  /** Scouting days (weighted by quality) spent in each region this season, all scouts together. */
   points: Partial<Record<Region, number>>;
+  /** The same, scout by scout (each read has its own ceiling). Missing on older saves: `points` counts as one scout's. */
+  byScout?: Record<string, { skill: number; points: Partial<Record<Region, number>> }>;
   /** Extra knowledge of specific prospects from scouts assigned to follow them. */
   playerPoints?: Record<PlayerId, number>;
 }
 
 export const SCOUTING = {
   maxScouts: 8,
-  /** Knowledge points for ~63% confidence. A good scout earns ~1.3 a day. */
-  K: 110,
+  /**
+   * One scout's knowledge of a region: points for ~63% of the way to his own ceiling.
+   * A good scout earns ~1.6 a day in a region he knows, so a season there takes him
+   * most of the way.
+   */
+  K: 190,
+  /**
+   * However long he stays, one pair of eyes only sees so much: a scout's read tops out
+   * at this ceiling (by skill, 40 → 95). Several scouts' reads combine, each catching
+   * some of what the others miss, so high confidence takes two in the same region.
+   */
+  ceiling: { low: 0.45, high: 0.8 },
+  /** Following specific prospects: the most those focused viewings reach on their own. */
+  targetCeiling: 0.8,
   /** Error (rating points) in a projection with no knowledge, and the floor with full knowledge. */
   maxSd: 13,
   minSd: 2,
@@ -306,7 +323,13 @@ export function scoutingDay(league: League) {
   for (const t of Object.values(league.teams)) {
     for (const scout of t.scouts ?? []) if (scout.plan) applyPlan(league, scout);
     const st = state(league, t.id);
-    for (const { scout, region } of scoutRegions(league, t)) st.points[region] = (st.points[region] ?? 0) + scoutRate(t, scout, region);
+    for (const { scout, region } of scoutRegions(league, t)) {
+      const rate = scoutRate(t, scout, region);
+      st.points[region] = (st.points[region] ?? 0) + rate;
+      const mine = ((st.byScout ??= {})[scout.id] ??= { skill: scout.skill, points: {} });
+      mine.skill = scout.skill;
+      mine.points[region] = (mine.points[region] ?? 0) + rate;
+    }
     for (const scout of t.scouts ?? []) {
       const targets = scoutTargets(league, scout);
       if (!targets.length) continue;
@@ -316,11 +339,42 @@ export function scoutingDay(league: League) {
   }
 }
 
+/** The most one scout of this skill can learn about a region. */
+export function scoutCeiling(skill: number): number {
+  const { low, high } = SCOUTING.ceiling;
+  return low + (high - low) * clamp((skill - 40) / 55, 0, 1);
+}
+
+/** One scout's read: how far he's got toward his own ceiling. */
+export function scoutRead(skill: number, points: number): number {
+  return scoutCeiling(skill) * (1 - Math.exp(-points / SCOUTING.K));
+}
+
+/** Readings that each miss some of what the others catch, together. */
+const combine = (reads: number[]) => 1 - reads.reduce((m, c) => m * (1 - c), 1);
+
+function regionReads(st: TeamScouting, r: Region): number[] {
+  if (!st.byScout) return st.points[r] ? [scoutRead(70, st.points[r]!)] : [];
+  return Object.values(st.byScout)
+    .filter((x) => x.points[r])
+    .map((x) => scoutRead(x.skill, x.points[r]!));
+}
+
 /** 0 … 1: how well a team knows this season's players in a region. */
 export function regionConfidence(league: League, teamId: TeamId, r: Region): number {
   const st = league.scouting?.[teamId];
   if (!st || st.season !== league.season) return 0;
-  return 1 - Math.exp(-(st.points[r] ?? 0) / SCOUTING.K);
+  return combine(regionReads(st, r));
+}
+
+/** How many of a team's scouts have been to a region this season, and each one's read. */
+export function regionScoutReads(league: League, teamId: TeamId, r: Region): Array<{ scoutId: string; read: number }> {
+  const st = league.scouting?.[teamId];
+  if (!st || st.season !== league.season || !st.byScout) return [];
+  return Object.entries(st.byScout)
+    .filter(([, x]) => x.points[r])
+    .map(([scoutId, x]) => ({ scoutId, read: scoutRead(x.skill, x.points[r]!) }))
+    .sort((a, b) => b.read - a.read);
 }
 
 export function isDraftClass(league: League, p: Player): boolean {
@@ -341,7 +395,9 @@ export function scoutConfidence(league: League, teamId: TeamId, p: Player): numb
   const st = league.scouting?.[teamId];
   if (!st) return 0;
   const r = playerRegion(league, p);
-  return 1 - Math.exp(-((st.points[r] ?? 0) + (st.playerPoints?.[p.id] ?? 0)) / SCOUTING.K);
+  const pp = st.playerPoints?.[p.id] ?? 0;
+  const focused = pp ? SCOUTING.targetCeiling * (1 - Math.exp(-pp / SCOUTING.K)) : 0;
+  return combine([...regionReads(st, r), focused]);
 }
 
 /** Error sd of a team's projection for a draft-eligible player. */

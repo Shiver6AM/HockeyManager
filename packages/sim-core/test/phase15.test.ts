@@ -51,7 +51,7 @@ describe('sleepers, targeted scouting and live Central Scouting', () => {
     const before = ohl.slice(0, 4).map((p) => scoutConfidence(L, 'HAL', p));
     advanceDays(L, 15);
     const after = ohl.slice(0, 4).map((p) => scoutConfidence(L, 'HAL', p));
-    for (let i = 0; i < 3; i++) expect(after[i]).toBeGreaterThan(before[i] + 0.3);
+    for (let i = 0; i < 3; i++) expect(after[i]).toBeGreaterThan(before[i] + 0.2); // (about what a region gets from a scout in two months)
     expect(after[3]).toBeCloseTo(before[3], 5); // not followed, and nobody's covering Ontario
   });
 

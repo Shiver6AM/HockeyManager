@@ -4,6 +4,8 @@ import {
   hireScout,
   playerRegion,
   regionConfidence,
+  regionScoutReads,
+  scoutCeiling,
   REGIONS,
   releaseScout,
   SCOUTING,
@@ -320,6 +322,8 @@ export const lifeRouter = router({
       return {
         ...sc,
         region: where.get(sc.id) ?? null,
+        /** The most he can learn about a region on his own. */
+        ceiling: Math.round(scoutCeiling(sc.skill) * 100) / 100,
         ratePerDay: where.get(sc.id) ? Math.round(scoutRate(t, sc, where.get(sc.id)!) * 100) / 100 : null,
         /** His schedule: each stop with the days it covers (the last one carries on to season's end). */
         plan: isMine && sc.plan ? planView(sc) : null,
@@ -344,9 +348,21 @@ export const lifeRouter = router({
       day: L.day,
       headScout: t.staff?.scout ?? null,
       draftSeason: L.draftClass?.season ?? L.offseason?.draft.season ?? null,
-      regions: REGIONS.map((r) => ({ ...r, confidence: conf(r.id), prospects: inRegion(r.id) })),
+      regions: REGIONS.map((r) => ({
+        ...r,
+        confidence: conf(r.id),
+        prospects: inRegion(r.id),
+        /** Each scout's own read of the region this season (they combine into the confidence). */
+        reads: isMine
+          ? regionScoutReads(L, t.id, r.id).map((x) => ({
+              scoutId: x.scoutId,
+              name: t.scouts?.find((sc) => sc.id === x.scoutId)?.name ?? 'A former scout',
+              read: Math.round(x.read * 100) / 100,
+            }))
+          : [],
+      })),
       scouts: (t.scouts ?? []).map(scoutView),
-      pool: isMine ? (L.scoutPool ?? []).map((sc) => ({ ...sc, region: null, ratePerDay: null })).sort((a, b) => b.skill - a.skill) : [],
+      pool: isMine ? (L.scoutPool ?? []).map((sc) => ({ ...sc, region: null, ceiling: Math.round(scoutCeiling(sc.skill) * 100) / 100, ratePerDay: null })).sort((a, b) => b.skill - a.skill) : [],
       payroll: scoutPayroll(t),
       /** Knowledge needed for ~63% confidence, and a good scout's daily pace, for the explainer. */
       k: SCOUTING.K,

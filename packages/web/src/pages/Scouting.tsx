@@ -46,7 +46,9 @@ export function ScoutingPage() {
           Next summer's draft class is playing now, in junior, college and European leagues. Send your area scouts where you want to know more: every day
           in a region builds your confidence in its prospects, faster for skilled scouts who know the area (and with a good head scout
           {d.headScout ? `: yours is rated ${d.headScout.rating}` : ''}). Prospects in regions you haven't scouted show no projection at all on draft day,
-          and your projections sharpen as confidence grows. Knowledge resets each season with the new class.
+          and your projections sharpen as confidence grows. One scout only sees so much: a good one gets a region to around 60% over a season (the best
+          to about 70%), however long he stays, so knowing a region well takes a second scout there. With only so many scouts, choose where to dig in.
+          Following specific prospects adds focused viewings of them. Knowledge resets each season with the new class.
         </p>
       </div>
 
@@ -61,8 +63,18 @@ export function ScoutingPage() {
               <p className="text-[11px] text-ice-500">{r.leagues}</p>
               <div className="mt-2">{r.confidence !== null && <ConfidenceBar value={r.confidence} />}</div>
               <p className="mt-1 text-[11px] text-ice-400">
-                {here(r.id).length ? here(r.id).map((s) => s.name).join(', ') : <span className="text-ice-600">No scout here</span>}
+                {here(r.id).length ? <>Now: {here(r.id).map((s) => s.name).join(', ')}</> : <span className="text-ice-600">No scout here now</span>}
               </p>
+              {r.reads.length > 0 && (
+                <ul className="mt-1 space-y-0.5 text-[11px] text-ice-500" title="Each scout's own read this season. Reads combine: each catches some of what the others miss.">
+                  {r.reads.map((x) => (
+                    <li key={x.scoutId} className="flex justify-between gap-2">
+                      <span className="truncate">{x.name}</span>
+                      <span className="tabular">{Math.round(x.read * 100)}%</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           ))}
         </div>
@@ -168,6 +180,10 @@ function Scouts({ d, labels, cls, followNote }: { d: Data; labels: Record<string
                     </div>
                     <p className="text-xs text-ice-400">
                       Evaluation <span className={cx('font-semibold', s.skill >= 75 ? 'text-win' : s.skill >= 60 ? 'text-ice-100' : 'text-red-300')}>{s.skill}</span>
+                      <span className="text-ice-500" title="The most he can learn about a region on his own, however long he stays; a second scout there adds to it">
+                        {' '}
+                        · reads a region up to {Math.round(s.ceiling * 100)}% on his own
+                      </span>
                     </p>
                     <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
                       {Object.entries(s.familiarity)
@@ -257,6 +273,7 @@ function Scouts({ d, labels, cls, followNote }: { d: Data; labels: Record<string
                 <tr>
                   <Th k="name">Scout</Th>
                   <Th k="skill" className="num">Eval</Th>
+                  <th className="num" title="The most he can learn about a region on his own">Max read</th>
                   {regionIds.map((r) => (
                     <Th key={r} k={`r:${r}`} className="num" title={`Familiarity with ${labels[r]}`}>
                       {labels[r].replace('Quebec & Maritimes', 'Quebec').replace('Western Canada', 'W. Canada').replace('United States', 'USA').replace('Central Europe', 'C. Europe')}
@@ -272,6 +289,7 @@ function Scouts({ d, labels, cls, followNote }: { d: Data; labels: Record<string
                   <tr key={s.id}>
                     <td className="font-semibold text-ice-50">{s.name}</td>
                     <td className="num">{s.skill}</td>
+                    <td className="num text-ice-400">{Math.round(s.ceiling * 100)}%</td>
                     {regionIds.map((r) => {
                       const v = s.familiarity[r as keyof Scout['familiarity']];
                       return (

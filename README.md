@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 266 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 268 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -401,7 +401,12 @@ anyone who hasn't acted gets sensible defaults.
   Extraliga, Swiss NL, DEL…), grouped into eight regions. Each team employs up to eight
   area scouts with an evaluation skill and a familiarity with each region; assign them
   to regions (or let the head scout decide). Every day in a region builds your
-  confidence there, faster for skilled scouts who know the area. On the Scouting page
+  confidence there, faster for skilled scouts who know the area. One scout only sees so
+  much: his read of a region tops out by skill (about 45% for a weak scout up to 80% for
+  the very best, however long he stays), and a good scout in a region he knows reaches
+  around 60% over a season. Scouts' reads of the same region combine, each catching some
+  of what the others miss, so two good scouts there get it to about 85%. With eight
+  regions and at most eight scouts, you choose where to know the class well. On the Scouting page
   and draft board, prospects from regions you haven't scouted show no ratings or
   projection, and projections sharpen as confidence grows. Knowledge resets each season.
 - **Prospects:** unsigned draft picks keep playing with their junior, college or
