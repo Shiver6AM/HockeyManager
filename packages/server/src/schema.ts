@@ -130,4 +130,16 @@ alter table leagues add column state_z bytea;
 alter table notifications add column refs jsonb;
 `,
   ],
+  [
+    // Smaller writes (they're outbound traffic from the game server): box scores
+    // compressed in box_z (older rows keep their JSON in box), and the league's
+    // archive (career lines, retired players) stored apart in archive_z, written
+    // only when it changes. Both are Brotli; gzip rows still read.
+    '007_compressed_box_scores_and_archive',
+    `
+alter table box_scores add column box_z bytea;
+alter table box_scores alter column box drop not null;
+alter table leagues add column archive_z bytea;
+`,
+  ],
 ];

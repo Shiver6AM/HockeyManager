@@ -12,7 +12,9 @@ export type Inputs = inferRouterInputs<AppRouter>;
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5_000,
+      // Changes are pushed (live updates), so data doesn't go stale on a clock: refocusing a
+      // window or remounting a view within a minute doesn't ask again.
+      staleTime: 60_000,
       retry: (count, err) => count < 2 && !/UNAUTHORIZED|FORBIDDEN|NOT_FOUND/.test(String((err as { data?: { code?: string } })?.data?.code)),
     },
   },

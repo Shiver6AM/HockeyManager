@@ -4,6 +4,7 @@
  * refresh at once instead of asking every few seconds. If the connection
  * can't be made (or drops), pages fall back to asking on a timer, as before.
  */
+import type { Query, QueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 export type LeagueEvent = { type: 'hello' } | { type: 'changed' } | { type: 'sim'; job: unknown } | { type: 'deleted' };
@@ -53,4 +54,18 @@ export function useLeagueEvents(leagueId: string, onEvent: (e: LeagueEvent) => v
       setLive(false);
     };
   }, [leagueId]);
+}
+
+/**
+ * Refresh what's on screen after the league changed, without asking twice: a
+ * view fetched in the last couple of seconds (or being fetched now, say right
+ * after your own change) is left alone, and in a tab you aren't looking at,
+ * views are only marked out of date and refreshed when you come back to it.
+ */
+export function refreshAll(qc: QueryClient, keep: (q: Query) => boolean = () => false): Promise<void> {
+  const now = Date.now();
+  const predicate = (q: Query) => !keep(q) && q.state.fetchStatus !== 'fetching' && now - q.state.dataUpdatedAt > 2000;
+  // (A hidden tab: TanStack refetches out-of-date views when the tab is focused again.)
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return qc.invalidateQueries({ predicate, refetchType: 'none' });
+  return qc.invalidateQueries({ predicate }, { cancelRefetch: false });
 }

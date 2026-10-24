@@ -1,8 +1,9 @@
+import compress from '@fastify/compress';
 import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { gzipSync } from 'node:zlib';
+import { constants as zlib, gzipSync } from 'node:zlib';
 import { fastifyTRPCPlugin, type FastifyTRPCPluginOptions } from '@trpc/server/adapters/fastify';
 import Fastify from 'fastify';
 import { Scheduler } from './advance';
@@ -45,6 +46,14 @@ export async function buildApp(opts: { db: Db; scheduler?: Scheduler; logger?: b
     routerOptions: { maxParamLength: 5000 },
   });
   const scheduler = opts.scheduler ?? new Scheduler(opts.db, (m) => app.log.info(m));
+  // Responses are compressed (Brotli where the browser takes it): they're outbound traffic, and
+  // JSON shrinks five- to tenfold. (The live-updates stream writes to the socket itself and isn't.)
+  await app.register(compress, {
+    global: true,
+    threshold: 1024,
+    encodings: ['br', 'gzip'],
+    brotliOptions: { params: { [zlib.BROTLI_PARAM_QUALITY]: 5, [zlib.BROTLI_PARAM_MODE]: zlib.BROTLI_MODE_TEXT } },
+  });
   await app.register(cookie);
   await app.register(fastifyTRPCPlugin, {
     prefix: '/trpc',
@@ -125,7 +134,18 @@ export async function buildApp(opts: { db: Db; scheduler?: Scheduler; logger?: b
   });
   if (opts.webDist && existsSync(join(opts.webDist, 'index.html'))) {
     // Production: one service serves both the API and the built web app.
-    await app.register(fastifyStatic, { root: opts.webDist, wildcard: false });
+    await app.register(fastifyStatic, {
+      root: opts.webDist,
+      wildcard: false,
+      // The build's scripts and styles have a content hash in their names, so a browser can keep
+      // them for good; the page itself is always checked, so a new build is picked up at once.
+      cacheControl: false,
+      setHeaders(res, path) {
+        if (/[\\/]assets[\\/]/.test(path)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        else if (path.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+        else res.setHeader('Cache-Control', 'public, max-age=3600');
+      },
+    });
     app.setNotFoundHandler((req, reply) => {
       if (req.method === 'GET' && !req.url.startsWith('/trpc')) return reply.sendFile('index.html'); // client-side routes
       return reply.code(404).send({ error: 'Not found' });

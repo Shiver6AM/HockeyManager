@@ -262,8 +262,12 @@ export async function startAdvance(
   return { job, finished };
 }
 
-/** Progress is shown from memory; the league is saved at phase changes and every few seconds. */
-const SAVE_EVERY_MS = 6000;
+/**
+ * Progress is shown from memory; the league is saved at phase changes, at the end, and
+ * every 30 seconds along the way (each save is a full write to the database, which is
+ * outbound traffic, and tells every open browser to refresh).
+ */
+const SAVE_EVERY_MS = 30_000;
 const yieldToServer = () => new Promise<void>((r) => setImmediate(r));
 
 async function runJob(db: Db, job: SimJob, L: League, version: number, triggeredBy: string) {
