@@ -6,7 +6,7 @@
 import { standings, teamTotals, type GameSummary, type League, type TeamGameTotals, type TeamId } from '@hockey-gm/sim-core';
 import { isSimming, mutateLeague } from './advance';
 import type { Db } from './db';
-import { readLeague } from './state';
+import { boxOf, readLeague } from './state';
 
 /** A game's totals for both sides: kept with the result, or (a game not yet saved) from its box score. */
 export function gameTotals(r: GameSummary | null): { home: TeamGameTotals; away: TeamGameTotals } | null {
@@ -102,10 +102,19 @@ export async function ensureTeamTotals(db: Db, leagueId: string): Promise<void> 
   }
   const side = (s: 'home' | 'away') =>
     ['shots', 'ppGoals', 'ppOpps', 'pim', 'fow'].map((k) => `coalesce((box->'${s}'->>'${k}')::int, 0)`).join(', ');
-  const rows = await db.query<{ game_id: number; h: number[]; a: number[] }>(
-    `select game_id, array[${side('home')}] as h, array[${side('away')}] as a from box_scores where league_id = $1 and season = $2 and game_id = any($3::int[])`,
+  const rows = await db.query<{ game_id: number; h: number[]; a: number[]; box_z: Uint8Array | null }>(
+    `select game_id, array[${side('home')}] as h, array[${side('away')}] as a, box_z from box_scores where league_id = $1 and season = $2 and game_id = any($3::int[])`,
     [leagueId, L.season, missing],
   );
+  // (Compressed box scores can't be looked into from SQL: those few are opened here.)
+  for (const r of rows) {
+    if (!r.box_z) continue;
+    const b = boxOf({ box: null, box_z: r.box_z });
+    if (!b) continue;
+    const t = (x: typeof b.home) => [x.shots, x.ppGoals, x.ppOpps, x.pim, x.fow].map((v) => v ?? 0);
+    r.h = t(b.home);
+    r.a = t(b.away);
+  }
   const lines = new Map(rows.map((r) => [Number(r.game_id), r]));
   const toTotals = (v: number[]): TeamGameTotals => ({ sog: Number(v[0]), ppg: Number(v[1]), ppo: Number(v[2]), pim: Number(v[3]), fow: Number(v[4]) });
   try {

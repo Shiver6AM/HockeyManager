@@ -1,4 +1,4 @@
-import { useLeagueEvents, useLive } from '../live';
+import { refreshAll, useLeagueEvents, useLive } from '../live';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useRef } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -31,7 +31,7 @@ export function LeagueLayout() {
   const qc = useQueryClient();
   const isLive = useLive();
   // (With live updates on, the timer is only a safety net.)
-  const ov = useQuery({ ...trpc.leagues.overview.queryOptions({ leagueId }), refetchInterval: isLive ? 30_000 : 4_000 });
+  const ov = useQuery({ ...trpc.leagues.overview.queryOptions({ leagueId }), refetchInterval: isLive ? 120_000 : 4_000 });
   // Whenever the league changes (someone sims, trades, signs…), refresh every view on
   // screen: nobody should have to reload the page to see a co-commissioner's sim.
   const seen = useRef<number | null>(null);
@@ -40,7 +40,7 @@ export function LeagueLayout() {
     const v = ov.data?.version;
     if (v === undefined) return;
     if (seen.current !== null && seen.current !== v) {
-      void qc.invalidateQueries({ predicate: (q) => JSON.stringify(q.queryKey) !== JSON.stringify(overviewKey) });
+      void refreshAll(qc, (q) => JSON.stringify(q.queryKey) === JSON.stringify(overviewKey));
     }
     seen.current = v;
     // eslint-disable-next-line react-hooks/exhaustive-deps

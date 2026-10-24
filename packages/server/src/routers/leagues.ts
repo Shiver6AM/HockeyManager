@@ -84,10 +84,10 @@ export const leaguesRouter = router({
       const league = createLeague({ seed, name: input.name, advance, start: input.start, fantasy: input.fantasy });
       league.id = id;
       await ctx.db.tx(async (q) => {
-        const { summary, z } = packState(league);
+        const { summary, z, archive } = await packState(league);
         await q.query(
-          'insert into leagues (id, name, commissioner_id, invite_code, seed, advance, state, state_z) values ($1, $2, $3, $4, $5, $6, $7, $8)',
-          [id, input.name, ctx.user.id, inviteCode(), seed, JSON.stringify(advance), summary, z],
+          'insert into leagues (id, name, commissioner_id, invite_code, seed, advance, state, state_z, archive_z) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+          [id, input.name, ctx.user.id, inviteCode(), seed, JSON.stringify(advance), summary, z, archive],
         );
         await q.query('insert into league_members (league_id, user_id) values ($1, $2)', [id, ctx.user.id]);
       });

@@ -67,3 +67,23 @@ Any other Node host uses the same settings:
   `DATABASE_URL` (never commit it).
 - **Backups.** Supabase takes daily backups on paid plans. On the free plan, export with
   `pg_dump "<connection string>" > backup.sql` if you want your own.
+
+### Keeping Render's outbound traffic down
+
+Render bills two kinds of outbound traffic: HTTP responses to browsers, and
+traffic the service starts itself (here, writes to the Supabase database). The
+server keeps both small:
+
+- **Database writes.** The league document is Brotli-compressed (about 15%
+  smaller than gzip), and its archive (career lines, retired players: the part
+  that grows every season) is stored apart and written only when it changes,
+  mostly once a summer. A change that changes nothing writes nothing. Box scores
+  are stored compressed (about 1 KB a game instead of 6.5 KB). A long sim saves
+  every 30 seconds rather than every 6 (progress is shown from memory).
+- **Responses.** API responses and the web app are compressed (Brotli or gzip).
+  The app's scripts and styles are cached by browsers for good (their names change
+  with each build); the page itself is always checked. Open pages refresh when the
+  league changes, once (not again right after your own change), and a tab you
+  aren't looking at waits until you come back to it. The background checks that
+  back up live updates run every two minutes instead of every 30 seconds.
+

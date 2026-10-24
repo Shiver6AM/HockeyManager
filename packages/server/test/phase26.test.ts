@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mutateLeague, Scheduler } from '../src/advance';
 import { gunzipSync } from 'node:zlib';
+import { unpack } from '../src/codec';
 import { appRouter, buildApp } from '../src/app';
 import { userFromToken } from '../src/auth';
 import { createDb, type Db } from '../src/db';
@@ -96,8 +97,8 @@ describe('phase 26: the league document stays in memory between requests', () =>
     // (Another writer: a copy of the league at day 7, saved the way the server saves it.)
     const L = structuredClone(await readLeague(db, leagueId));
     L.day = 7;
-    const { summary, z } = packState(L);
-    await db.query('update leagues set state = $1, state_z = $2, version = version + 1 where id = $3', [summary, z, leagueId]);
+    const { summary, z, archive } = await packState(L);
+    await db.query('update leagues set state = $1, state_z = $2, archive_z = $3, version = version + 1 where id = $4', [summary, z, archive, leagueId]);
     stateFetches = 0;
     expect((await comm.leagues.overview({ leagueId })).day).toBe(7);
     expect(stateFetches).toBe(1);
@@ -105,13 +106,13 @@ describe('phase 26: the league document stays in memory between requests', () =>
     expect(stateFetches).toBe(1);
   });
 
-  it('stores the league gzipped, with a readable summary left in the state column', async () => {
-    await mutateLeague(db, leagueId, () => undefined);
+  it('stores the league compressed, with a readable summary left in the state column', async () => {
+    await mutateLeague(db, leagueId, (L) => void (L.name = `${L.name}`.trim() + ' '));
     const row = (await db.query<{ state: Record<string, unknown> | string; state_z: Uint8Array }>('select state, state_z from leagues where id = $1', [leagueId]))[0];
     const summary = typeof row.state === 'string' ? JSON.parse(row.state) : row.state;
     expect(summary).toMatchObject({ compressed: true, day: 7, phase: 'regular-season', teams: 32 });
     expect(summary.players).toBeGreaterThan(1000);
-    const json = gunzipSync(Buffer.from(row.state_z)).toString('utf8');
+    const json = unpack(row.state_z);
     expect(JSON.parse(json).teams.HAL.city).toBe('Halifax');
     // About a fifth of the size (or better).
     expect(row.state_z.length).toBeLessThan(summary.jsonBytes / 4);
