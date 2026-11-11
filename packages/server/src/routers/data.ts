@@ -944,7 +944,23 @@ export const dataRouter = router({
     .input(z.object({ scope: z.enum(['prospects', 'undrafted']), season: z.number().int().optional() }))
     .query(async ({ ctx, input }) => {
       const L = await readLeague(ctx.db, input.leagueId);
-      return { season: input.season ?? L.season, ...minorLeaders(L, input.scope, input.season ?? L.season) };
+      const res = minorLeaders(L, input.scope, input.season ?? L.season);
+      // Undrafted players can go on the viewer's draft watchlist (if they still haven't been drafted).
+      const team = ctx.membership.teamId ? L.teams[ctx.membership.teamId] : null;
+      const watch = new Set(team?.watchlist ?? []);
+      const mark = <R extends { id: string }>(r: R) => {
+        const p = L.players[r.id];
+        const watchable = !!team && input.scope === 'undrafted' && !!p && !p.teamId && !p.prospectOf && !p.draft;
+        return { ...r, watchable, watched: watchable && watch.has(r.id) };
+      };
+      return {
+        season: input.season ?? L.season,
+        ...res,
+        skaters: res.skaters.map(mark),
+        goalies: res.goalies.map(mark),
+        /** How many players are on the viewer's watchlist (it holds 100). */
+        watchCount: team ? [...watch].filter((id) => L.players[id] && !L.players[id].teamId && !L.players[id].prospectOf).length : 0,
+      };
     }),
 
   /** A team's all-time records: career leaders with the club and its best seasons. */
