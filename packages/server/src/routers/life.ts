@@ -223,8 +223,8 @@ export const lifeRouter = router({
           pos: p.pos,
           age: L.season - p.birthYear,
           overall: overall(p),
-          coachability: coachability(p),
-          coachabilityLabel: coachabilityLabel(coachability(p)),
+          coachability: coachability(p, L),
+          coachabilityLabel: coachabilityLabel(coachability(p, L)),
           skills: Object.fromEntries(skillsFor(p).map((s) => [s, skillValue(p, s)])),
           gains: p.trainingLog?.season === L.season ? p.trainingLog.gains : {},
           /** Pace (points per season) under each of this team's coaches for each skill, for the assignment editor. */

@@ -296,19 +296,48 @@ export function offseasonSkillsCoaches(league: League) {
 // ---------------------------------------------------------------------------
 
 /**
- * How much a player gets out of coaching, 1–99 (50 is typical). Derived from
- * his id so it's stable for his career and older saves get it too.
+ * How much a player gets out of coaching, 1–99 (50 is typical).
+ *
+ * Most players are reasonably coachable, and they get more so as they mature
+ * (a few points a year through their early twenties). Stubbornness is mostly a
+ * young star's trait: a gifted kid may think he has nothing to learn (about
+ * half of them do), and he usually grows out of it by his late twenties.
+ *
+ * His temperament is derived from his id (stable for his career, and older saves
+ * get it too); age and how good he is are read from the league, when given.
  */
-const coachabilityCache = new Map<string, number>();
-export function coachability(p: Player): number {
-  if (p.coachability !== undefined) return p.coachability;
-  let v = coachabilityCache.get(p.id);
-  if (v === undefined) {
-    v = Math.round(clamp(new Rng(deriveSeed(0xc0ac4, `coachability:${p.id}`)).normal(52, 18), 5, 99));
-    if (coachabilityCache.size > 100_000) coachabilityCache.clear();
-    coachabilityCache.set(p.id, v);
+const temperamentCache = new Map<string, { base: number; ego: number }>();
+function temperament(p: Player) {
+  let v = temperamentCache.get(p.id);
+  if (!v) {
+    const rng = new Rng(deriveSeed(0xc0ac4, `coachability:${p.id}`));
+    const base = clamp(rng.normal(57, 11), 30, 95);
+    // How much a star's ego can cost him (only some stars have one).
+    const ego = rng.chance(0.55) ? 14 + rng.next() * 20 : rng.next() * 6;
+    v = { base, ego };
+    if (temperamentCache.size > 100_000) temperamentCache.clear();
+    temperamentCache.set(p.id, v);
   }
   return v;
+}
+
+export const COACHABILITY = {
+  /** Points gained per year of maturity, from 20 to 28. */
+  maturityPerYear: 0.75,
+  /** The ego fades out by this age. */
+  egoGoneAt: 28,
+};
+
+export function coachability(p: Player, league?: Pick<League, 'season'>): number {
+  if (p.coachability !== undefined) return p.coachability;
+  const { base, ego } = temperament(p);
+  if (!league) return Math.round(base);
+  const a = age(p, league.season);
+  const maturity = clamp(a - 20, 0, 8) * COACHABILITY.maturityPerYear;
+  // A star: rated well above his age's usual, or with a high ceiling.
+  const star = clamp(Math.max((overall(p) - 74) / 10, (p.hidden.potential - 80) / 10), 0, 1);
+  const youth = clamp((COACHABILITY.egoGoneAt - a) / 8, 0, 1);
+  return Math.round(clamp(base + maturity - ego * star * youth, 5, 99));
 }
 
 export function coachabilityLabel(c: number): string {
@@ -327,7 +356,7 @@ export function trainingRate(league: League, coach: SkillsCoach, p: Player, s: T
   const group = SKILL_GROUP_OF[s];
   const cr = coach.ratings[group] ?? 35;
   const coachF = 0.55 + 0.9 * clamp((cr - 35) / 60, 0, 1);
-  const learnF = 0.5 + 0.9 * (coachability(p) / 100);
+  const learnF = 0.5 + 0.9 * (coachability(p, league) / 100);
   const a = age(p, league.season);
   const ageF = a <= 21 ? 1.25 : a <= 24 ? 1.12 : a <= 27 ? 1 : a <= 30 ? 0.8 : a <= 33 ? 0.62 : 0.45;
   const v = skillValue(p, s);

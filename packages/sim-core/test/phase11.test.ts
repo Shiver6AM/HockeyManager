@@ -115,7 +115,7 @@ describe('skills coaches', () => {
 
   it('coachability is a stable 1–99 trait', () => {
     const L = generateLeague({ seed: 7 });
-    const xs = Object.values(L.players).map(coachability);
+    const xs = Object.values(L.players).map((p) => coachability(p, L));
     expect(Math.min(...xs)).toBeGreaterThanOrEqual(1);
     expect(Math.max(...xs)).toBeLessThanOrEqual(99);
     const p = Object.values(L.players)[0];

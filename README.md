@@ -30,7 +30,7 @@ through a tunnel (e.g. `npx localtunnel --port 5173` or Tailscale).
 ### Other commands
 
 ```bash
-npm test              # 272 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
+npm test              # 276 tests: sim determinism, start points and fantasy drafts, commissioner sliders, farm teams, scouting and fog of war, background sims, coaching systems, chemistry, skills coaches, the re-signing week, retirement, playoffs, offseason, contracts, trades, league life and the multiplayer API
 npm run typecheck     # all three packages
 npm run demo          # sim a season in the terminal: box score, standings, injuries, bracket, awards
 npm run calibrate     # sim 10 seasons and compare league stats to real NHL figures
@@ -339,7 +339,10 @@ Players improve a little every day of the season: never more than a point a week
 focused season can add several points to one skill (a typical assignment gains 2–5, a
 coachable 20-year-old with an elite coach up to about 10). The rate depends on the coach's
 rating in that skill's group, the player's **coachability** (a visible trait on his page),
-his age and how much room the skill has left.
+his age and how much room the skill has left. Most players are coachable enough, and they
+get more so as they mature (a few points a year into their late twenties). Stubbornness
+is mostly a young star's trait: about half of them think they have little to learn, and
+they usually grow out of it by 28.
 ## Seasons that never end: the career loop
 
 When the final ends, the league enters the offseason. Each stage waits for managers
@@ -399,7 +402,12 @@ anyone who hasn't acted gets sensible defaults.
 - **Area scouts and fog of war:** next summer's draft class plays all season in real
   development leagues (WHL, OHL, QMJHL, USHL, NCAA, J20, SHL, Liiga, MHL, KHL, Czech
   Extraliga, Swiss NL, DEL…), grouped into eight regions. Each team employs up to eight
-  area scouts with an evaluation skill and a familiarity with each region; assign them
+  area scouts with an evaluation skill and a familiarity with each region. About one scout
+  in five is a generalist who knows a little about everywhere; the rest know one to three
+  regions well, usually neighbouring ones (the three Canadian junior leagues together, the
+  US next to them, Sweden with Finland, Russia with Central Europe), and his first is most
+  often his home country's. The scouts available to hire change every summer: three to five
+  move on and new ones come looking for work. Assign your scouts
   to regions (or let the head scout decide). Every day in a region builds your
   confidence there, faster for skilled scouts who know the area. One scout only sees so
   much: his read of a region tops out by skill (about 45% for a weak scout up to 80% for

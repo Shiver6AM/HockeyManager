@@ -54,7 +54,8 @@ describe('season performance feeds development', () => {
     // A 30-something regular with an ordinary season.
     const id = Object.keys(base).find((x) => {
       const p = L.players[x];
-      return p.pos !== 'G' && p.pos !== 'D' && age(p, L.season) >= 31 && age(p, L.season) <= 33 && Math.abs(base[x].z) < 0.3 && L.skaterStats[x].gp >= 70;
+      // (A scoring forward: his season is judged mostly on the goals and assists changed below.)
+      return p.pos !== 'G' && p.pos !== 'D' && ['Sniper', 'Playmaker', 'Speedster', 'Power Forward'].includes(p.archetype) && age(p, L.season) >= 31 && age(p, L.season) <= 33 && Math.abs(base[x].z) < 0.3 && L.skaterStats[x].gp >= 70;
     })!;
     expect(id).toBeTruthy();
     const summer = (scale: number) => {

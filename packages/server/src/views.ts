@@ -33,8 +33,8 @@ export function publicPlayer(league: League, p: Player) {
     minorSalary: p.contract && isTwoWay(p.contract) ? minorSalaryOf(p.contract) : null,
     injury: p.injury,
     /** How much he gets out of coaching (a visible trait). */
-    coachability: coachability(p),
-    coachabilityLabel: coachabilityLabel(coachability(p)),
+    coachability: coachability(p, league),
+    coachabilityLabel: coachabilityLabel(coachability(p, league)),
     /** Rare badges (2K-style), best first. Worked out now for players the sim hasn't reached yet. */
     traits: traitList(p.traitsSeason === undefined ? { ...p, traits: computeTraits(p) } : p),
   };
