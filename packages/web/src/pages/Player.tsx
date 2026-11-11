@@ -85,6 +85,15 @@ export function PlayerPage() {
             <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-ice-400">
               {d.team && <TeamLink leagueId={L.id} team={d.team} full />}
               {d.isProspect && <Badge tone="info">Prospect</Badge>}
+              {p && d.team && L.myTeamId && d.team.id !== L.myTeamId && (
+                <Link
+                  to={`/league/${L.id}/trades?with=${d.team.id}&get=${encodeURIComponent(`player:${p.id}`)}`}
+                  className="inline-flex items-center gap-1 rounded-lg bg-blueline px-2.5 py-1 text-xs font-semibold text-white hover:bg-blue-500"
+                  title={`Open the trade center with ${d.team.city}, ${name} already in the deal`}
+                >
+                  Trade for →
+                </Link>
+              )}
               {p?.injury && <Badge tone="bad">{p.injury.type} · ~{p.injury.daysLeft}d</Badge>}
               {d.draft && (
                 <span>
