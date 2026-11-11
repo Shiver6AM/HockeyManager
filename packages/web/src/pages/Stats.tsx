@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, cx, Empty, Spinner, TeamChip } from '../components/ui';
@@ -157,7 +157,7 @@ export function StatsPage() {
           <Spinner />
         ) : (
           <>
-            <MinorSkaterTable key={`${scope}-${season}`} rows={minor.data.skaters} scope={scope as 'prospects' | 'undrafted'} season={season} />
+            <MinorSkaterTable key={`${scope}-${season}`} rows={minor.data.skaters} scope={scope as 'prospects' | 'undrafted'} season={season} watchCount={minor.data.watchCount} />
             <MinorGoalieTable rows={minor.data.goalies} />
           </>
         )
@@ -188,8 +188,50 @@ export function StatsPage() {
 
 type Minor = Outputs['data']['minorLeaders'];
 
-function MinorSkaterTable({ rows, scope, season }: { rows: Minor['skaters']; scope: 'prospects' | 'undrafted'; season: number }) {
+/** The draft watchlist star: optimistic (it flips at once), and only for players who can still be drafted. */
+function useWatch() {
+  const L = useLeague();
+  const trpc = useTRPC();
+  const qc = useQueryClient();
+  const [flip, setFlip] = useState<Record<string, boolean>>({});
+  const watch = useMutation(
+    trpc.offseason.setWatch.mutationOptions({
+      onError: (_e, v) => setFlip((f) => ({ ...f, [v.playerId]: !v.watched })),
+      onSettled: () => qc.invalidateQueries({ queryKey: trpc.data.minorLeaders.queryKey() }),
+    }),
+  );
+  const watched = (r: { id: string; watched: boolean }) => flip[r.id] ?? r.watched;
+  const toggle = (r: { id: string; watched: boolean }) => {
+    const next = !watched(r);
+    setFlip((f) => ({ ...f, [r.id]: next }));
+    watch.mutate({ leagueId: L.id, playerId: r.id, watched: next });
+  };
+  return { watched, toggle, error: watch.error };
+}
+
+function WatchCell({ r, w }: { r: { id: string; name: string; watched: boolean; watchable: boolean }; w: ReturnType<typeof useWatch> }) {
+  if (!r.watchable) return <td />;
+  const on = w.watched(r);
+  return (
+    <td className="w-6 text-center">
+      <button
+        onClick={() => w.toggle(r)}
+        aria-pressed={on}
+        aria-label={on ? `Take ${r.name} off your watchlist` : `Add ${r.name} to your watchlist`}
+        title={on ? 'On your draft watchlist (click to remove)' : 'Add to your draft watchlist'}
+        className={cx('text-base leading-none transition hover:scale-125', on ? 'text-warn' : 'text-rink-500 hover:text-ice-300')}
+      >
+        {on ? '★' : '☆'}
+      </button>
+    </td>
+  );
+}
+
+function MinorSkaterTable({ rows, scope, season, watchCount }: { rows: Minor['skaters']; scope: 'prospects' | 'undrafted'; season: number; watchCount: number }) {
   const [pos, setPos] = useState('All');
+  const w = useWatch();
+  const canWatch = scope === 'undrafted' && rows.some((r) => r.watchable);
+  const shownCount = watchCount + rows.filter((r) => r.watchable && w.watched(r) !== r.watched).reduce((n, r) => n + (w.watched(r) ? 1 : -1), 0);
   const filtered = rows.filter((r) => pos === 'All' || (pos === 'F' ? r.pos !== 'D' : r.pos === pos));
   const { sorted, Th } = useSort(
     filtered,
@@ -229,7 +271,16 @@ function MinorSkaterTable({ rows, scope, season }: { rows: Minor['skaters']; sco
         </div>
       }
     >
-      <p className="-mt-1 mb-3 text-xs text-ice-500">{note}</p>
+      <p className="-mt-1 mb-3 text-xs text-ice-500">
+        {note}
+        {canWatch && (
+          <>
+            {' '}
+            <span className="text-warn">★</span> adds a player to your draft watchlist, shown on the Scouting and Draft pages ({shownCount} of 100).
+          </>
+        )}
+      </p>
+      {w.error && <p className="mb-2 text-xs text-red-300">{w.error.message}</p>}
       {rows.length === 0 ? (
         <Empty>No games played yet for this group.</Empty>
       ) : (
@@ -237,6 +288,7 @@ function MinorSkaterTable({ rows, scope, season }: { rows: Minor['skaters']; sco
           <table className="table">
             <thead>
               <tr>
+                {canWatch && <th className="w-6" aria-label="Watchlist" />}
                 <th className="num">#</th>
                 <Th k="name">Player</Th>
                 <Th k="pos">Pos</Th>
@@ -256,6 +308,7 @@ function MinorSkaterTable({ rows, scope, season }: { rows: Minor['skaters']; sco
             <tbody>
               {sorted.map((r, i) => (
                 <tr key={r.id}>
+                  {canWatch && <WatchCell r={r} w={w} />}
                   <td className="num text-ice-500">{i + 1}</td>
                   <NameCell r={r} />
                   <td className="text-ice-400">{r.pos}</td>
@@ -281,6 +334,8 @@ function MinorSkaterTable({ rows, scope, season }: { rows: Minor['skaters']; sco
 }
 
 function MinorGoalieTable({ rows }: { rows: Minor['goalies'] }) {
+  const w = useWatch();
+  const canWatch = rows.some((r) => r.watchable);
   const { sorted, Th } = useSort(
     rows,
     {
@@ -302,6 +357,7 @@ function MinorGoalieTable({ rows }: { rows: Minor['goalies'] }) {
         <table className="table">
           <thead>
             <tr>
+              {canWatch && <th className="w-6" aria-label="Watchlist" />}
               <Th k="name">Goalie</Th>
               <Th k="league">League</Th>
               <Th k="club">Club</Th>
@@ -314,6 +370,7 @@ function MinorGoalieTable({ rows }: { rows: Minor['goalies'] }) {
           <tbody>
             {sorted.map((r) => (
               <tr key={r.id}>
+                {canWatch && <WatchCell r={r} w={w} />}
                 <NameCell r={r} />
                 <td className="text-xs whitespace-nowrap text-ice-300">{r.league}</td>
                 <td className="text-xs whitespace-nowrap text-ice-400">{r.club ?? '—'}</td>
