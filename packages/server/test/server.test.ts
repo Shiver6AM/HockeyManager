@@ -489,7 +489,10 @@ describe('trades API', () => {
     const kc = await a.trades.assets({ leagueId, teamId: 'KC' });
     // A lopsided ask: their best player for our worst.
     const worst = mine.players.at(-1)!;
-    const star = kc.players.find((p) => (p.contract?.salary ?? 0) <= mine.capRoom + (worst.contract?.salary ?? 0))!;
+    // (Their best player we could fit under the cap: in a random league the first one that fits can be a depth player.)
+    const star = kc.players
+      .filter((p) => (p.contract?.salary ?? 0) <= mine.capRoom + (worst.contract?.salary ?? 0))
+      .sort((x, y) => y.overall - x.overall)[0]!;
     const lopsided = { leagueId, partner: 'KC', give: [{ kind: 'player' as const, id: worst.id }], get: [{ kind: 'player' as const, id: star.id }] };
     const ev = await a.trades.evaluate(lopsided);
     expect(ev.verdict!.accept).toBe(false);

@@ -239,7 +239,7 @@ export function searchPlayers(L: League, viewer: string | null, q: SearchInput) 
       if (!ok) continue;
       const body = bodyOf(p, season);
       if (!inRange(body.height, q.height) || !inRange(body.weight, q.weight)) continue;
-      const coach = coachability(p);
+      const coach = coachability(p, L);
       if (!inRange(coach, q.coachability)) continue;
       const chg = ovrChange(L, p).ovrChange;
       if (!inRange(chg, q.ovrChange)) continue;

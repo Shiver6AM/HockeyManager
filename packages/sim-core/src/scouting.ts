@@ -100,11 +100,77 @@ export function scoutSalary(skill: number): number {
   return Math.round((150_000 + 1_050_000 * t * t) / 25_000) * 25_000;
 }
 
+/**
+ * How close two regions are for a scout: the junior leagues across Canada go
+ * together, the US is next door to them, the Nordic countries together, Russia
+ * and Central Europe together, and so on. A scout who knows more than one region
+ * usually knows neighbouring ones.
+ */
+const REGION_GROUP: Record<Region, 'chl' | 'usa' | 'nordic' | 'east'> = {
+  west: 'chl',
+  ontario: 'chl',
+  quebec: 'chl',
+  usa: 'usa',
+  sweden: 'nordic',
+  finland: 'nordic',
+  russia: 'east',
+  central: 'east',
+};
+export function regionAffinity(a: Region, b: Region): number {
+  if (a === b) return 0;
+  const ga = REGION_GROUP[a];
+  const gb = REGION_GROUP[b];
+  if (ga === gb) return 1;
+  const pair = [ga, gb].sort().join('-');
+  // Neighbours: North America, or Europe.
+  if (pair === 'chl-usa' || pair === 'east-nordic') return 0.4;
+  return 0.06;
+}
+
+/** Where a scout of this nationality most likely comes from (and so knows first). */
+const HOME_BY_NATION: Record<string, Region[]> = {
+  CAN: ['ontario', 'west', 'quebec'],
+  USA: ['usa'],
+  SWE: ['sweden'],
+  FIN: ['finland'],
+  RUS: ['russia'],
+  CZE: ['central'],
+  SVK: ['central'],
+  GER: ['central'],
+};
+
+export const SCOUT_GEN = {
+  /** How many regions a scout knows well: none (a generalist), one, two or three. */
+  expertCount: [0.22, 0.43, 0.25, 0.1],
+  /** Chance his first region is his home country's. */
+  homeFirst: 0.75,
+  /** New scouts in the available pool each summer (old ones retire or take other jobs). */
+  turnover: [3, 5] as [number, number],
+};
+
 export function generateScout(rng: Rng, id: string): Scout {
   const pool = NAME_POOLS[rng.weighted(NAME_POOLS.map((p) => p.weight))];
-  const home = rng.shuffle(REGIONS.map((r) => r.id)).slice(0, rng.chance(0.4) ? 2 : 1);
+  const all = REGIONS.map((r) => r.id);
+  const n = rng.weighted(SCOUT_GEN.expertCount);
+  const expert: Region[] = [];
+  if (n > 0) {
+    const home = HOME_BY_NATION[pool.nationality];
+    expert.push(home && rng.chance(SCOUT_GEN.homeFirst) ? rng.pick(home) : rng.pick(all));
+    // More regions: most likely ones close to what he already knows.
+    while (expert.length < n) {
+      const left = all.filter((r) => !expert.includes(r));
+      const w = left.map((r) => Math.max(...expert.map((e) => regionAffinity(e, r))));
+      expert.push(left[rng.weighted(w)]);
+    }
+  }
   const familiarity = Object.fromEntries(
-    REGIONS.map((r) => [r.id, home.includes(r.id) ? rng.int(72, 96) : Math.round(clamp(rng.normal(30, 12), 5, 60))]),
+    all.map((r) => {
+      if (expert.includes(r)) return [r, rng.int(72, 95)];
+      // A generalist knows a little about everywhere; a specialist knows his regions' neighbours better than the rest.
+      const near = expert.length ? Math.max(...expert.map((e) => regionAffinity(e, r))) : 0;
+      const mean = expert.length ? 26 + 22 * near : 44;
+      return [r, Math.round(clamp(rng.normal(mean, 10), 5, 68))];
+    }),
   ) as Record<Region, number>;
   const skill = Math.round(clamp(rng.normal(64, 11), 40, 95));
   return { id, name: `${rng.pick(pool.first)} ${rng.pick(pool.last)}`, skill, familiarity, salary: scoutSalary(skill), yearsLeft: rng.int(1, 4), assignment: 'auto' };
@@ -406,9 +472,13 @@ export function draftScoutSd(league: League, teamId: TeamId, p: Player): number 
   return SCOUTING.minSd + (SCOUTING.maxSd - SCOUTING.minSd) * (1 - c);
 }
 
-/** Each summer: scouts' contracts run down (expiring ones re-sign); AI teams keep at least three. */
+/** Each summer: 3–5 of the available scouts are replaced by new ones, scouts' contracts run down (expiring ones re-sign), and AI teams keep at least three. */
 export function offseasonScouts(league: League) {
   const rng = new Rng(deriveSeed(league.seed, `scouts-summer:${league.season}`));
+  // A few of the available scouts move on each summer, and new ones come looking for work.
+  const pool = (league.scoutPool ??= []);
+  const leaving = Math.min(pool.length, rng.int(...SCOUT_GEN.turnover));
+  for (let i = 0; i < leaving; i++) pool.splice(rng.int(0, pool.length - 1), 1);
   refillScoutPool(league, rng);
   for (const t of Object.values(league.teams)) {
     for (const s of t.scouts ?? []) {
